@@ -68,18 +68,18 @@ class Logger:
         for handler in self._logger.handlers:
             handler.setLevel(self._level)
 
-    def normal(self, message: str, **kwargs) -> None:
+    def normal(self, message: str, *args, **kwargs) -> None:
         """Log at normal level (key events)."""
-        self._logger.log(self.NORMAL, message, **kwargs)
+        self._logger.log(self.NORMAL, message, *args, **kwargs)
 
-    def verbose(self, message: str, **kwargs) -> None:
+    def verbose(self, message: str, *args, **kwargs) -> None:
         """Log at verbose level (detailed events)."""
-        self._logger.log(self.VERBOSE, message, **kwargs)
+        self._logger.log(self.VERBOSE, message, *args, **kwargs)
 
-    def debug(self, message: str, **kwargs) -> None:
+    def debug(self, message: str, *args, **kwargs) -> None:
         """Log at debug level (everything)."""
-        self._logger.debug(message, **kwargs)
+        self._logger.debug(message, *args, **kwargs)
 
-    def error(self, message: str, **kwargs) -> None:
+    def error(self, message: str, *args, **kwargs) -> None:
         """Log an error (always logged regardless of level)."""
-        self._logger.error(message, **kwargs)
+        self._logger.error(message, *args, **kwargs)

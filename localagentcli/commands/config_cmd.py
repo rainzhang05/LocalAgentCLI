@@ -36,8 +36,7 @@ class ConfigHandler(CommandHandler):
         value = self._config.get(key)
         if value is None:
             return CommandResult.error(
-                f"Unknown config key: '{key}'\n"
-                "Use /config to see all available keys."
+                f"Unknown config key: '{key}'\nUse /config to see all available keys."
             )
         return CommandResult.ok(f"{key} = {_format_value(value)}")
 

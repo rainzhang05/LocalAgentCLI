@@ -74,6 +74,19 @@ This file defines mandatory rules for AI agents (Claude, Codex, Copilot, or any 
 
 ---
 
+## Testing and CI
+
+12. **Run tests before committing.** After making changes, run `python -m pytest --cov=localagentcli` to ensure all tests pass and coverage remains at or above 80%.
+
+13. **Verify CI checks pass locally.** Before committing, ensure all three CI workflows would pass:
+    - **Tests**: `python -m pytest --cov=localagentcli --cov-fail-under=80`
+    - **Lint**: `ruff check .` and `ruff format --check .`
+    - **Type check**: `mypy localagentcli/`
+
+14. **Maintain test coverage.** Test coverage must stay at or above 80%. If you add new code, add corresponding tests. If coverage drops below 80%, add tests to bring it back up before committing.
+
+---
+
 ## Key Principles
 
 - **The docs are the spec.** If it's not in the docs, don't build it.

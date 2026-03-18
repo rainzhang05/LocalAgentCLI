@@ -46,9 +46,7 @@ class SessionLoadHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error(
-                "Session name required.\nUsage: /session load <name>"
-            )
+            return CommandResult.error("Session name required.\nUsage: /session load <name>")
         try:
             self._session_manager.load_session(args[0])
             return CommandResult.ok(f"Session '{args[0]}' loaded.")
@@ -105,9 +103,7 @@ class SessionParentHandler(CommandHandler):
     """Parent handler that shows subcommand help."""
 
     def execute(self, args: list[str]) -> CommandResult:
-        return CommandResult.error(
-            "/session requires a subcommand: new, save, load, list, clear"
-        )
+        return CommandResult.error("/session requires a subcommand: new, save, load, list, clear")
 
     def help_text(self) -> str:
         return (

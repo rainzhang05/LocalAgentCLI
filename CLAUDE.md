@@ -63,6 +63,7 @@ This file defines mandatory rules for AI agents (Claude, Codex, Copilot, or any 
 - **One file per commit.** Never bundle multiple file changes in a single commit.
 - **Commit on current branch.** Do not create new branches.
 - **Commit locally.** Do not push unless explicitly asked.
+- **No co-author trailers.** Do not add `Co-Authored-By` or any attribution lines. Commits are attributed to the user via their git config.
 - **Commit format**: `<type>: <short description>`
   - `feat: add command router with dispatch logic`
   - `fix: handle missing config.toml on first run`

@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from rich.console import Console
 
 from localagentcli.commands import (
     config_cmd,
     exit_cmd,
-    help as help_cmd,
-    session as session_cmd,
     setup_cmd,
+)
+from localagentcli.commands import (
+    help as help_cmd,
+)
+from localagentcli.commands import (
+    session as session_cmd,
+)
+from localagentcli.commands import (
     status as status_cmd,
 )
 from localagentcli.commands.router import CommandRouter

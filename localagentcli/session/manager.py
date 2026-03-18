@@ -72,7 +72,7 @@ class SessionManager:
 
     def list_sessions(self) -> list[dict]:
         """List all saved sessions with summary info."""
-        sessions = []
+        sessions: list[dict] = []
         if not self._dir.exists():
             return sessions
 
@@ -80,13 +80,15 @@ class SessionManager:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                sessions.append({
-                    "name": data.get("name", path.stem),
-                    "created_at": data.get("created_at", ""),
-                    "model": data.get("model", ""),
-                    "mode": data.get("mode", ""),
-                    "message_count": len(data.get("history", [])),
-                })
+                sessions.append(
+                    {
+                        "name": data.get("name", path.stem),
+                        "created_at": data.get("created_at", ""),
+                        "model": data.get("model", ""),
+                        "mode": data.get("mode", ""),
+                        "message_count": len(data.get("history", [])),
+                    }
+                )
             except (json.JSONDecodeError, OSError):
                 continue
 

@@ -16,16 +16,21 @@ from localagentcli.commands import (
     help as help_cmd,
 )
 from localagentcli.commands import (
+    providers as providers_cmd,
+)
+from localagentcli.commands import (
     session as session_cmd,
 )
 from localagentcli.commands import (
     status as status_cmd,
 )
 from localagentcli.commands.router import CommandRouter
+from localagentcli.providers.keys import KeyManager
+from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.state import Message
 
 
-def _make_router(config, session_manager):
+def _make_router(config, session_manager, tmp_path=None):
     """Create a fully-registered router for testing."""
     router = CommandRouter()
     console = Console(force_terminal=True)
@@ -35,6 +40,13 @@ def _make_router(config, session_manager):
     setup_cmd.register(router, config, session_manager, console)
     session_cmd.register(router, session_manager)
     exit_cmd.register(router)
+    if tmp_path is not None:
+        secrets_dir = tmp_path / "secrets"
+        secrets_dir.mkdir(exist_ok=True)
+        km = KeyManager(secrets_dir)
+        km._keyring_available = False
+        registry = ProviderRegistry(config, km)
+        providers_cmd.register(router, registry, km, session_manager, console)
     return router
 
 
@@ -61,6 +73,13 @@ class TestHelpCommand:
         assert result.success
         assert "session save" in result.message
         assert "session load" in result.message
+
+    def test_help_shows_provider_group(self, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+        result = router.dispatch("help")
+        assert result.success
+        assert "Provider" in result.message
+        assert "/providers" in result.message
 
     def test_help_unknown_command(self, config, session_manager):
         router = _make_router(config, session_manager)

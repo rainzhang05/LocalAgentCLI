@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from rich.console import Console
 from rich.prompt import Confirm
 
@@ -14,6 +16,9 @@ from localagentcli.commands import (
     help as help_cmd,
 )
 from localagentcli.commands import (
+    providers as providers_cmd,
+)
+from localagentcli.commands import (
     session as session_cmd,
 )
 from localagentcli.commands import (
@@ -21,8 +26,14 @@ from localagentcli.commands import (
 )
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
+from localagentcli.models.backends.base import ModelMessage
+from localagentcli.providers.base import RemoteProvider
+from localagentcli.providers.keys import KeyManager
+from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.manager import SessionManager
+from localagentcli.session.state import Message
 from localagentcli.shell.prompt import create_prompt_session
+from localagentcli.shell.streaming import StreamRenderer
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
 
@@ -51,6 +62,13 @@ class ShellUI:
         self._session_manager = SessionManager(storage.sessions_dir, config)
         self._session_manager.new_session()
 
+        # Initialize provider infrastructure
+        self._key_manager = KeyManager(storage.secrets_dir)
+        self._provider_registry = ProviderRegistry(config, self._key_manager)
+        self._stream_renderer = StreamRenderer(self._console)
+        self._active_provider: RemoteProvider | None = None
+        self._active_provider_name: str = ""
+
         # Initialize command router and register commands
         self._router = CommandRouter()
         self._register_commands()
@@ -60,13 +78,20 @@ class ShellUI:
         self._prompt_session = create_prompt_session(self._router, history_file)
 
     def _register_commands(self) -> None:
-        """Register all Phase 1 command handlers."""
+        """Register all command handlers."""
         help_cmd.register(self._router)
         status_cmd.register(self._router, self._session_manager, self._config)
         config_cmd.register(self._router, self._config)
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
+        providers_cmd.register(
+            self._router,
+            self._provider_registry,
+            self._key_manager,
+            self._session_manager,
+            self._console,
+        )
 
     def run(self) -> None:
         """Main input loop."""
@@ -103,10 +128,7 @@ class ShellUI:
                         self._handle_exit()
                         break
                 else:
-                    self._console.print(
-                        "[dim]No model connected. Use /setup or configure a "
-                        "model/provider to start chatting.[/dim]"
-                    )
+                    self._handle_plain_text(stripped)
 
             except KeyboardInterrupt:
                 self._console.print()
@@ -115,6 +137,69 @@ class ShellUI:
                 self._console.print()
                 self._handle_exit()
                 break
+
+    def _handle_plain_text(self, text: str) -> None:
+        """Handle plain text input — route to active provider or show message."""
+        session = self._session_manager.current
+        provider_name = session.provider
+
+        if not provider_name:
+            self._console.print(
+                "[dim]No model connected. Use /setup or configure a "
+                "model/provider to start chatting.[/dim]"
+            )
+            return
+
+        # Get or cache the active provider instance
+        provider = self._get_active_provider(provider_name)
+        if provider is None:
+            self._console.print(
+                f"[red]Failed to connect to provider '{provider_name}'. "
+                "Check /providers test.[/red]"
+            )
+            return
+
+        # Add user message to history
+        session.history.append(Message(role="user", content=text, timestamp=datetime.now()))
+
+        # Build model messages from session history
+        model_messages = self._history_to_model_messages()
+
+        # Stream the response
+        try:
+            chunks = provider.stream_generate(model_messages)
+            response_text = self._stream_renderer.render_stream(chunks)
+        except Exception as e:
+            self._stream_renderer.render_error(str(e))
+            return
+
+        # Add assistant response to history
+        if response_text:
+            session.history.append(
+                Message(role="assistant", content=response_text, timestamp=datetime.now())
+            )
+
+    def _get_active_provider(self, provider_name: str) -> RemoteProvider | None:
+        """Get the active provider, caching the instance."""
+        if self._active_provider and self._active_provider_name == provider_name:
+            return self._active_provider
+        try:
+            self._active_provider = self._provider_registry.create_provider(provider_name)
+            self._active_provider_name = provider_name
+            return self._active_provider
+        except Exception:
+            self._active_provider = None
+            self._active_provider_name = ""
+            return None
+
+    def _history_to_model_messages(self) -> list[ModelMessage]:
+        """Convert session history to ModelMessage list for the provider."""
+        session = self._session_manager.current
+        return [
+            ModelMessage(role=msg.role, content=msg.content)
+            for msg in session.history
+            if not msg.is_summary
+        ]
 
     def _display_welcome(self) -> None:
         """Show the welcome banner."""

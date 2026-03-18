@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from localagentcli.__main__ import main
@@ -11,13 +10,12 @@ from localagentcli.__main__ import main
 class TestMain:
     """Tests for the main entry point."""
 
-    @patch("localagentcli.__main__.ShellUI")
-    @patch("localagentcli.__main__.ConfigManager")
-    @patch("localagentcli.__main__.StorageManager")
+    @patch("localagentcli.shell.ui.ShellUI")
+    @patch("localagentcli.config.manager.ConfigManager")
+    @patch("localagentcli.storage.manager.StorageManager")
     def test_main_initializes_and_runs(self, mock_storage_cls, mock_config_cls, mock_ui_cls):
         mock_storage = MagicMock()
-        mock_storage.config_path = Path("/fake/.localagent/config.toml")
-        mock_storage.config_path.exists = MagicMock(return_value=True)
+        mock_storage.config_path.exists.return_value = True
         mock_storage_cls.return_value = mock_storage
 
         mock_config = MagicMock()
@@ -32,9 +30,9 @@ class TestMain:
         mock_config.load.assert_called_once()
         mock_ui.run.assert_called_once()
 
-    @patch("localagentcli.__main__.ShellUI")
-    @patch("localagentcli.__main__.ConfigManager")
-    @patch("localagentcli.__main__.StorageManager")
+    @patch("localagentcli.shell.ui.ShellUI")
+    @patch("localagentcli.config.manager.ConfigManager")
+    @patch("localagentcli.storage.manager.StorageManager")
     def test_main_detects_first_run(self, mock_storage_cls, mock_config_cls, mock_ui_cls):
         mock_storage = MagicMock()
         mock_storage.config_path = MagicMock()
@@ -53,9 +51,9 @@ class TestMain:
         _, kwargs = mock_ui_cls.call_args
         assert kwargs["first_run"] is True
 
-    @patch("localagentcli.__main__.ShellUI")
-    @patch("localagentcli.__main__.ConfigManager")
-    @patch("localagentcli.__main__.StorageManager")
+    @patch("localagentcli.shell.ui.ShellUI")
+    @patch("localagentcli.config.manager.ConfigManager")
+    @patch("localagentcli.storage.manager.StorageManager")
     def test_main_not_first_run(self, mock_storage_cls, mock_config_cls, mock_ui_cls):
         mock_storage = MagicMock()
         mock_storage.config_path = MagicMock()

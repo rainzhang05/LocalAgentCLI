@@ -1,0 +1,236 @@
+"""AnthropicProvider — Anthropic Messages API integration."""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from typing import Iterator
+
+import httpx
+
+from localagentcli.models.backends.base import (
+    GenerationResult,
+    ModelMessage,
+    StreamChunk,
+)
+from localagentcli.providers.base import (
+    ConnectionTestResult,
+    RemoteModelInfo,
+    RemoteProvider,
+)
+
+logger = logging.getLogger(__name__)
+
+ANTHROPIC_MODELS = [
+    RemoteModelInfo(
+        id="claude-opus-4-20250514",
+        name="Claude Opus 4",
+        capabilities={"tool_use": True, "reasoning": True, "streaming": True},
+    ),
+    RemoteModelInfo(
+        id="claude-sonnet-4-20250514",
+        name="Claude Sonnet 4",
+        capabilities={"tool_use": True, "reasoning": True, "streaming": True},
+    ),
+    RemoteModelInfo(
+        id="claude-haiku-4-5-20251001",
+        name="Claude Haiku 4.5",
+        capabilities={"tool_use": True, "reasoning": True, "streaming": True},
+    ),
+]
+
+
+class AnthropicProvider(RemoteProvider):
+    """Provider for the Anthropic Messages API."""
+
+    ANTHROPIC_VERSION = "2023-06-01"
+
+    def __init__(
+        self,
+        name: str,
+        base_url: str,
+        api_key: str,
+        default_model: str,
+        options: dict | None = None,
+    ):
+        super().__init__(name, base_url, api_key, default_model, options)
+        timeout = self._options.get("timeout", 30)
+        self._client = httpx.Client(
+            base_url=self._base_url,
+            headers={
+                "x-api-key": self._api_key,
+                "anthropic-version": self.ANTHROPIC_VERSION,
+                "content-type": "application/json",
+            },
+            timeout=timeout,
+        )
+
+    def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        """POST /v1/messages without streaming."""
+        body = self._build_request_body(messages, stream=False, **kwargs)
+        try:
+            response = self._client.post("/v1/messages", json=body)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+
+        data = response.json()
+        text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        for block in data.get("content", []):
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "thinking":
+                reasoning_parts.append(block.get("thinking", ""))
+
+        return GenerationResult(
+            text="".join(text_parts),
+            reasoning="".join(reasoning_parts),
+            usage=data.get("usage", {}),
+            finish_reason=data.get("stop_reason", ""),
+        )
+
+    def stream_generate(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> Iterator[StreamChunk]:
+        """POST /v1/messages with stream=True. Handle Anthropic SSE format."""
+        body = self._build_request_body(messages, stream=True, **kwargs)
+        try:
+            with self._client.stream("POST", "/v1/messages", json=body) as resp:
+                resp.raise_for_status()
+                event_type = ""
+                for line in resp.iter_lines():
+                    if line.startswith("event: "):
+                        event_type = line[7:].strip()
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    chunk = self._parse_sse_event(event_type, line[6:])
+                    if chunk is not None:
+                        yield chunk
+                        if chunk.is_done:
+                            return
+        except httpx.HTTPStatusError as e:
+            yield StreamChunk(text=f"API error: {e.response.status_code}", is_done=True)
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            yield StreamChunk(text=f"Connection error: {e}", is_done=True)
+
+    def test_connection(self) -> ConnectionTestResult:
+        """Send a minimal /v1/messages request to verify connectivity."""
+        start = time.monotonic()
+        try:
+            body = {
+                "model": self._default_model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "Hi"}],
+            }
+            response = self._client.post("/v1/messages", json=body)
+            response.raise_for_status()
+            latency = (time.monotonic() - start) * 1000
+            return ConnectionTestResult(
+                success=True,
+                message="Connected successfully.",
+                latency_ms=latency,
+            )
+        except httpx.HTTPStatusError as e:
+            latency = (time.monotonic() - start) * 1000
+            if e.response.status_code == 401:
+                msg = "Authentication failed. Check your API key."
+            else:
+                msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+            return ConnectionTestResult(success=False, message=msg, latency_ms=latency)
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            latency = (time.monotonic() - start) * 1000
+            return ConnectionTestResult(
+                success=False,
+                message=f"Connection failed: {e}",
+                latency_ms=latency,
+            )
+
+    def list_models(self) -> list[RemoteModelInfo]:
+        """Return built-in list of known Anthropic models."""
+        return list(ANTHROPIC_MODELS)
+
+    def supports_tools(self) -> bool:
+        return True
+
+    def supports_reasoning(self) -> bool:
+        return True
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    def capabilities(self) -> dict:
+        return {"tool_use": True, "reasoning": True, "streaming": True}
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_request_body(
+        self,
+        messages: list[ModelMessage],
+        stream: bool = False,
+        **kwargs: object,
+    ) -> dict:
+        """Build the request body for /v1/messages."""
+        system_text, api_messages = self._format_messages(messages)
+        body: dict = {
+            "model": kwargs.get("model", self._default_model),
+            "messages": api_messages,
+            "stream": stream,
+            "max_tokens": kwargs.get("max_tokens", 4096),
+        }
+        if system_text:
+            body["system"] = system_text
+        if "temperature" in kwargs:
+            body["temperature"] = kwargs["temperature"]
+        return body
+
+    @staticmethod
+    def _format_messages(
+        messages: list[ModelMessage],
+    ) -> tuple[str, list[dict]]:
+        """Separate system message and format user/assistant messages.
+
+        Returns (system_text, api_messages).
+        Anthropic requires alternating user/assistant roles.
+        """
+        system_text = ""
+        api_messages: list[dict] = []
+        for msg in messages:
+            if msg.role == "system":
+                system_text = msg.content
+            else:
+                api_messages.append({"role": msg.role, "content": msg.content})
+        return system_text, api_messages
+
+    @staticmethod
+    def _parse_sse_event(event_type: str, data_str: str) -> StreamChunk | None:
+        """Parse an Anthropic SSE event into a StreamChunk."""
+        try:
+            data = json.loads(data_str)
+        except json.JSONDecodeError:
+            return None
+
+        if event_type == "content_block_delta":
+            delta = data.get("delta", {})
+            delta_type = delta.get("type", "")
+            if delta_type == "text_delta":
+                return StreamChunk(text=delta.get("text", ""))
+            if delta_type == "thinking_delta":
+                return StreamChunk(text=delta.get("thinking", ""), is_reasoning=True)
+
+        if event_type == "message_stop":
+            return StreamChunk(is_done=True)
+
+        if event_type == "message_delta":
+            usage = data.get("usage")
+            stop_reason = data.get("delta", {}).get("stop_reason")
+            if stop_reason:
+                return StreamChunk(is_done=True, usage=usage)
+
+        return None

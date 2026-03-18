@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-17
+> **Last updated**: 2026-03-17 (Phase 1 complete)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -25,20 +25,20 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | CLI entry point (`localagent` command) | |
-| `[ ]` | Shell UI (input loop, prompt) | |
-| `[ ]` | Command Router (parsing, dispatch) | |
-| `[ ]` | `/help` command | |
-| `[ ]` | `/exit` command | |
-| `[ ]` | `/status` command | |
-| `[ ]` | `/config` command | |
-| `[ ]` | `/setup` wizard | |
-| `[ ]` | Config system (TOML read/write) | |
-| `[ ]` | Config defaults and validation | |
-| `[ ]` | Session state dataclass | |
-| `[ ]` | Session manager (new/save/load/list/clear) | |
-| `[ ]` | Storage manager (directory init) | |
-| `[ ]` | Logger (file-based, leveled) | |
+| `[x]` | CLI entry point (`localagent` command) | 2026-03-17 |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-17 |
+| `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
+| `[x]` | `/help` command | 2026-03-17 |
+| `[x]` | `/exit` command | 2026-03-17 |
+| `[x]` | `/status` command | 2026-03-17 |
+| `[x]` | `/config` command | 2026-03-17 |
+| `[x]` | `/setup` wizard | 2026-03-17 — simplified for Phase 1 (no model/provider) |
+| `[x]` | Config system (TOML read/write) | 2026-03-17 |
+| `[x]` | Config defaults and validation | 2026-03-17 |
+| `[x]` | Session state dataclass | 2026-03-17 |
+| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-17 |
+| `[x]` | Storage manager (directory init) | 2026-03-17 |
+| `[x]` | Logger (file-based, leveled) | 2026-03-17 |
 
 ---
 

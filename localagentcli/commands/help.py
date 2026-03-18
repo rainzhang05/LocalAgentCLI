@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
 
-
 # Command groupings for organized help display
 COMMAND_GROUPS = [
     ("System", ["help", "setup", "status", "config", "exit"]),
@@ -52,7 +51,6 @@ class HelpHandler(CommandHandler):
         if matching:
             lines = [f"/{name} subcommands:", ""]
             for cmd_name, handler in sorted(matching.items()):
-                sub = cmd_name.split(" ", 1)[1]
                 summary = handler.help_text().split("\n")[0]
                 lines.append(f"  /{cmd_name:<20s} {summary}")
             return CommandResult.ok("\n".join(lines))

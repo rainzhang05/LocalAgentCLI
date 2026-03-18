@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-17 (Phase 1 complete)
+> **Last updated**: 2026-03-17 (Phase 1 complete, CI and tests added)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -148,17 +148,27 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | `pyproject.toml` configuration | |
+| `[x]` | `pyproject.toml` configuration | 2026-03-17 |
 | `[ ]` | Backend auto-install on demand | |
-| `[ ]` | Unit tests | |
+| `[x]` | Unit tests | 2026-03-17 — 175 tests, 95% coverage |
 | `[ ]` | Integration tests | |
 | `[ ]` | CLI tests | |
 | `[ ]` | Agent workflow tests | |
 | `[ ]` | Safety tests | |
-| `[ ]` | Cross-platform testing (macOS) | |
-| `[ ]` | Cross-platform testing (Linux) | |
+| `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
+| `[x]` | Cross-platform testing (Linux) | 2026-03-17 — via CI matrix |
 | `[ ]` | Cross-platform testing (Windows) | |
 | `[ ]` | PyPI release | |
+
+---
+
+## CI / Workflows
+
+| Status | Component | Notes |
+|---|---|---|
+| `[x]` | `.github/workflows/test.yml` | 2026-03-17 — pytest + coverage, matrix: ubuntu/macos × py3.11-3.13 |
+| `[x]` | `.github/workflows/lint.yml` | 2026-03-17 — ruff check + format |
+| `[x]` | `.github/workflows/typecheck.yml` | 2026-03-17 — mypy |
 
 ---
 
@@ -179,5 +189,5 @@ After implementing a component:
 | `[x]` | `docs/packaging-and-release.md` | Complete |
 | `[x]` | `docs/roadmap.md` | Complete |
 | `[x]` | `docs/current-state.md` | Complete |
-| `[x]` | `CLAUDE.md` | Complete |
-| `[x]` | `AGENTS.md` | Complete |
+| `[x]` | `CLAUDE.md` | Complete — includes testing/CI requirements |
+| `[x]` | `AGENTS.md` | Complete — includes testing/CI requirements |

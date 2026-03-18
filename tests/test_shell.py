@@ -86,6 +86,11 @@ class TestShellUIInit:
         assert "setup" in commands
         assert "session save" in commands
         assert "session load" in commands
+        assert "providers list" in commands
+        assert "providers add" in commands
+        assert "providers remove" in commands
+        assert "providers use" in commands
+        assert "providers test" in commands
 
 
 class TestShellUIRenderResult:

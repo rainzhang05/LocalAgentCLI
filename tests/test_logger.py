@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from pathlib import Path
-
-import pytest
 
 from localagentcli.storage.logger import NORMAL, VERBOSE, Logger
 
@@ -43,50 +40,49 @@ class TestLoggerMethods:
     def test_normal_writes_to_file(self, storage):
         logger = Logger(storage.logs_dir, level="normal")
         logger.normal("Test normal message")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Test normal message" in content
 
     def test_verbose_not_written_at_normal_level(self, storage):
         logger = Logger(storage.logs_dir, level="normal")
         logger.verbose("Verbose message")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Verbose message" not in content
 
     def test_verbose_written_at_verbose_level(self, storage):
         logger = Logger(storage.logs_dir, level="verbose")
         logger.verbose("Verbose message")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Verbose message" in content
 
     def test_debug_written_at_debug_level(self, storage):
         logger = Logger(storage.logs_dir, level="debug")
         logger.debug("Debug message")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Debug message" in content
 
     def test_debug_not_written_at_normal_level(self, storage):
         logger = Logger(storage.logs_dir, level="normal")
         logger.debug("Debug message")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Debug message" not in content
 
     def test_error_always_written(self, storage):
         logger = Logger(storage.logs_dir, level="normal")
         logger.error("Error message")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Error message" in content
 
     def test_format_string_args(self, storage):
         logger = Logger(storage.logs_dir, level="normal")
         logger.normal("Session %s started", "abc123")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Session abc123 started" in content
 
-    def _read_log(self, storage) -> str:
+    def _read_log(self, storage, logger: Logger) -> str:
         date_str = datetime.now().strftime("%Y%m%d")
         log_file = storage.logs_dir / f"localagent_{date_str}.log"
-        # Flush handlers
-        for handler in logging.getLogger().handlers:
+        for handler in logger._logger.handlers:
             handler.flush()
         return log_file.read_text() if log_file.exists() else ""
 
@@ -98,19 +94,21 @@ class TestLoggerSetLevel:
         logger = Logger(storage.logs_dir, level="normal")
         logger.set_level("debug")
         logger.debug("Now visible")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Now visible" in content
 
     def test_change_to_normal(self, storage):
         logger = Logger(storage.logs_dir, level="debug")
         logger.set_level("normal")
         logger.debug("Should not appear")
-        content = self._read_log(storage)
+        content = self._read_log(storage, logger)
         assert "Should not appear" not in content
 
-    def _read_log(self, storage) -> str:
+    def _read_log(self, storage, logger: Logger) -> str:
         date_str = datetime.now().strftime("%Y%m%d")
         log_file = storage.logs_dir / f"localagent_{date_str}.log"
+        for handler in logger._logger.handlers:
+            handler.flush()
         return log_file.read_text() if log_file.exists() else ""
 
 

@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-17 (Phase 1 complete, CI and tests added)
+> **Last updated**: 2026-03-18 (Phase 2 complete — remote providers, streaming, key management)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -46,19 +46,19 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | Provider base class (ABC) | |
-| `[ ]` | Provider registry | |
-| `[ ]` | OpenAI-compatible provider | |
-| `[ ]` | Anthropic provider | |
-| `[ ]` | Generic REST provider | |
-| `[ ]` | API key manager (keychain + encrypted) | |
-| `[ ]` | `/providers add` command | |
-| `[ ]` | `/providers list` command | |
-| `[ ]` | `/providers remove` command | |
-| `[ ]` | `/providers use` command | |
-| `[ ]` | `/providers test` command | |
-| `[ ]` | SSE streaming support | |
-| `[ ]` | Model abstraction layer | |
+| `[x]` | Provider base class (ABC) | 2026-03-18 |
+| `[x]` | Provider registry | 2026-03-18 |
+| `[x]` | OpenAI-compatible provider | 2026-03-18 |
+| `[x]` | Anthropic provider | 2026-03-18 |
+| `[x]` | Generic REST provider | 2026-03-18 |
+| `[x]` | API key manager (keychain + encrypted) | 2026-03-18 |
+| `[x]` | `/providers add` command | 2026-03-18 |
+| `[x]` | `/providers list` command | 2026-03-18 |
+| `[x]` | `/providers remove` command | 2026-03-18 |
+| `[x]` | `/providers use` command | 2026-03-18 |
+| `[x]` | `/providers test` command | 2026-03-18 |
+| `[x]` | SSE streaming support | 2026-03-18 |
+| `[x]` | Model abstraction layer | 2026-03-18 |
 
 ---
 
@@ -150,7 +150,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-17 |
 | `[ ]` | Backend auto-install on demand | |
-| `[x]` | Unit tests | 2026-03-17 — 175 tests, 95% coverage |
+| `[x]` | Unit tests | 2026-03-18 — 384 tests, 93% coverage |
 | `[ ]` | Integration tests | |
 | `[ ]` | CLI tests | |
 | `[ ]` | Agent workflow tests | |

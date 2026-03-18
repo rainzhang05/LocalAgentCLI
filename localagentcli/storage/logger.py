@@ -39,14 +39,15 @@ class Logger:
         logger = logging.getLogger(f"localagent.{id(self)}")
         logger.setLevel(self._level)
 
-        # Avoid duplicate handlers
-        if logger.handlers:
-            return logger
+        # Clear any stale handlers (handles logger name reuse)
+        for old_handler in logger.handlers[:]:
+            old_handler.close()
+            logger.removeHandler(old_handler)
 
         date_str = datetime.now().strftime("%Y%m%d")
         log_file = self._logs_dir / f"localagent_{date_str}.log"
 
-        handler = logging.FileHandler(log_file, encoding="utf-8")
+        handler = logging.FileHandler(log_file, encoding="utf-8", delay=False)
         handler.setLevel(self._level)
 
         formatter = logging.Formatter(

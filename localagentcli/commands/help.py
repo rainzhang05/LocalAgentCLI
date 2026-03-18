@@ -8,6 +8,16 @@ from localagentcli.commands.router import CommandHandler, CommandResult, Command
 COMMAND_GROUPS = [
     ("System", ["help", "setup", "status", "config", "exit"]),
     ("Session", ["session new", "session save", "session load", "session list", "session clear"]),
+    (
+        "Provider",
+        [
+            "providers list",
+            "providers add",
+            "providers remove",
+            "providers use",
+            "providers test",
+        ],
+    ),
 ]
 
 

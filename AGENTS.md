@@ -66,6 +66,16 @@ After completing any implementation work, update [docs/current-state.md](docs/cu
   - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
   - Example: `feat: add command router with dispatch logic`
 
+### 7. Testing and CI
+
+After making changes, ensure all CI checks pass locally before committing:
+
+- **Tests with coverage**: `python -m pytest --cov=localagentcli --cov-fail-under=80`
+- **Lint**: `ruff check .` and `ruff format --check .`
+- **Type check**: `mypy localagentcli/`
+
+Test coverage must remain at or above **80%**. If you add new code, add corresponding tests. If coverage drops below 80%, add tests to bring it back up before committing.
+
 ---
 
 ## What Not To Do

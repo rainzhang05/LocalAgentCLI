@@ -72,16 +72,10 @@ class CommandRouter:
             return self._commands[command_name].execute(parts[1:])
 
         # Check if parent command exists with subcommands
-        subcommands = [
-            name for name in self._commands if name.startswith(f"{command_name} ")
-        ]
+        subcommands = [name for name in self._commands if name.startswith(f"{command_name} ")]
         if subcommands:
-            subs = ", ".join(
-                name.split(" ", 1)[1] for name in sorted(subcommands)
-            )
-            return CommandResult.error(
-                f"/{command_name} requires a subcommand: {subs}"
-            )
+            subs = ", ".join(name.split(" ", 1)[1] for name in sorted(subcommands))
+            return CommandResult.error(f"/{command_name} requires a subcommand: {subs}")
 
         return CommandResult.error(f"Unknown command: /{command_name}")
 

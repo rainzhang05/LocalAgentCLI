@@ -1,4 +1,5 @@
-"""Tests for model abstraction layer — StreamChunk, GenerationResult, ModelBackend, ModelAbstractionLayer."""
+"""Tests for model abstraction layer — StreamChunk, GenerationResult,
+ModelBackend, ModelAbstractionLayer."""
 
 from __future__ import annotations
 
@@ -7,14 +8,13 @@ from typing import Iterator
 
 import pytest
 
+from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import (
     GenerationResult,
     ModelBackend,
     ModelMessage,
     StreamChunk,
 )
-from localagentcli.models.abstraction import ModelAbstractionLayer
-
 
 # ---------------------------------------------------------------------------
 # StreamChunk tests

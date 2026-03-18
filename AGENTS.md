@@ -61,6 +61,7 @@ After completing any implementation work, update [docs/current-state.md](docs/cu
 - **One file per commit.** If you modify 10 files, make 10 commits.
 - **Commit on the current branch.** Do not create new branches.
 - **Commit locally only.** Do not push unless explicitly instructed.
+- **No co-author trailers.** Do not add `Co-Authored-By` or any attribution lines. Commits are attributed to the user via their git config.
 - **Commit message format**: `<type>: <short description>`
   - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
   - Example: `feat: add command router with dispatch logic`

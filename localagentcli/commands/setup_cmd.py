@@ -67,8 +67,10 @@ class SetupHandler(CommandHandler):
         session.workspace = self._config.get("general.workspace", ".")
 
         self._console.print()
-        self._console.print("[dim]Model and provider setup will be available once")
-        self._console.print("model/provider support is installed.[/dim]")
+        self._console.print(
+            "[dim]Model and provider setup will be available once\n"
+            "model/provider support is installed.[/dim]"
+        )
         self._console.print()
 
         return CommandResult.ok("Setup complete.")

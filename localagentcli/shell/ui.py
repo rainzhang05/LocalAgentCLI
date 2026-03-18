@@ -8,9 +8,15 @@ from rich.prompt import Confirm
 from localagentcli.commands import (
     config_cmd,
     exit_cmd,
-    help as help_cmd,
-    session as session_cmd,
     setup_cmd,
+)
+from localagentcli.commands import (
+    help as help_cmd,
+)
+from localagentcli.commands import (
+    session as session_cmd,
+)
+from localagentcli.commands import (
     status as status_cmd,
 )
 from localagentcli.commands.router import CommandResult, CommandRouter
@@ -142,9 +148,10 @@ class ShellUI:
         # Abbreviate home directory
         try:
             from pathlib import Path
+
             home = str(Path.home())
             if workspace.startswith(home):
-                workspace = "~" + workspace[len(home):]
+                workspace = "~" + workspace[len(home) :]
         except Exception:
             pass
 

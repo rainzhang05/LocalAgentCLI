@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.shell.prompt import CommandCompleter, create_prompt_session
@@ -143,8 +141,9 @@ class TestShellUIHandleExit:
     def test_exit_modified_session_decline_save(self, mock_confirm, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
-        from localagentcli.session.state import Message
         from datetime import datetime
+
+        from localagentcli.session.state import Message
 
         ui._session_manager.current.history.append(
             Message(role="user", content="test", timestamp=datetime.now())
@@ -156,8 +155,9 @@ class TestShellUIHandleExit:
     def test_exit_modified_session_accept_save(self, mock_confirm, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
-        from localagentcli.session.state import Message
         from datetime import datetime
+
+        from localagentcli.session.state import Message
 
         ui._session_manager.current.history.append(
             Message(role="user", content="test", timestamp=datetime.now())

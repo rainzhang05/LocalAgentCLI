@@ -19,21 +19,23 @@ class ProviderEntry:
     name: str
     type: str  # "openai" | "anthropic" | "rest"
     base_url: str
-    default_model: str
+    default_model: str = ""
     options: dict = field(default_factory=dict)
     status: str = "configured"  # "configured" | "tested"
     added_at: str = ""
 
     def to_dict(self) -> dict:
         """Serialize to a dict for config storage."""
-        return {
+        data = {
             "type": self.type,
             "base_url": self.base_url,
-            "default_model": self.default_model,
             "options": self.options,
             "status": self.status,
             "added_at": self.added_at,
         }
+        if self.default_model:
+            data["default_model"] = self.default_model
+        return data
 
     @classmethod
     def from_dict(cls, name: str, data: dict) -> ProviderEntry:

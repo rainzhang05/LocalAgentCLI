@@ -120,13 +120,63 @@ class TestStreamRendererRenderStream:
         assert "thinking..." in panel_arg.renderable
         assert panel_arg.title == "Details"
 
+    def test_renders_late_secondary_detail_once_at_finalize(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_stream(
+            iter(
+                [
+                    StreamChunk(text="thinking...", is_reasoning=True),
+                    StreamChunk(text="Hello"),
+                    StreamChunk(
+                        text="runtime warning",
+                        kind="notification",
+                        importance="secondary",
+                    ),
+                    StreamChunk(text=" world"),
+                    StreamChunk(is_done=True),
+                ]
+            )
+        )
+
+        first_panel = console.print.call_args_list[0].args[0]
+        second_panel = console.print.call_args_list[4].args[0]
+        assert isinstance(first_panel, Panel)
+        assert first_panel.title == "Details"
+        assert "thinking..." in first_panel.renderable
+        assert isinstance(second_panel, Panel)
+        assert second_panel.title == "Details"
+        assert "runtime warning" in second_panel.renderable
+
+    def test_does_not_duplicate_already_rendered_secondary_detail(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_stream(
+            iter(
+                [
+                    StreamChunk(text="thinking...", is_reasoning=True),
+                    StreamChunk(text="Hello"),
+                    StreamChunk(is_done=True),
+                ]
+            )
+        )
+
+        panels = [
+            call.args[0]
+            for call in console.print.call_args_list
+            if call.args and isinstance(call.args[0], Panel)
+        ]
+        assert len(panels) == 1
+
 
 class TestStreamRendererRenderError:
     def test_render_error(self):
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_error("Something went wrong")
-        console.print.assert_called_once_with("\n[red]Error: Something went wrong[/red]")
+        console.print.assert_called_once_with("[red]✗ Something went wrong[/red]")
 
 
 class TestStreamRendererActivity:
@@ -181,9 +231,12 @@ class TestStreamRendererAgentEvents:
         )
 
         renderer.render_agent_event(event)
+        renderer.flush_pending_details()
 
         assert "HIGH RISK" in console.print.call_args_list[0].args[0]
-        assert "Dangerous command" in console.print.call_args_list[1].args[0]
+        warning_panel = console.print.call_args_list[1].args[0]
+        assert isinstance(warning_panel, Panel)
+        assert "Dangerous command" in warning_panel.renderable
 
     def test_tool_result_renders_failure(self):
         console = MagicMock()
@@ -194,15 +247,17 @@ class TestStreamRendererAgentEvents:
 
         assert "Tool failed" in console.print.call_args.args[0]
 
-    def test_reasoning_output_renders_panel(self):
+    def test_reasoning_output_uses_details_lane(self):
         console = MagicMock()
         renderer = StreamRenderer(console)
 
         renderer.render_agent_event(ReasoningOutput(text="Because it helps"))
+        renderer.render_agent_event(StepStarted(step=PlanStep(index=2, description="Run tests")))
 
-        panel_arg = console.print.call_args.args[0]
+        panel_arg = console.print.call_args_list[0].args[0]
         assert isinstance(panel_arg, Panel)
-        assert panel_arg.title == "Reasoning"
+        assert panel_arg.title == "Details"
+        assert "Because it helps" in panel_arg.renderable
 
     def test_task_complete_renders_activity_and_summary(self):
         console = MagicMock()

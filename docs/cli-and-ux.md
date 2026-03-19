@@ -258,6 +258,8 @@ You're all set! Here's how to get started:
 >
 ```
 
+If first launch happens in a non-interactive environment such as CI, `pipx` smoke tests, or a piped shell command, `/setup` must not block on prompts. In that case it should persist the current defaults, print a short note that non-interactive defaults were used, and continue into the shell normally.
+
 ---
 
 ## Suggested Libraries

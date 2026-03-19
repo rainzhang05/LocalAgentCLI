@@ -76,14 +76,15 @@ if __name__ == "__main__":
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "localagentcli"
 version = "0.1.0"
 description = "A production-grade, local-first AI CLI"
+readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 
 dependencies = [
     "prompt-toolkit>=3.0",
@@ -110,9 +111,15 @@ torch = [
     "safetensors>=0.4",
 ]
 all = [
-    "localagentcli[mlx,gguf,torch]",
+    "mlx>=0.5",
+    "mlx-lm>=0.5",
+    "llama-cpp-python>=0.2",
+    "torch>=2.0",
+    "transformers>=4.35",
+    "safetensors>=0.4",
 ]
 dev = [
+    "build>=1.2",
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
@@ -154,8 +161,8 @@ Backend dependencies are installed on demand when the user first needs them:
 When a user attempts to use a backend whose dependencies are not installed:
 
 1. Detect the missing dependency
-2. Display: `"The MLX backend requires the 'mlx' package. Install it now? [Y/n]"`
-3. On confirmation, run `pip install localagentcli[mlx]` (or equivalent)
+2. Display an inline confirmation prompt from the shell UI
+3. On confirmation, run `python -m pip install localagentcli[mlx]` (or equivalent)
 4. Verify the installation succeeded
 5. Proceed with model loading
 
@@ -179,6 +186,8 @@ def check_backend_dependencies(backend: str) -> tuple[bool, list[str]]:
             missing.append(pkg)
     return len(missing) == 0, missing
 ```
+
+The shell owns the confirmation and retry loop so backend modules remain focused on loading and generation.
 
 ---
 
@@ -234,36 +243,16 @@ These flows must be tested end-to-end and must pass before any release:
 
 ### Test Organization
 
-```
+The repository keeps broad unit and component coverage in the top-level `tests/` directory and adds dedicated phase-level suites under:
+
+```text
 tests/
-├── unit/
-│   ├── test_command_router.py
-│   ├── test_config_manager.py
-│   ├── test_model_registry.py
-│   ├── test_safety_layer.py
-│   ├── test_workspace_boundary.py
-│   ├── test_rollback_manager.py
-│   ├── test_context_compactor.py
-│   └── test_logger.py
-├── integration/
-│   ├── test_session_lifecycle.py
-│   ├── test_model_install_flow.py
-│   ├── test_provider_connection.py
-│   └── test_agent_tool_execution.py
 ├── cli/
-│   ├── test_shell_launch.py
-│   ├── test_command_execution.py
-│   └── test_interrupt_handling.py
-├── agent/
-│   ├── test_agent_loop.py
-│   ├── test_plan_generation.py
-│   └── test_tool_batching.py
-├── safety/
-│   ├── test_approval_modes.py
-│   ├── test_boundary_enforcement.py
-│   ├── test_high_risk_detection.py
-│   └── test_rollback.py
-└── conftest.py                  # Shared fixtures
+│   └── test_packaging_cli.py
+├── integration/
+│   └── test_packaging_flows.py
+├── test_*.py
+└── conftest.py
 ```
 
 ---
@@ -297,3 +286,5 @@ All 9 criteria must be verified by automated tests and manual testing before a v
 7. Built (`python -m build`)
 8. Published to PyPI (`twine upload dist/*`)
 9. Verified with `pipx install localagentcli` on a clean system
+
+CI should run the full test matrix on macOS, Linux, and Windows, and it should build the package artifacts on every change.

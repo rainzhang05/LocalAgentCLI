@@ -233,7 +233,8 @@ These flows must be tested end-to-end and must pass before any release:
 1. **Install → Launch → Setup**
    - `pipx install localagentcli` completes without errors
    - `localagentcli` launches the interactive shell
-   - First-run `/setup` wizard completes successfully
+   - First-run `/setup` wizard completes successfully in interactive terminals
+   - First-run `/setup` falls back to current/default values without prompting when stdin is non-interactive, so packaged smoke tests and piped launches do not fail with `EOFError`
    - Config file is created with valid defaults
 
 2. **Model Install/Use**
@@ -265,6 +266,8 @@ These flows must be tested end-to-end and must pass before any release:
    - Conversation history is intact
 
 The CI smoke path should execute the installed app from `python -m pipx environment --value PIPX_BIN_DIR` rather than hard-coding a `pipx` venv location, because the internal venv path can differ across `pipx` versions and environments.
+
+The CI/package smoke path should also exercise a non-interactive first launch, such as piping `/exit` into `localagentcli`, because packaged entrypoint validation often runs without a TTY. The first-run setup flow must treat that case as valid and persist defaults instead of prompting.
 
 ### Test Organization
 

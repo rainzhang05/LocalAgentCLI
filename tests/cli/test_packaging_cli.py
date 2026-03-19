@@ -91,6 +91,16 @@ def _interrupt_process(process: subprocess.Popen[str]) -> None:
 
 
 class TestPackagingCLI:
+    def test_first_run_noninteractive_exit_uses_defaults(self, tmp_path: Path):
+        home = tmp_path / "home"
+        result = _run_cli(home, "/exit\n")
+
+        assert result.returncode == 0
+        assert "Setup Wizard" in result.stdout
+        assert "Non-interactive setup detected" in result.stdout
+        assert "Goodbye." in result.stdout
+        assert (home / ".localagent" / "config.toml").exists()
+
     def test_first_run_setup_creates_config(self, tmp_path: Path):
         home = tmp_path / "home"
         result = _run_cli(home, ".\nagent\nnormal\n/exit\n")

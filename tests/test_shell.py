@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from rich.text import Text
@@ -245,6 +246,17 @@ class TestShellUIInit:
         assert "mode chat" in commands
         assert "mode agent" in commands
 
+    def test_reuses_agent_controller_for_same_target(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        fake_backend = MagicMock()
+        model = MagicMock()
+        model.backend = fake_backend
+
+        first = ui._get_or_create_agent_controller(model)
+        second = ui._get_or_create_agent_controller(model)
+
+        assert first is second
+
 
 class TestShellUIRenderResult:
     """Tests for command result rendering."""
@@ -397,14 +409,17 @@ class TestShellUIRun:
 
         with patch("localagentcli.shell.ui.AgentController") as mock_controller_cls:
             controller = MagicMock()
-            controller.handle_task.return_value = iter(["agent-event"])
+            controller.dispatch_input.return_value = SimpleNamespace(
+                events=iter(["agent-event"]),
+                stream=None,
+            )
             controller.last_compaction_count = 0
             controller.has_active_task = False
             mock_controller_cls.return_value = controller
 
             ui._handle_plain_text("do something")
 
-        controller.handle_task.assert_called_once_with("do something")
+        controller.dispatch_input.assert_called_once_with("do something")
         ui._stream_renderer.render_agent_event.assert_called_once_with("agent-event")
 
     def test_rebuild_prompt_session_uses_session_history(self, config, storage):

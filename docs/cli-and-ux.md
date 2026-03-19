@@ -15,21 +15,25 @@ This document defines the terminal user interface: visual style, UI elements, in
 
 ## UI Elements
 
-### Status Header
+### Prompt Status Toolbar
 
-A single-line status summary showing current state:
+A single-line status summary shown in the prompt-toolkit toolbar while the shell is idle:
 
 ```
-LocalAgent | mode: agent | model: codellama-7b (gguf) | workspace: ~/project
+LocalAgent | mode: agent | target: codellama-7b (gguf) | workspace: ~/project | Type /help
 ```
 
 **Contents:**
 - Application name
 - Current mode (chat / agent)
-- Active model name and backend type (or provider name for remote models)
+- Active target label (local model/backend or provider/model pair)
 - Workspace path (abbreviated with `~`)
+- One short operator hint
 
-**Update behavior**: The current implementation prints this line before each prompt, so it appears in scrollback rather than staying pinned. Making it truly persistent is deferred to a later UX phase.
+**Update behavior**:
+- The toolbar is rendered by `prompt_toolkit` instead of being printed into scrollback before each prompt.
+- `/status` uses the same status snapshot data and formatting family, so the compact toolbar and expanded report cannot drift.
+- This is the strongest non-full-screen status surface currently used by the CLI. A full-screen TUI remains intentionally out of scope.
 
 ### Prompt Line
 
@@ -47,6 +51,23 @@ The input prompt where the user types:
 - The slash-command menu respects command visibility. Non-executable parent groups stay hidden, while executable commands such as `/hf-token` remain available so users can revisit them later.
 - The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.
+
+### Shared Prompt Contract
+
+Interactive command flows use one prompt-toolkit family of helpers:
+
+- `prompt_text()` for free-form values
+- `prompt_secret()` for masked secret entry
+- `prompt_action()` for short action pickers such as approve/deny/view details
+- `confirm_choice()` for yes/no confirmations built on the same action surface
+- `select_option()` for larger keyboard-filterable pickers
+
+This gives setup, config edits, provider setup, approvals, backend installs, save-on-exit prompts, and stop confirmations the same choose/confirm/execute/result rhythm.
+
+**Cancellation behavior:**
+- `Ctrl+C` or `Ctrl+D` during these helper prompts returns control without crashing the shell.
+- Helper-level cancellation resolves to `None`.
+- Callers translate that into consistent user-facing `"... cancelled."` messages through the command/shell result presentation contract.
 
 ### Streaming Output
 
@@ -106,7 +127,7 @@ Tool calls, approvals, and system events are displayed inline between user input
   ✓ file_read: src/auth.py (auto-approved)
   ⟳ patch_apply: src/auth.py
     Replace session token logic with JWT...
-    [Enter] Approve  |  [d] Deny  |  [v] View diff
+    Choose approval action: Approve / Deny / View details / Approve all
 
 ```
 
@@ -117,6 +138,16 @@ Tool calls, approvals, and system events are displayed inline between user input
 - `ℹ` — informational message (default high-contrast text)
 
 Supporting warnings or reasoning that do not deserve the main status lane are queued into the dimmed `Details` lane instead of being mixed into the main answer body.
+
+### Command Result Presentation
+
+Slash commands now distinguish between content and presentation:
+
+- Plain informational text prints directly
+- Status, success, warning, and error outcomes route through the shared renderer status grammar
+- Optional multi-line detail bodies print after the primary result line
+
+This keeps interactive command outcomes, cancellations, confirmations, and recovery messages visually aligned with streaming chat and agent activity.
 
 ---
 

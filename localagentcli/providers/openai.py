@@ -126,21 +126,29 @@ class OpenAIProvider(RemoteProvider):
             response = self._client.get("/models")
             response.raise_for_status()
             data = response.json()
-            return [
-                RemoteModelInfo(
-                    id=m["id"],
-                    name=m.get("id", ""),
-                    capabilities={
-                        "tool_use": True,
-                        "reasoning": False,
-                        "streaming": True,
-                    },
+            models: list[RemoteModelInfo] = []
+            for model_data in data.get("data", []):
+                model_id = model_data.get("id", "")
+                if not model_id:
+                    continue
+                models.append(
+                    RemoteModelInfo(
+                        id=model_id,
+                        name=model_data.get("id", ""),
+                        capabilities=self._capabilities_for_model(model_id),
+                    )
                 )
-                for m in data.get("data", [])
-            ]
+            if models:
+                return models
         except Exception:
             logger.debug("Failed to list models from %s", self._name)
-            return []
+        return [
+            RemoteModelInfo(
+                id=self._default_model,
+                name=self._default_model,
+                capabilities=self._capabilities_for_model(self._default_model),
+            )
+        ]
 
     def supports_tools(self) -> bool:
         return True
@@ -238,3 +246,12 @@ class OpenAIProvider(RemoteProvider):
             usage = data.get("usage")
             return StreamChunk(is_done=True, usage=usage)
         return None
+
+    @staticmethod
+    def _capabilities_for_model(model_id: str) -> dict:
+        lowered = model_id.lower()
+        return {
+            "tool_use": True,
+            "reasoning": lowered.startswith(("o1", "o3", "o4")) or lowered.startswith("gpt-5"),
+            "streaming": True,
+        }

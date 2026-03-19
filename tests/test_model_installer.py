@@ -10,7 +10,7 @@ import pytest
 from rich.console import Console
 
 from localagentcli.models.detector import ModelDetector
-from localagentcli.models.installer import ModelInstaller, _fmt_size
+from localagentcli.models.installer import ModelInstaller, _fmt_size, _make_fast_tqdm_class
 from localagentcli.models.registry import ModelRegistry
 
 
@@ -258,6 +258,14 @@ class TestCalculateSize:
 class TestFmtSize:
     def test_gb(self):
         assert _fmt_size(4_294_967_296) == "4.0 GB"
+
+
+class TestTQDMCompatibility:
+    def test_fast_tqdm_ignores_hub_name_kwarg(self):
+        tqdm_class = _make_fast_tqdm_class()
+        progress = tqdm_class(total=1, name="huggingface_hub.snapshot_download")
+        progress.update(1)
+        progress.close()
 
     def test_mb(self):
         assert _fmt_size(1_048_576) == "1.0 MB"

@@ -11,6 +11,7 @@ from localagentcli.models.backends.base import (
     ModelBackend,
     ModelMessage,
     StreamChunk,
+    backend_install_hint,
 )
 
 
@@ -134,7 +135,7 @@ class MLXBackend(ModelBackend):
             return mlx_lm
         except ImportError:
             raise RuntimeError(
-                "The MLX backend requires 'mlx-lm'. Install it with: pip install localagentcli[mlx]"
+                f"The MLX backend requires 'mlx-lm'. Install it with: {backend_install_hint('mlx')}"
             ) from None
 
     def _format_prompt(self, messages: list[ModelMessage]) -> str:

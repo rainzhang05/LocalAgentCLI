@@ -31,6 +31,7 @@ The system must distinguish between MLX-format safetensors and standard PyTorch 
 - Downloads from the Hugging Face Hub using the `huggingface_hub` library
 - Uses a live per-file progress display when the installed Hub client supports dry-run planning, so large model downloads keep updating continuously instead of waiting for coarse repo-level refreshes
 - Supports private repos (with token authentication)
+- `/hf-token` stores the Hugging Face token used for private Hub discovery and downloads, then hides itself from menus/help once configured
 - Respects `.gitignore`-style patterns in repo to skip unnecessary files
 
 ### Direct URL
@@ -270,8 +271,11 @@ class GenerationResult:
 ```
 
 - `final_text` is the primary assistant response shown in the normal output area.
-- `reasoning`, `tool_call`, `notification`, and `error` are secondary events. They remain available for rendering and session metadata even when they are visually dimmed or capped on screen.
+- `importance` determines whether an event is rendered in the high-contrast primary stream or the dimmed secondary details path.
+- `reasoning` and `tool_call` events are normally secondary.
+- `notification` and `error` events may be primary or secondary depending on severity; important runtime warnings stay high-contrast, while low-priority provider/model details remain dimmed.
 - `done` terminates the stream and may carry final `usage` or `finish_reason` metadata.
+- Local backends may emit raw in-band control markup (for example `<|channel|>analysis<|message|>...`). The abstraction layer must normalize those embedded channels into structured `StreamChunk` events before the shell renders them.
 
 ---
 

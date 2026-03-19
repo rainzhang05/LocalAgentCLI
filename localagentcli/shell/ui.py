@@ -2,34 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from pathlib import Path
 
 from rich.console import Console
 from rich.prompt import Confirm
 
-from localagentcli.commands import (
-    config_cmd,
-    exit_cmd,
-    setup_cmd,
-)
-from localagentcli.commands import (
-    help as help_cmd,
-)
-from localagentcli.commands import (
-    models as models_cmd,
-)
-from localagentcli.commands import (
-    providers as providers_cmd,
-)
-from localagentcli.commands import (
-    session as session_cmd,
-)
-from localagentcli.commands import (
-    status as status_cmd,
-)
+from localagentcli.agents.chat import ChatController
+from localagentcli.commands import config_cmd, exit_cmd, setup_cmd
+from localagentcli.commands import help as help_cmd
+from localagentcli.commands import mode as mode_cmd
+from localagentcli.commands import models as models_cmd
+from localagentcli.commands import providers as providers_cmd
+from localagentcli.commands import session as session_cmd
+from localagentcli.commands import status as status_cmd
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
-from localagentcli.models.backends.base import ModelBackend, ModelMessage
+from localagentcli.models.abstraction import ModelAbstractionLayer
+from localagentcli.models.backends.base import ModelBackend
 from localagentcli.models.detector import HardwareDetector, ModelDetector
 from localagentcli.models.installer import ModelInstaller
 from localagentcli.models.registry import ModelRegistry
@@ -37,8 +26,7 @@ from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.manager import SessionManager
-from localagentcli.session.state import Message
-from localagentcli.shell.prompt import create_prompt_session
+from localagentcli.shell.prompt import create_prompt_session, get_prompt_history_strings
 from localagentcli.shell.streaming import StreamRenderer
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
@@ -58,24 +46,20 @@ class ShellUI:
         self._first_run = first_run
         self._console = Console()
 
-        # Initialize logger
         self._logger = Logger(
             storage.logs_dir,
             config.get("general.logging_level", "normal"),
         )
 
-        # Initialize session manager and create initial session
         self._session_manager = SessionManager(storage.sessions_dir, config)
         self._session_manager.new_session()
 
-        # Initialize provider infrastructure
         self._key_manager = KeyManager(storage.secrets_dir)
         self._provider_registry = ProviderRegistry(config, self._key_manager)
         self._stream_renderer = StreamRenderer(self._console)
         self._active_provider: RemoteProvider | None = None
-        self._active_provider_name: str = ""
+        self._active_provider_name = ""
 
-        # Initialize model infrastructure
         self._model_registry = ModelRegistry(storage.registry_path)
         self._model_detector = ModelDetector()
         self._hardware_detector = HardwareDetector()
@@ -87,15 +71,14 @@ class ShellUI:
             console=self._console,
         )
         self._active_backend: ModelBackend | None = None
-        self._active_backend_model: str = ""
+        self._active_backend_model = ""
 
-        # Initialize command router and register commands
         self._router = CommandRouter()
         self._register_commands()
-
-        # Create prompt session with history and tab completion
-        history_file = storage.cache_dir / "input_history"
-        self._prompt_session = create_prompt_session(self._router, history_file)
+        self._prompt_session = create_prompt_session(
+            self._router,
+            self._session_prompt_history(),
+        )
 
     def _register_commands(self) -> None:
         """Register all command handlers."""
@@ -121,39 +104,45 @@ class ShellUI:
             self._console,
             self._storage.models_dir,
         )
+        mode_cmd.register(
+            self._router,
+            self._session_manager,
+            self._model_registry,
+            self._provider_registry,
+        )
 
     def run(self) -> None:
         """Main input loop."""
         self._logger.normal("Session started (id: %s)", self._session_manager.current.id)
 
         self._display_welcome()
-
         if self._first_run:
             self._run_first_time_setup()
 
-        # Cleanup at startup (best-effort)
         try:
             self._storage.cleanup_cache()
             self._storage.cleanup_logs()
         except Exception:
             pass
 
-        # Main loop
         while True:
             try:
                 self._display_status_header()
                 user_input = self._prompt_session.prompt("> ")
-
                 if not user_input.strip():
                     continue
 
                 stripped = user_input.strip()
+                self._sync_prompt_history_to_session()
 
                 if stripped.startswith("/"):
                     result = self._router.dispatch(stripped[1:])
                     self._render_command_result(result)
 
-                    if result.data and result.data.get("action") == "exit":
+                    action = result.data.get("action") if result.data else None
+                    if action == "session_changed":
+                        self._rebuild_prompt_session()
+                    if action == "exit":
                         self._handle_exit()
                         break
                 else:
@@ -168,58 +157,62 @@ class ShellUI:
                 break
 
     def _handle_plain_text(self, text: str) -> None:
-        """Handle plain text input — route to active model/provider or show message."""
-        session = self._session_manager.current
-        model_name = session.model
-        provider_name = session.provider
-
-        # Determine which backend to use
-        backend: ModelBackend | None = None
-
-        if model_name and not provider_name:
-            # Local model — get or load the backend
-            backend = self._get_active_backend(model_name)
-            if backend is None:
-                self._console.print(
-                    f"[red]Failed to load model '{model_name}'. "
-                    "Check /models inspect for details.[/red]"
-                )
-                return
-        elif provider_name:
-            # Remote provider
-            backend = self._get_active_provider(provider_name)
-            if backend is None:
-                self._console.print(
-                    f"[red]Failed to connect to provider '{provider_name}'. "
-                    "Check /providers test.[/red]"
-                )
-                return
-        else:
+        """Handle plain text input according to the current session mode."""
+        model = self._resolve_active_model()
+        if model is None:
             self._console.print(
                 "[dim]No model connected. Use /setup or configure a "
                 "model/provider to start chatting.[/dim]"
             )
             return
 
-        # Add user message to history
-        session.history.append(Message(role="user", content=text, timestamp=datetime.now()))
-
-        # Build model messages from session history
-        model_messages = self._history_to_model_messages()
-
-        # Stream the response
-        try:
-            chunks = backend.stream_generate(model_messages)
-            response_text = self._stream_renderer.render_stream(chunks)
-        except Exception as e:
-            self._stream_renderer.render_error(str(e))
-            return
-
-        # Add assistant response to history
-        if response_text:
-            session.history.append(
-                Message(role="assistant", content=response_text, timestamp=datetime.now())
+        session = self._session_manager.current
+        if session.mode == "agent":
+            self._stream_renderer.render_activity(
+                "Agent mode orchestration arrives in Phase 5. Streaming this request directly."
             )
+
+        controller = ChatController(
+            model=model,
+            session=session,
+            context_limit=self._context_limit(),
+        )
+        chunks = controller.handle_input(text, generation_options=self._generation_options())
+        if controller.last_compaction_count:
+            self._stream_renderer.render_activity(
+                f"Context compacted: summarized {controller.last_compaction_count} messages"
+            )
+
+        try:
+            self._stream_renderer.render_stream(chunks)
+        except Exception as exc:
+            self._stream_renderer.render_error(str(exc))
+
+    def _resolve_active_model(self) -> ModelAbstractionLayer | None:
+        """Resolve the active local backend or remote provider into a model abstraction."""
+        session = self._session_manager.current
+        backend: ModelBackend | None = None
+
+        if session.model and not session.provider:
+            backend = self._get_active_backend(session.model)
+            if backend is None:
+                self._console.print(
+                    f"[red]Failed to load model '{session.model}'. "
+                    "Check /models inspect for details.[/red]"
+                )
+                return None
+        elif session.provider:
+            backend = self._get_active_provider(session.provider)
+            if backend is None:
+                self._console.print(
+                    f"[red]Failed to connect to provider '{session.provider}'. "
+                    "Check /providers test.[/red]"
+                )
+                return None
+
+        if backend is None:
+            return None
+        return ModelAbstractionLayer(backend)
 
     def _get_active_provider(self, provider_name: str) -> RemoteProvider | None:
         """Get the active provider, caching the instance."""
@@ -235,30 +228,31 @@ class ShellUI:
             return None
 
     def _get_active_backend(self, model_name: str) -> ModelBackend | None:
-        """Get the active local model backend, loading if needed."""
+        """Get the active local model backend, loading it if needed."""
         if self._active_backend and self._active_backend_model == model_name:
             return self._active_backend
 
-        # Parse name@version
-        if "@" in model_name:
-            name, version = model_name.rsplit("@", 1)
-        else:
-            name, version = model_name, None
+        if self._active_backend is not None:
+            try:
+                self._active_backend.unload()
+            except Exception:
+                pass
+            self._active_backend = None
+            self._active_backend_model = ""
 
+        name, version = self._parse_name_version(model_name)
         entry = self._model_registry.get_model(name, version)
         if entry is None:
             return None
 
         try:
             backend = self._create_backend(entry.format)
-            from pathlib import Path
-
             backend.load(Path(entry.path))
             self._active_backend = backend
             self._active_backend_model = model_name
             return backend
-        except Exception as e:
-            self._logger.error("Failed to load model '%s': %s", model_name, e)
+        except Exception as exc:
+            self._logger.error("Failed to load model '%s': %s", model_name, exc)
             self._active_backend = None
             self._active_backend_model = ""
             return None
@@ -278,15 +272,6 @@ class ShellUI:
 
             return SafetensorsBackend()
         raise ValueError(f"Unknown model format: '{fmt}'")
-
-    def _history_to_model_messages(self) -> list[ModelMessage]:
-        """Convert session history to ModelMessage list for the provider."""
-        session = self._session_manager.current
-        return [
-            ModelMessage(role=msg.role, content=msg.content)
-            for msg in session.history
-            if not msg.is_summary
-        ]
 
     def _display_welcome(self) -> None:
         """Show the welcome banner."""
@@ -314,21 +299,9 @@ class ShellUI:
     def _display_status_header(self) -> None:
         """Render the status header line."""
         session = self._session_manager.current
-        model = session.model or "(none)"
-        workspace = session.workspace
-
-        # Abbreviate home directory
-        try:
-            from pathlib import Path
-
-            home = str(Path.home())
-            if workspace.startswith(home):
-                workspace = "~" + workspace[len(home) :]
-        except Exception:
-            pass
-
+        workspace = self._abbreviate_home(session.workspace)
         self._console.print(
-            f"[dim]LocalAgent | mode: {session.mode} | model: {model} "
+            f"[dim]LocalAgent | mode: {session.mode} | model: {self._active_target_label()} "
             f"| workspace: {workspace}[/dim]"
         )
 
@@ -337,11 +310,12 @@ class ShellUI:
         if result.success:
             if result.message and result.message != "exit":
                 self._console.print(result.message)
-        else:
-            self._console.print(f"[red]✗ {result.message}[/red]")
+            return
+        self._console.print(f"[red]✗ {result.message}[/red]")
 
     def _handle_exit(self) -> None:
         """Handle clean shutdown with optional session save."""
+        self._sync_prompt_history_to_session()
         session = self._session_manager.current
         if session.is_modified:
             try:
@@ -356,5 +330,86 @@ class ShellUI:
             except (KeyboardInterrupt, EOFError):
                 pass
 
+        if self._active_backend is not None:
+            try:
+                self._active_backend.unload()
+            except Exception:
+                pass
+
         self._logger.normal("Session ended")
         self._console.print("[dim]Goodbye.[/dim]")
+
+    def _generation_options(self) -> dict[str, object]:
+        """Build generation options from the effective configuration."""
+        return {
+            "temperature": self._session_manager.get_effective_config("generation.temperature")
+            or 0.7,
+            "max_tokens": self._session_manager.get_effective_config("generation.max_tokens")
+            or 4096,
+            "top_p": self._session_manager.get_effective_config("generation.top_p") or 1.0,
+        }
+
+    def _context_limit(self) -> int:
+        """Return the best-known context limit for the active target."""
+        session = self._session_manager.current
+        if session.model and not session.provider:
+            name, version = self._parse_name_version(session.model)
+            entry = self._model_registry.get_model(name, version)
+            if entry is not None:
+                for key in ("context_length", "context_window", "n_ctx"):
+                    value = entry.metadata.get(key)
+                    if isinstance(value, int) and value > 0:
+                        return value
+        return 8192
+
+    def _active_target_label(self) -> str:
+        """Describe the active local model or remote provider for the status header."""
+        session = self._session_manager.current
+        if session.provider:
+            model_name = session.model or "remote"
+            return f"{session.provider} ({model_name})"
+        if session.model:
+            name, version = self._parse_name_version(session.model)
+            entry = self._model_registry.get_model(name, version)
+            if entry is not None:
+                return f"{session.model} ({entry.format})"
+            return session.model
+        return "(none)"
+
+    def _session_prompt_history(self) -> list[str]:
+        """Load persisted prompt history from the current session metadata."""
+        history = self._session_manager.current.metadata.get("input_history", [])
+        if not isinstance(history, list):
+            return []
+        return [item for item in history if isinstance(item, str)]
+
+    def _sync_prompt_history_to_session(self) -> None:
+        """Persist the current prompt history back into the active session metadata."""
+        session = self._session_manager.current
+        history = get_prompt_history_strings(self._prompt_session)
+        if session.metadata.get("input_history") != history:
+            session.metadata["input_history"] = history
+
+    def _rebuild_prompt_session(self) -> None:
+        """Rebuild the prompt session after a session switch."""
+        self._prompt_session = create_prompt_session(
+            self._router,
+            self._session_prompt_history(),
+        )
+
+    def _abbreviate_home(self, path: str) -> str:
+        """Display home-relative paths more compactly."""
+        try:
+            home = str(Path.home())
+            if path.startswith(home):
+                return "~" + path[len(home) :]
+        except Exception:
+            pass
+        return path
+
+    def _parse_name_version(self, model_name: str) -> tuple[str, str | None]:
+        """Parse a stored model reference in name@version form."""
+        if "@" in model_name:
+            name, version = model_name.rsplit("@", 1)
+            return name, version
+        return model_name, None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 
 @dataclass
@@ -49,7 +50,7 @@ class Session:
     provider: str
     workspace: str
     history: list[Message] = field(default_factory=list)
-    tasks: list = field(default_factory=list)  # TaskPlan (future phases)
+    tasks: list[Any] = field(default_factory=list)  # TaskPlan (agent mode)
     pinned_instructions: list[str] = field(default_factory=list)
     config_overrides: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
@@ -75,7 +76,7 @@ class Session:
             "provider": self.provider,
             "workspace": self.workspace,
             "history": [m.to_dict() for m in self.history],
-            "tasks": self.tasks,
+            "tasks": [task.to_dict() if hasattr(task, "to_dict") else task for task in self.tasks],
             "pinned_instructions": self.pinned_instructions,
             "config_overrides": self.config_overrides,
             "created_at": self.created_at.isoformat(),
@@ -86,6 +87,15 @@ class Session:
     @classmethod
     def from_dict(cls, data: dict) -> Session:
         """Deserialize a session from a dict."""
+        tasks = []
+        for task in data.get("tasks", []):
+            if isinstance(task, dict) and {"task", "steps", "status"} <= task.keys():
+                from localagentcli.agents.planner import TaskPlan
+
+                tasks.append(TaskPlan.from_dict(task))
+            else:
+                tasks.append(task)
+
         return cls(
             id=data["id"],
             name=data.get("name"),
@@ -94,7 +104,7 @@ class Session:
             provider=data.get("provider", ""),
             workspace=data.get("workspace", "."),
             history=[Message.from_dict(m) for m in data.get("history", [])],
-            tasks=data.get("tasks", []),
+            tasks=tasks,
             pinned_instructions=data.get("pinned_instructions", []),
             config_overrides=data.get("config_overrides", {}),
             created_at=datetime.fromisoformat(data["created_at"]),

@@ -213,13 +213,15 @@ class GenericRESTProvider(RemoteProvider):
         except Exception:
             logger.debug("Failed to list models from %s", self._name)
 
-        return [
-            RemoteModelInfo(
-                id=self._default_model,
-                name=self._default_model,
-                capabilities=self.capabilities(),
-            )
-        ]
+        if self._default_model:
+            return [
+                RemoteModelInfo(
+                    id=self._default_model,
+                    name=self._default_model,
+                    capabilities=self.capabilities(),
+                )
+            ]
+        return []
 
     def supports_tools(self) -> bool:
         return bool(self.capabilities().get("tool_use", False))

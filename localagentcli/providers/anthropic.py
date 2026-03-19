@@ -22,24 +22,6 @@ from localagentcli.providers.base import (
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_MODELS = [
-    RemoteModelInfo(
-        id="claude-opus-4-20250514",
-        name="Claude Opus 4",
-        capabilities={"tool_use": True, "reasoning": True, "streaming": True},
-    ),
-    RemoteModelInfo(
-        id="claude-sonnet-4-20250514",
-        name="Claude Sonnet 4",
-        capabilities={"tool_use": True, "reasoning": True, "streaming": True},
-    ),
-    RemoteModelInfo(
-        id="claude-haiku-4-5-20251001",
-        name="Claude Haiku 4.5",
-        capabilities={"tool_use": True, "reasoning": True, "streaming": True},
-    ),
-]
-
 
 class AnthropicProvider(RemoteProvider):
     """Provider for the Anthropic Messages API."""
@@ -137,20 +119,16 @@ class AnthropicProvider(RemoteProvider):
             yield StreamChunk(text=f"Connection error: {e}", is_done=True)
 
     def test_connection(self) -> ConnectionTestResult:
-        """Send a minimal /v1/messages request to verify connectivity."""
+        """Use /v1/models to verify connectivity and API-key scope."""
         start = time.monotonic()
         try:
-            body = {
-                "model": self._default_model,
-                "max_tokens": 1,
-                "messages": [{"role": "user", "content": "Hi"}],
-            }
-            response = self._client.post("/v1/messages", json=body)
+            response = self._client.get("/v1/models")
             response.raise_for_status()
             latency = max((time.monotonic() - start) * 1000, 0.001)
+            model_count = len(response.json().get("data", []))
             return ConnectionTestResult(
                 success=True,
-                message="Connected successfully.",
+                message=f"Connected. {model_count} models available.",
                 latency_ms=latency,
             )
         except httpx.HTTPStatusError as e:
@@ -169,8 +147,34 @@ class AnthropicProvider(RemoteProvider):
             )
 
     def list_models(self) -> list[RemoteModelInfo]:
-        """Return built-in list of known Anthropic models."""
-        return list(ANTHROPIC_MODELS)
+        """GET /v1/models and parse the response."""
+        try:
+            response = self._client.get("/v1/models")
+            response.raise_for_status()
+            data = response.json()
+            models: list[RemoteModelInfo] = []
+            for model_data in data.get("data", []):
+                model_id = model_data.get("id", "")
+                if not model_id:
+                    continue
+                models.append(
+                    RemoteModelInfo(
+                        id=model_id,
+                        name=model_data.get("display_name") or model_data.get("name") or model_id,
+                        capabilities=self._capabilities_for_model(model_id),
+                    )
+                )
+            if models:
+                return models
+        except Exception:
+            logger.debug("Failed to list models from %s", self._name)
+        return [
+            RemoteModelInfo(
+                id=self._default_model,
+                name=self._default_model,
+                capabilities=self._capabilities_for_model(self._default_model),
+            )
+        ]
 
     def supports_tools(self) -> bool:
         return True
@@ -313,3 +317,7 @@ class AnthropicProvider(RemoteProvider):
                 return StreamChunk(is_done=True, usage=usage)
 
         return None
+
+    @staticmethod
+    def _capabilities_for_model(model_id: str) -> dict:
+        return {"tool_use": True, "reasoning": True, "streaming": True}

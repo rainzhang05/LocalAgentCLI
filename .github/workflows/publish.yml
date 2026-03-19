@@ -70,7 +70,8 @@ jobs:
       - name: Smoke test pipx install
         run: |
           python -m pipx install --force dist/*.whl
-          printf "/exit\n" | "$HOME/.local/pipx/venvs/localagentcli/bin/localagentcli"
+          PIPX_BIN_DIR="$(python -m pipx environment --value PIPX_BIN_DIR)"
+          printf "/exit\n" | "$PIPX_BIN_DIR/localagentcli"
           python -m pipx uninstall localagentcli
 
   publish-testpypi:

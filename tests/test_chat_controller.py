@@ -61,7 +61,8 @@ class TestChatController:
         assert session.history[0].content == "Hi there"
         assert session.history[1].role == "assistant"
         assert session.history[1].content == "Hello world"
-        assert session.history[1].metadata == {"reasoning": "thinking"}
+        assert session.history[1].metadata["reasoning"] == "thinking"
+        assert len(session.history[1].metadata["chunks"]) == 3
         assert model.stream_calls[0][1]["temperature"] == 0.2
         assert model.stream_calls[0][1]["max_tokens"] == 200
 

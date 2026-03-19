@@ -30,13 +30,15 @@ class StreamRenderer:
         self._console = console
         self._buffer = ""
         self._secondary_entries: deque[str] = deque(maxlen=8)
-        self._secondary_rendered = False
+        self._rendered_secondary_count = 0
+        self._primary_started = False
 
     def render_stream(self, chunks: Iterator[StreamChunk]) -> str:
         """Render all chunks to the terminal and return the full response text."""
         self._buffer = ""
         self._secondary_entries.clear()
-        self._secondary_rendered = False
+        self._rendered_secondary_count = 0
+        self._primary_started = False
         for chunk in chunks:
             self.render_chunk(chunk)
         return self._buffer
@@ -47,9 +49,11 @@ class StreamRenderer:
             self._finalize()
             return
         if chunk.kind == "final_text":
-            self._render_secondary_panel()
+            if not self._primary_started:
+                self.flush_pending_details()
             self._console.print(chunk.text, end="", highlight=False)
             self._buffer += chunk.text
+            self._primary_started = True
             return
         if chunk.importance == "primary":
             detail = chunk.text or self._format_chunk_payload(chunk)
@@ -58,7 +62,7 @@ class StreamRenderer:
             if chunk.kind == "error":
                 self.render_error(detail)
                 return
-            self.render_activity(detail)
+            self.render_status(detail)
             return
         if chunk.kind in {"reasoning", "tool_call", "notification", "error"}:
             detail = chunk.text or self._format_chunk_payload(chunk)
@@ -68,57 +72,117 @@ class StreamRenderer:
 
     def _finalize(self) -> None:
         """Called when streaming is complete."""
-        self._render_secondary_panel()
-        self._console.print()
+        has_pending_details = len(self._secondary_entries) > self._rendered_secondary_count
+        if self._primary_started:
+            self._console.print()
+        self.flush_pending_details()
+        if has_pending_details or not self._primary_started:
+            self._console.print()
+        self._primary_started = False
 
     def render_error(self, error: str) -> None:
         """Render a streaming error."""
-        self._console.print(f"\n[red]Error: {error}[/red]")
+        self._prepare_block_output()
+        self.flush_pending_details()
+        self._console.print(f"[red]✗ {error}[/red]")
+
+    def render_status(self, message: str) -> None:
+        """Render a neutral status line."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+        self._console.print(f"ℹ {message}")
+
+    def render_success(self, message: str) -> None:
+        """Render a success status line."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+        self._console.print(f"[green]✓ {message}[/green]")
+
+    def render_warning(self, message: str) -> None:
+        """Render a warning status line."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+        self._console.print(f"[yellow]⟳ {message}[/yellow]")
 
     def render_activity(self, message: str) -> None:
-        """Render an inline activity log entry."""
-        self._console.print(f"ℹ {message}")
+        """Backward-compatible alias for neutral status messages."""
+        self.render_status(message)
+
+    def render_secondary(self, detail: str) -> None:
+        """Queue a secondary detail entry for the dimmed details lane."""
+        self._append_secondary(detail)
+
+    def flush_pending_details(self) -> None:
+        """Flush any unrendered secondary detail entries."""
+        if len(self._secondary_entries) <= self._rendered_secondary_count:
+            return
+        pending = list(self._secondary_entries)[self._rendered_secondary_count :]
+        if not pending:
+            return
+        self._console.print(
+            Panel(
+                "\n".join(pending),
+                title="Details",
+                border_style="dim",
+            )
+        )
+        self._rendered_secondary_count = len(self._secondary_entries)
+
+    def render_approval_prompt(self) -> None:
+        """Render the inline approval prompt using the shared status grammar."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+        self._console.print(
+            "[yellow][Enter] Approve  |  [d] Deny  |  [v] View details  |  "
+            "/agent approve  |  Ctrl+C stop task[/yellow]"
+        )
+
+    def render_preview(self, title: str, body: str) -> None:
+        """Render a preview block without changing task semantics."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+        self._console.print(Panel(body, title=title, border_style="yellow"))
 
     def render_agent_event(self, event: AgentEvent) -> None:
         """Render a structured agent event."""
         if isinstance(event, PlanGenerated):
+            self.flush_pending_details()
             self._render_plan(event.plan, "Plan")
             return
         if isinstance(event, PlanUpdated):
-            self.render_activity(event.changes)
+            self.render_status(event.changes)
             self._render_plan(event.plan, "Plan")
             return
         if isinstance(event, StepStarted):
-            self.render_activity(f"Starting step {event.step.index}: {event.step.description}")
+            self.render_status(f"Starting step {event.step.index}: {event.step.description}")
             return
         if isinstance(event, ToolCallRequested):
             marker = "⟳" if event.requires_approval else "✓"
             color = "yellow" if event.requires_approval else "green"
             suffix = " (HIGH RISK)" if event.risk_level == "high" else ""
+            self.flush_pending_details()
             self._console.print(
                 f"[{color}]{marker} {event.tool_name}: "
                 f"{self._tool_summary(event.arguments)}{suffix}[/{color}]"
             )
             for warning in event.warnings:
-                self._console.print(f"[yellow]  ! {warning}[/yellow]")
+                self.render_secondary(f"Warning: {warning}")
             return
         if isinstance(event, ToolCallResult):
-            marker = "✓" if event.result.status == "success" else "✗"
-            color = "green" if event.result.status == "success" else "red"
-            self._console.print(f"[{color}]{marker} {event.result.summary}[/{color}]")
+            if event.result.status == "success":
+                self.render_success(event.result.summary)
+            elif event.result.status == "denied":
+                self.render_warning(event.result.summary)
+            else:
+                self.render_error(event.result.summary)
             return
         if isinstance(event, ReasoningOutput):
-            self._console.print(
-                Panel(
-                    event.text,
-                    title="Reasoning",
-                    border_style="dim",
-                )
-            )
+            self.render_secondary(event.text)
             return
         if isinstance(event, TaskComplete):
-            self.render_activity("Task complete.")
+            self.render_success("Task complete.")
             if event.summary.strip():
+                self.flush_pending_details()
                 self._console.print(event.summary)
             return
         if isinstance(event, TaskFailed):
@@ -155,6 +219,12 @@ class StreamRenderer:
             if cleaned:
                 self._secondary_entries.append(cleaned)
 
+    def _prepare_block_output(self) -> None:
+        """Finish any inline primary output before rendering a block element."""
+        if self._primary_started:
+            self._console.print()
+            self._primary_started = False
+
     def _format_chunk_payload(self, chunk: StreamChunk) -> str:
         """Render payload-only chunks into human-readable detail lines."""
         payload = chunk.payload or chunk.tool_call_data or {}
@@ -169,16 +239,3 @@ class StreamRenderer:
         if isinstance(source, str) and source:
             return f"{source}: {chunk.text}".strip(": ")
         return ""
-
-    def _render_secondary_panel(self) -> None:
-        """Render the latest secondary output once, above the main response."""
-        if self._secondary_rendered or not self._secondary_entries:
-            return
-        self._console.print(
-            Panel(
-                "\n".join(self._secondary_entries),
-                title="Details",
-                border_style="dim",
-            )
-        )
-        self._secondary_rendered = True

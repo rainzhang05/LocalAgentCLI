@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, cross-platform path normalization, live slash-command menu, layered Hugging Face `/models` picker, Windows-safe rollback restore, build + twine validation, workflows using `pipx` bin-dir discovery instead of hard-coded venv paths, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu, layered Hugging Face `/models` picker, Windows-safe rollback restore, build + twine validation, workflows using `pipx` bin-dir discovery instead of hard-coded venv paths, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -32,7 +32,7 @@ After implementing a component:
 | `[x]` | `/exit` command | 2026-03-17 |
 | `[x]` | `/status` command | 2026-03-17 |
 | `[x]` | `/config` command | 2026-03-17 |
-| `[x]` | `/setup` wizard | 2026-03-17 — simplified for Phase 1 (no model/provider) |
+| `[x]` | `/setup` wizard | 2026-03-18 — simplified for Phase 1 (workspace, mode, logging level) and now falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-17 |
 | `[x]` | Session state dataclass | 2026-03-17 |
@@ -150,9 +150,9 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-18 — 657 tests total across unit, component, integration, and CLI coverage |
+| `[x]` | Unit tests | 2026-03-18 — 665 tests total across unit, component, integration, and CLI coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
-| `[x]` | CLI tests | 2026-03-18 — subprocess coverage for first-run setup, session restore, and Ctrl+C handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
+| `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, and Ctrl+C handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
 | `[x]` | Safety tests | 2026-03-18 — added boundary, rollback, safety-layer, and high-risk approval coverage |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
@@ -187,7 +187,7 @@ After implementing a component:
 | `[x]` | `docs/session-and-config.md` | Complete |
 | `[x]` | `docs/cli-and-ux.md` | Complete |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
-| `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, and local wheel refresh command documented |
+| `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |
 | `[x]` | `docs/current-state.md` | Complete |
 | `[x]` | `README.md` | 2026-03-18 — install, usage, backend, development, and release validation instructions refreshed |

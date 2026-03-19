@@ -185,6 +185,6 @@ class TestPackagingCLI:
                 process.communicate()
 
         assert process.returncode == 0
-        assert "Press Ctrl+C again within 2 seconds to exit." in stdout
+        assert "Press Ctrl+C again to exit." in stdout
         assert "Goodbye." in stdout
         assert "Traceback" not in stderr

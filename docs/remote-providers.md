@@ -15,13 +15,13 @@ Remote providers connect LocalAgentCLI to external API services, enabling use of
 ### OpenAI-Compatible
 - **Protocol**: OpenAI Chat Completions API (`/v1/chat/completions`)
 - **Covers**: OpenAI, Azure OpenAI, Together AI, Fireworks AI, local servers (vLLM, Ollama with OpenAI mode), and any service implementing the OpenAI API spec
-- **Features**: Streaming via SSE, tool/function calling, JSON mode
+- **Features**: Streaming via SSE, tool/function calling, JSON mode, model-aware reasoning capability detection
 - **Base URL**: Configurable (default: `https://api.openai.com/v1`)
 
 ### Anthropic-Style
 - **Protocol**: Anthropic Messages API (`/v1/messages`)
 - **Covers**: Anthropic Claude models
-- **Features**: Streaming via SSE, tool use, extended thinking
+- **Features**: Streaming via SSE, tool use, extended thinking, mixed text/thinking/tool blocks preserved in order
 - **Base URL**: Configurable (default: `https://api.anthropic.com`)
 - **Auth**: `x-api-key` header + `anthropic-version` header
 
@@ -29,7 +29,7 @@ Remote providers connect LocalAgentCLI to external API services, enabling use of
 - **Protocol**: User-defined REST endpoints
 - **Covers**: Any API that accepts a JSON request body and returns a JSON response
 - **Configuration**: Requires user to specify request/response field mappings
-- **Features**: Basic streaming support (if the API supports SSE), no automatic tool calling
+- **Features**: Basic SSE support plus optional mapped reasoning/tool-call fields when the API exposes them; no automatic capability inference beyond configured flags
 
 ---
 
@@ -115,6 +115,7 @@ Remote providers can advertise their available models:
 - **OpenAI-compatible**: `GET /v1/models` returns a list of available models
 - **Anthropic**: `GET /v1/models` returns the models accessible to the current API key
 - **Generic REST**: Attempts `GET /models` (or a configured models endpoint) and falls back to the configured default model if discovery is unavailable
+- Provider instances are always bound to one active remote model id. Capability checks (`tool_use`, `reasoning`) are evaluated against that active model, not just the provider type.
 
 ```python
 class RemoteProvider(ABC):
@@ -149,6 +150,12 @@ from localagentcli.models.backends.base import ModelBackend
 class RemoteProvider(ModelBackend):
     """Base class for remote providers. Extends ModelBackend with provider-specific methods."""
 
+    def set_active_model(self, model_name: str | None) -> None:
+        """Bind the provider instance to a specific remote model id."""
+
+    def close(self) -> None:
+        """Close the underlying HTTP client."""
+
     @abstractmethod
     def test_connection(self) -> ConnectionTestResult:
         """Test connectivity to the provider. Returns success/failure with details."""
@@ -159,6 +166,11 @@ class RemoteProvider(ModelBackend):
 ```
 
 This means the Model Abstraction Layer works identically whether the active model is local or remote.
+
+Shared provider requirements:
+- Requests must go through a bounded retry wrapper for timeout, connection-reset, and retryable HTTP status handling.
+- Streaming requests must surface normalized `error` and `done` chunks instead of leaking raw transport exceptions into the shell.
+- Provider HTTP clients must be closed when the active provider changes or the shell exits.
 
 ---
 
@@ -183,13 +195,13 @@ class OpenAIProvider(RemoteProvider):
         """Send request to /v1/chat/completions without streaming."""
 
     def stream_generate(self, messages: list[Message], **kwargs) -> Iterator[StreamChunk]:
-        """Send request to /v1/chat/completions with stream=True. Yield SSE chunks."""
+        """Send request to /v1/chat/completions with stream=True. Yield normalized SSE chunks."""
 
     def supports_tools(self) -> bool:
-        """True for models that support function calling."""
+        """Model-aware capability check for function calling."""
 
     def supports_reasoning(self) -> bool:
-        """True for o1/o3-style reasoning models."""
+        """Model-aware capability check for o1/o3/o4/GPT-5-style reasoning models."""
 
     def supports_streaming(self) -> bool:
         return True
@@ -211,13 +223,13 @@ class AnthropicProvider(RemoteProvider):
         ...
 
     def stream_generate(self, messages: list[Message], **kwargs) -> Iterator[StreamChunk]:
-        """POST /v1/messages with stream=True. Handle Anthropic SSE format."""
+        """POST /v1/messages with stream=True. Preserve mixed text/thinking/tool blocks in order."""
 
     def supports_tools(self) -> bool:
-        return True  # All Claude models support tool use
+        """Model-aware capability check for the currently selected Claude model."""
 
     def supports_reasoning(self) -> bool:
-        """True for Claude models with extended thinking support."""
+        """Model-aware capability check for Claude models with extended thinking support."""
 
     def test_connection(self) -> ConnectionTestResult:
         """GET /v1/models and check for a valid response."""
@@ -237,7 +249,7 @@ class GenericRESTProvider(RemoteProvider):
         ...
 
     def stream_generate(self, messages: list[Message], **kwargs) -> Iterator[StreamChunk]:
-        """Send request using configured mapping. Parse response using response mapping."""
+        """Send request using configured mapping. Parse primary and optional secondary fields."""
 
     def list_models(self) -> list[RemoteModelInfo]:
         """Try a configured models endpoint, then fall back to the provider's default model."""
@@ -254,7 +266,11 @@ The `request_mapping` and `response_mapping` dicts define how to translate betwe
   },
   "response_mapping": {
     "content_field": "choices[0].message.content",
-    "stream_content_field": "choices[0].delta.content"
+    "stream_content_field": "choices[0].delta.content",
+    "reasoning_field": "choices[0].message.reasoning",
+    "tool_calls_field": "choices[0].message.tool_calls",
+    "stream_reasoning_field": "choices[0].delta.reasoning",
+    "stream_tool_calls_field": "choices[0].delta.tool_calls"
   }
 }
 ```
@@ -271,6 +287,7 @@ All providers must support streaming via SSE (Server-Sent Events):
 4. Yield chunks to the caller
 5. Handle `[DONE]` or equivalent termination signals
 6. Handle connection errors with retry logic (configurable timeout, max retries)
+7. Preserve secondary events such as reasoning, provider notifications, and streamed tool-call metadata
 
 ### StreamChunk Schema
 
@@ -278,12 +295,20 @@ All providers must support streaming via SSE (Server-Sent Events):
 @dataclass
 class StreamChunk:
     text: str = ""
-    is_reasoning: bool = False
-    is_tool_call: bool = False
+    kind: Literal["final_text", "reasoning", "tool_call", "notification", "error", "done"]
+    importance: Literal["primary", "secondary"] = "primary"
+    transient: bool = False
+    payload: dict | None = None
+    is_reasoning: bool = False  # legacy compatibility
+    is_tool_call: bool = False  # legacy compatibility
     tool_call_data: dict | None = None
-    is_done: bool = False
+    is_done: bool = False       # legacy compatibility
     usage: dict | None = None  # Token counts, present on final chunk
 ```
+
+- `notification` is used for low-priority provider status, streamed tool preparation notices, and similar mid-process signals.
+- `error` is used for transport or provider failures and is followed by a `done` chunk with `finish_reason="error"`.
+- Ordered chunks are preserved into `GenerationResult.chunks` so the shell and session history can render or inspect the full sequence.
 
 ---
 
@@ -298,4 +323,4 @@ class StreamChunk:
 | Network unreachable | Clear error, suggest checking connectivity |
 | Model not found | List available models, suggest valid model names |
 
-All errors are surfaced to the user via the Shell UI activity log.
+Retryable HTTP errors (`408`, `409`, `425`, `429`, `5xx`) and transient connection failures are retried automatically with bounded backoff before surfacing an error. All final failures are surfaced to the user through normalized secondary output and the Shell UI activity log.

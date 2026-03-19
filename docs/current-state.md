@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, cross-platform path normalization, build + twine validation, publish workflow, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, cross-platform path normalization, live slash-command menu, layered Hugging Face `/models` picker, build + twine validation, publish workflow, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -26,7 +26,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-17 |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-18 — prompt now shows a live slash-command menu with arrow-key selection |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-17 |
 | `[x]` | `/exit` command | 2026-03-17 |
@@ -77,7 +77,7 @@ After implementing a component:
 | `[x]` | Hardware detection and warnings | 2026-03-18 — CPU/RAM/GPU detection, >80% warning |
 | `[x]` | `/models list` command | 2026-03-18 |
 | `[x]` | `/models search` command | 2026-03-18 |
-| `[x]` | `/models install` command | 2026-03-18 — hf and url subcommands |
+| `[x]` | `/models install` command | 2026-03-18 — hf and url subcommands, plus `/models` layered picker for curated Hugging Face installs |
 | `[x]` | `/models remove` command | 2026-03-18 — with file cleanup |
 | `[x]` | `/models use` command | 2026-03-18 — with hardware warnings |
 | `[x]` | `/models inspect` command | 2026-03-18 |
@@ -98,7 +98,7 @@ After implementing a component:
 | `[x]` | `/mode agent` command | 2026-03-18 — mode switching implemented in Phase 4 and now activates the Phase 5 agent workflow |
 | `[x]` | Status header display | 2026-03-18 — header shows mode, active model/provider target, and workspace |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
-| `[x]` | Tab completion for commands | 2026-03-18 — slash command and subcommand completion via prompt toolkit completer |
+| `[x]` | Tab completion for commands | 2026-03-18 — live slash-command menu, typed filtering, arrow-key navigation, and Tab acceptance via prompt-toolkit |
 
 ---
 

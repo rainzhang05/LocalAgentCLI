@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
 from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.registry import ProviderRegistry
@@ -36,10 +38,17 @@ class ModeParentHandler(CommandHandler):
 class ModeChatHandler(CommandHandler):
     """Switch the current session to chat mode."""
 
-    def __init__(self, session_manager: SessionManager):
+    def __init__(
+        self,
+        session_manager: SessionManager,
+        stop_agent_callback: Callable[[], bool] | None = None,
+    ):
         self._session_manager = session_manager
+        self._stop_agent_callback = stop_agent_callback
 
     def execute(self, args: list[str]) -> CommandResult:
+        if self._stop_agent_callback is not None and not self._stop_agent_callback():
+            return CommandResult.error("Mode change cancelled.")
         session = self._session_manager.current
         session.mode = "chat"
         session.touch()
@@ -111,10 +120,11 @@ def register(
     session_manager: SessionManager,
     model_registry: ModelRegistry,
     provider_registry: ProviderRegistry,
+    stop_agent_callback: Callable[[], bool] | None = None,
 ) -> None:
     """Register all /mode subcommands."""
     router.register("mode", ModeParentHandler())
-    router.register("mode chat", ModeChatHandler(session_manager))
+    router.register("mode chat", ModeChatHandler(session_manager, stop_agent_callback))
     router.register(
         "mode agent",
         ModeAgentHandler(session_manager, model_registry, provider_registry),

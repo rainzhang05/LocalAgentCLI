@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 6 complete — central safety layer, workspace boundary enforcement, high-risk detection, rollback, undo, and safety tests)
+> **Last updated**: 2026-03-18 (Phase 7 packaging implementation complete in-repo — backend auto-install, integration and CLI coverage, Windows CI, package build verification, README/changelog; PyPI publication still requires a manual release)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -148,17 +148,17 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | `pyproject.toml` configuration | 2026-03-17 |
-| `[ ]` | Backend auto-install on demand | |
-| `[x]` | Unit tests | 2026-03-18 — 619 tests |
-| `[ ]` | Integration tests | |
-| `[ ]` | CLI tests | |
+| `[x]` | `pyproject.toml` configuration | 2026-03-18 — README metadata, `all` extra, SPDX license field, and build dependency added |
+| `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch extras and retries model loading |
+| `[x]` | Unit tests | 2026-03-18 — 626 tests total across unit, component, integration, and CLI coverage |
+| `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
+| `[x]` | CLI tests | 2026-03-18 — subprocess coverage for first-run setup, session restore, and Ctrl+C handling in `tests/cli/test_packaging_cli.py` |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
 | `[x]` | Safety tests | 2026-03-18 — added boundary, rollback, safety-layer, and high-risk approval coverage |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Linux) | 2026-03-17 — via CI matrix |
-| `[ ]` | Cross-platform testing (Windows) | |
-| `[ ]` | PyPI release | |
+| `[x]` | Cross-platform testing (Windows) | 2026-03-18 — added `windows-latest` to the GitHub Actions test matrix |
+| `[~]` | PyPI release | 2026-03-18 — build artifacts, changelog, and package metadata are ready; publication still requires an explicit manual release step |
 
 ---
 
@@ -166,7 +166,7 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | `.github/workflows/test.yml` | 2026-03-17 — pytest + coverage, matrix: ubuntu/macos × py3.11-3.13 |
+| `[x]` | `.github/workflows/test.yml` | 2026-03-18 — pytest + coverage on ubuntu/macos/windows × py3.11-3.13, plus package build verification |
 | `[x]` | `.github/workflows/lint.yml` | 2026-03-17 — ruff check + format |
 | `[x]` | `.github/workflows/typecheck.yml` | 2026-03-17 — mypy |
 
@@ -189,5 +189,7 @@ After implementing a component:
 | `[x]` | `docs/packaging-and-release.md` | Complete |
 | `[x]` | `docs/roadmap.md` | Complete |
 | `[x]` | `docs/current-state.md` | Complete |
+| `[x]` | `README.md` | 2026-03-18 — install, usage, backend, and development instructions added |
+| `[x]` | `CHANGELOG.md` | 2026-03-18 — initial release notes added |
 | `[x]` | `CLAUDE.md` | Complete — includes testing/CI requirements |
 | `[x]` | `AGENTS.md` | Complete — includes testing/CI requirements |

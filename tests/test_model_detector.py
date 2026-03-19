@@ -145,6 +145,27 @@ class TestModelDetectorMLX:
         with pytest.raises(DetectionError, match="only supported on macOS"):
             detector.detect(model_dir)
 
+    @patch("localagentcli.models.detector.platform")
+    def test_mlx_on_non_macos_can_still_be_detected_for_registry_repair(
+        self,
+        mock_platform,
+        tmp_path: Path,
+    ):
+        mock_platform.system.return_value = "Linux"
+        mock_platform.machine.return_value = "x86_64"
+        detector = ModelDetector()
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"\x00" * 100)
+        (model_dir / "config.json").write_text(
+            json.dumps({"model_type": "gemma3", "quantization": {"group_size": 64, "bits": 4}})
+        )
+
+        result = detector.detect(model_dir, allow_unsupported_backend=True)
+
+        assert result.format == "mlx"
+        assert result.backend == "mlx"
+
 
 class TestModelDetectorSafetensors:
     def test_detect_safetensors(self, detector: ModelDetector, tmp_path: Path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 
@@ -49,17 +50,12 @@ class WorkspaceBoundary:
 
     def relative_path(self, path: Path) -> str:
         """Return a display path relative to the workspace root."""
-        return str(path.resolve(strict=False).relative_to(self._root))
+        return path.resolve(strict=False).relative_to(self._root).as_posix()
 
     def inspect_command(self, command: str) -> list[str]:
         """Return best-effort warnings for explicit outside-workspace path references."""
-        try:
-            tokens = shlex.split(command)
-        except ValueError:
-            return []
-
         warnings: list[str] = []
-        for token in tokens:
+        for token in self._command_tokens(command):
             if not self._looks_like_path(token):
                 continue
             try:
@@ -89,3 +85,23 @@ class WorkspaceBoundary:
         if token.startswith(("~", "/", "./", "../")):
             return True
         return "/" in token or "\\" in token
+
+    def _command_tokens(self, command: str) -> list[str]:
+        """Split a command string while tolerating Windows path syntax."""
+        parse_modes = [True]
+        if os.name == "nt" or "\\" in command:
+            parse_modes.append(False)
+
+        tokens: list[str] = []
+        seen: set[str] = set()
+        for posix in parse_modes:
+            try:
+                parsed = shlex.split(command, posix=posix)
+            except ValueError:
+                continue
+            for token in parsed:
+                normalized = token.strip("\"'")
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    tokens.append(normalized)
+        return tokens

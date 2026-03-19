@@ -97,7 +97,7 @@ class OpenAIProvider(RemoteProvider):
         try:
             response = self._client.get("/models")
             response.raise_for_status()
-            latency = (time.monotonic() - start) * 1000
+            latency = max((time.monotonic() - start) * 1000, 0.001)
             data = response.json()
             model_count = len(data.get("data", []))
             return ConnectionTestResult(
@@ -106,14 +106,14 @@ class OpenAIProvider(RemoteProvider):
                 latency_ms=latency,
             )
         except httpx.HTTPStatusError as e:
-            latency = (time.monotonic() - start) * 1000
+            latency = max((time.monotonic() - start) * 1000, 0.001)
             if e.response.status_code == 401:
                 msg = "Authentication failed. Check your API key."
             else:
                 msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
             return ConnectionTestResult(success=False, message=msg, latency_ms=latency)
         except (httpx.TimeoutException, httpx.ConnectError) as e:
-            latency = (time.monotonic() - start) * 1000
+            latency = max((time.monotonic() - start) * 1000, 0.001)
             return ConnectionTestResult(
                 success=False,
                 message=f"Connection failed: {e}",

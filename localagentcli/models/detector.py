@@ -84,6 +84,11 @@ class ModelDetector:
                 if quant_type == "" or "mlx" in str(quant_type).lower():
                     return True
 
+        top_level_quant = config.get("quantization", {})
+        if isinstance(top_level_quant, dict):
+            if "group_size" in top_level_quant and "bits" in top_level_quant:
+                return True
+
         # Check for MLX model type marker
         if config.get("model_type_mlx"):
             return True
@@ -91,6 +96,15 @@ class ModelDetector:
         # Check for weights/ subdirectory (common in MLX repos)
         if (model_path / "weights").is_dir():
             return True
+
+        readme_path = model_path / "README.md"
+        if readme_path.exists():
+            try:
+                readme_text = readme_path.read_text(encoding="utf-8").lower()
+            except OSError:
+                return False
+            if "use with mlx" in readme_text or "\n- mlx\n" in readme_text:
+                return True
 
         return False
 

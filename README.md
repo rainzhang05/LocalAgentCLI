@@ -4,7 +4,7 @@ LocalAgentCLI is a local-first AI command-line assistant with a persistent shell
 
 ## Features
 
-- Interactive `localagent` shell with slash commands, history, tab completion, and streaming output
+- Interactive `localagentcli` shell with slash commands, history, tab completion, and streaming output
 - Remote provider support for OpenAI-compatible, Anthropic, and generic REST APIs
 - Local model support for MLX, GGUF, and safetensors backends
 - Chat mode with context compaction and pinned instructions
@@ -43,8 +43,10 @@ LocalAgentCLI also prompts to install missing backend dependencies automatically
 Launch the shell:
 
 ```bash
-localagent
+localagentcli
 ```
+
+`localagent` remains available as a compatibility alias.
 
 On first launch the setup wizard creates `~/.localagent/config.toml`.
 

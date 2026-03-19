@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, nested selection menus now keep matching options visible while typing and backspacing, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/models` now offers live Hugging Face family/model discovery across many model families, repository-root `AGENTS.md` files are auto-detected and injected as default system instructions, normalized model output now preserves primary vs secondary event streams across chat and agent flows, agent mode now has triage-based direct-answer and single-step fast paths, providers now use model-aware capability checks with retry/close hardening, Hugging Face and direct URL downloads now refresh their progress output continuously, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, local backends now expose cancellation hooks with active safetensors interruption, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, nested selection menus now keep matching options visible while typing and backspacing, `/set` now unifies local/provider target selection, `/set default` now persists one CLI-wide startup target across local and remote models, provider model pickers now start empty instead of pre-filling the last model name, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/config` now supports interactive schema-aware editing, `/hf-token` securely stores the Hugging Face token and hides itself once configured, `/models` now offers live Hugging Face family/model discovery across many model families, repository-root `AGENTS.md` files are auto-detected and injected as default system instructions, normalized model output now preserves primary vs secondary event streams across chat and agent flows, embedded in-band channel markup from local or provider models is separated from the main response stream, agent mode now has triage-based direct-answer and single-step fast paths, providers now use model-aware capability checks with retry/close hardening, Hugging Face and direct URL downloads now refresh their progress output continuously, Hugging Face downloads now tolerate newer `huggingface_hub` progress kwargs, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, local backends now expose cancellation hooks with active safetensors interruption, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -31,7 +31,7 @@ After implementing a component:
 | `[x]` | `/help` command | 2026-03-17 |
 | `[x]` | `/exit` command | 2026-03-17 |
 | `[x]` | `/status` command | 2026-03-17 |
-| `[x]` | `/config` command | 2026-03-17 |
+| `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use |
 | `[x]` | `/setup` wizard | 2026-03-18 — simplified for Phase 1 (workspace, mode, logging level) and now falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-17 |
@@ -56,7 +56,7 @@ After implementing a component:
 | `[x]` | `/providers list` command | 2026-03-18 |
 | `[x]` | `/providers remove` command | 2026-03-18 |
 | `[x]` | `/providers use` command | 2026-03-18 — retained as a hidden compatibility alias behind `/set` |
-| `[x]` | `/set` target-selection command | 2026-03-18 — unified picker for local models and provider models |
+| `[x]` | `/set` target-selection command | 2026-03-19 — unified picker for local models and provider models, with provider model selection starting empty instead of prefilled |
 | `[x]` | `/providers test` command | 2026-03-18 |
 | `[x]` | SSE streaming support | 2026-03-19 — normalized chunk pipeline now preserves final text, reasoning, tool calls, notifications, errors, and done events consistently across providers |
 | `[x]` | Model abstraction layer | 2026-03-19 — `generate()` now collects the same normalized stream pipeline used by `stream_generate()` |
@@ -68,7 +68,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Model registry (`registry.json`) | 2026-03-18 — ModelEntry dataclass, JSON persistence with filelock |
-| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, plus faster fallback progress refresh and conservative capability inference during registration |
+| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, faster fallback progress refresh, compatibility with newer `huggingface_hub` progress kwargs, and conservative capability inference during registration |
 | `[x]` | Model installer (URL download) | 2026-03-19 — httpx streaming with resume support and continuously refreshed progress output |
 | `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-19 — auto-detection pipeline with unsupported-backend-aware repair for stale registry entries |
 | `[x]` | Backend base class (ABC) | 2026-03-17 — already existed from Phase 2 |
@@ -151,7 +151,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 712 tests total across unit, component, integration, and CLI coverage, including normalized chunk handling, provider hardening, task triage, shell rendering, and backend cancellation |
+| `[x]` | Unit tests | 2026-03-19 — 723 tests total across unit, component, integration, and CLI coverage, including normalized chunk handling, provider hardening, task triage, shell rendering, config editing, default-target selection, and backend cancellation; full suite passes at 84.78% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -179,14 +179,14 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | `docs/architecture.md` | Complete |
-| `[x]` | `docs/commands.md` | Complete |
+| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, and `/hf-token` documented |
 | `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, and backend cancellation behavior documented |
-| `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, and normalized error/output semantics documented |
+| `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, and the CLI-wide default-target model selection flow documented |
 | `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, and updated safeguard behavior documented |
 | `[x]` | `docs/tool-system.md` | Complete |
 | `[x]` | `docs/safety-and-permissions.md` | Complete |
-| `[x]` | `docs/session-and-config.md` | Complete |
-| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, and normalized streaming UX documented |
+| `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage and interactive `/config` editing documented |
+| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, hidden command visibility rules, and normalized streaming UX documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |

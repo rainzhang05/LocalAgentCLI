@@ -27,6 +27,8 @@ class SafetensorsBackend(ModelBackend):
         self._tokenizer: Any = None
         self._device: str = "cpu"
         self._model_path: Path | None = None
+        self._cancel_event = threading.Event()
+        self._generation_thread: threading.Thread | None = None
 
     def load(self, model_path: Path, **kwargs: object) -> None:
         """Load a safetensors model from disk."""
@@ -45,6 +47,7 @@ class SafetensorsBackend(ModelBackend):
 
     def unload(self) -> None:
         """Unload the model and free memory."""
+        self.cancel()
         if self._model is not None:
             try:
                 import torch
@@ -59,6 +62,13 @@ class SafetensorsBackend(ModelBackend):
         self._model = None
         self._tokenizer = None
         self._model_path = None
+
+    def cancel(self) -> None:
+        """Signal an in-flight generation to stop."""
+        self._cancel_event.set()
+        if self._generation_thread is not None and self._generation_thread.is_alive():
+            self._generation_thread.join(timeout=1)
+        self._generation_thread = None
 
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         """Generate a complete response."""
@@ -103,6 +113,11 @@ class SafetensorsBackend(ModelBackend):
         streamer = transformers.TextIteratorStreamer(
             self._tokenizer, skip_prompt=True, skip_special_tokens=True
         )
+        self._cancel_event.clear()
+
+        stopping_criteria = transformers.StoppingCriteriaList(
+            [_CancelStoppingCriteria(self._cancel_event)]
+        )
 
         gen_kwargs = {
             **inputs,
@@ -110,18 +125,24 @@ class SafetensorsBackend(ModelBackend):
             "temperature": temperature,
             "do_sample": temperature > 0,
             "streamer": streamer,
+            "stopping_criteria": stopping_criteria,
         }
 
-        thread = threading.Thread(target=self._model.generate, kwargs=gen_kwargs)
-        thread.start()
+        self._generation_thread = threading.Thread(target=self._model.generate, kwargs=gen_kwargs)
+        self._generation_thread.start()
 
         try:
             for text in streamer:
+                if self._cancel_event.is_set():
+                    break
                 if text:
                     yield StreamChunk(text=text)
             yield StreamChunk(is_done=True)
         finally:
-            thread.join(timeout=5)
+            if self._generation_thread is not None:
+                self._generation_thread.join(timeout=5)
+            self._generation_thread = None
+            self._cancel_event.clear()
 
     def supports_tools(self) -> bool:
         return False
@@ -214,3 +235,13 @@ class SafetensorsBackend(ModelBackend):
                 parts.append(f"Assistant: {msg.content}\n")
         parts.append("Assistant: ")
         return "".join(parts)
+
+
+class _CancelStoppingCriteria:
+    """Transformers stopping criteria that responds to backend cancel events."""
+
+    def __init__(self, cancel_event: threading.Event):
+        self._cancel_event = cancel_event
+
+    def __call__(self, input_ids: Any, scores: Any, **kwargs: object) -> bool:
+        return self._cancel_event.is_set()

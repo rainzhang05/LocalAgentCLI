@@ -198,12 +198,14 @@ class TestOpenAIListModels:
             models = provider.list_models()
         assert len(models) == 2
         assert models[0].id == "gpt-4o"
+        assert models[0].capabilities["tool_use"] is True
 
     def test_list_models_error(self):
         provider = _make_provider()
         with patch.object(provider._client, "get", side_effect=Exception("fail")):
             models = provider.list_models()
-        assert models == []
+        assert len(models) == 1
+        assert models[0].id == provider.default_model
 
 
 # ---------------------------------------------------------------------------

@@ -27,6 +27,17 @@ cd LocalAgentCLI
 pip install -e ".[dev]"
 ```
 
+### Refreshing a Local `pipx` Install During Development
+
+If you already have `localagentcli` installed with `pipx` and want to refresh it to the newest local project state, rebuild the wheel and force-reinstall it:
+
+```bash
+python -m build
+pipx install --force dist/*.whl
+```
+
+This keeps the install aligned with the latest local wheel without waiting for a PyPI publish.
+
 ---
 
 ## Entry Point
@@ -252,6 +263,8 @@ These flows must be tested end-to-end and must pass before any release:
    - `/exit` and relaunch
    - `/session load test` restores full state
    - Conversation history is intact
+
+The CI smoke path should execute the installed app from `python -m pipx environment --value PIPX_BIN_DIR` rather than hard-coding a `pipx` venv location, because the internal venv path can differ across `pipx` versions and environments.
 
 ### Test Organization
 

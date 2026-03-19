@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import subprocess
 import sys
 from abc import ABC, abstractmethod
@@ -14,6 +15,12 @@ BACKEND_DEPENDENCIES: dict[str, list[str]] = {
     "mlx": ["mlx", "mlx_lm"],
     "gguf": ["llama_cpp"],
     "safetensors": ["torch", "transformers", "safetensors"],
+}
+
+BACKEND_REQUIREMENTS: dict[str, list[str]] = {
+    "mlx": ["mlx>=0.5", "mlx-lm>=0.5"],
+    "gguf": ["llama-cpp-python>=0.2"],
+    "safetensors": ["torch>=2.0", "transformers>=4.35", "safetensors>=0.4"],
 }
 
 BACKEND_EXTRAS: dict[str, str] = {
@@ -134,6 +141,23 @@ def backend_install_hint(backend: str) -> str:
     return f"pip install localagentcli[{backend_extra_name(backend)}]"
 
 
+def backend_requirement_specs(backend: str) -> list[str]:
+    """Return pinned requirement specifiers for a backend's optional dependencies."""
+    try:
+        return list(BACKEND_REQUIREMENTS[backend])
+    except KeyError as exc:
+        raise ValueError(f"Unknown backend: {backend}") from exc
+
+
+def backend_requirement_names(backend: str) -> list[str]:
+    """Return human-friendly package names for a backend's optional dependencies."""
+    names: list[str] = []
+    for requirement in backend_requirement_specs(backend):
+        name = re.split(r"[<>=!~]", requirement, maxsplit=1)[0].strip()
+        names.append(name)
+    return names
+
+
 def check_backend_dependencies(backend: str) -> tuple[bool, list[str]]:
     """Check whether the optional dependencies for a backend are installed."""
     importlib.invalidate_caches()
@@ -156,7 +180,7 @@ def install_backend_dependencies(
         "-m",
         "pip",
         "install",
-        f"localagentcli[{backend_extra_name(backend)}]",
+        *backend_requirement_specs(backend),
     ]
     run = runner or subprocess.run
     try:

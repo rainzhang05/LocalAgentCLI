@@ -247,3 +247,37 @@ class TestModelAbstractionLayer:
         backend = ConcreteBackend()
         layer = ModelAbstractionLayer(backend)
         assert layer.cancel() is None
+
+    def test_stream_generate_splits_embedded_analysis_and_final_channels(self):
+        class ChannelBackend(ConcreteBackend):
+            def stream_generate(
+                self, messages: list[ModelMessage], **kwargs: object
+            ) -> Iterator[StreamChunk]:
+                yield StreamChunk(text="<|channel|>analysis<|message|>Thinking")
+                yield StreamChunk(text="<|end|><|start|>assistant<|channel|>final<|message|>Hello")
+                yield StreamChunk(is_done=True)
+
+        layer = ModelAbstractionLayer(ChannelBackend())
+        chunks = list(layer.stream_generate([ModelMessage(role="user", content="hi")]))
+
+        assert [chunk.kind for chunk in chunks] == ["reasoning", "final_text", "done"]
+        assert chunks[0].text == "Thinking"
+        assert chunks[1].text == "Hello"
+
+    def test_stream_generate_captures_backend_stdout_as_notification(self):
+        class WarningBackend(ConcreteBackend):
+            def stream_generate(
+                self, messages: list[ModelMessage], **kwargs: object
+            ) -> Iterator[StreamChunk]:
+                print("[WARNING] Near memory limit")
+                yield StreamChunk(text="Hello")
+                yield StreamChunk(is_done=True)
+
+        layer = ModelAbstractionLayer(WarningBackend())
+        chunks = list(layer.stream_generate([ModelMessage(role="user", content="hi")]))
+
+        assert chunks[0].kind == "notification"
+        assert chunks[0].importance == "primary"
+        assert "Near memory limit" in chunks[0].text
+        assert chunks[1].kind == "final_text"
+        assert chunks[1].text == "Hello"

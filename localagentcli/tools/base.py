@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
 
+from localagentcli.safety.boundary import WorkspaceBoundary
+
 
 class _ToolErrorDescriptor:
     """Expose `ToolResult.error` as both an instance attribute and a factory."""
@@ -138,6 +140,7 @@ class Tool(ABC):
 
     def __init__(self, workspace_root: Path):
         self._workspace_root = workspace_root.resolve()
+        self._boundary = WorkspaceBoundary(self._workspace_root)
 
     @property
     @abstractmethod
@@ -176,18 +179,11 @@ class Tool(ABC):
 
     def resolve_path(self, path: str) -> Path:
         """Resolve a workspace-relative path and reject escapes."""
-        raw = Path(path)
-        candidate = raw if raw.is_absolute() else self._workspace_root / raw
-        resolved = candidate.resolve(strict=False)
-        if not resolved.is_relative_to(self._workspace_root):
-            raise ValueError(
-                f"Path '{path}' resolves outside the workspace root '{self._workspace_root}'"
-            )
-        return resolved
+        return self._boundary.validate_path(path)
 
     def relative_path(self, path: Path) -> str:
         """Return a workspace-relative display path."""
-        return str(path.relative_to(self._workspace_root))
+        return self._boundary.relative_path(path)
 
     def started_at(self) -> float:
         """Return a monotonic timestamp for duration measurement."""

@@ -22,7 +22,7 @@ pipx install localagentcli
 Development install:
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/rainzhang05/LocalAgentCLI.git
 cd LocalAgentCLI
 pip install -e ".[dev]"
 ```
@@ -89,13 +89,14 @@ ruff check .
 ruff format --check .
 mypy localagentcli/
 python -m build
+python -m twine check dist/*
 ```
 
 ## Documentation
 
-Project documentation lives in [`docs/`](docs/):
+Project documentation lives in the repository:
 
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/current-state.md`](docs/current-state.md)
-- [`docs/roadmap.md`](docs/roadmap.md)
-- [`docs/packaging-and-release.md`](docs/packaging-and-release.md)
+- [Architecture](https://github.com/rainzhang05/LocalAgentCLI/blob/main/docs/architecture.md)
+- [Current State](https://github.com/rainzhang05/LocalAgentCLI/blob/main/docs/current-state.md)
+- [Roadmap](https://github.com/rainzhang05/LocalAgentCLI/blob/main/docs/roadmap.md)
+- [Packaging and Release](https://github.com/rainzhang05/LocalAgentCLI/blob/main/docs/packaging-and-release.md)

@@ -316,6 +316,26 @@ class TestModelsRemove:
         assert result.success is False
         assert "not found" in result.message.lower()
 
+    @patch("localagentcli.commands.models.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.models.select_option")
+    def test_remove_uses_picker_when_name_missing(
+        self,
+        mock_select,
+        _mock_supports,
+        registry: ModelRegistry,
+        models_dir: Path,
+    ):
+        entry = _make_entry(path=str(models_dir / "codellama-7b" / "v1"))
+        (models_dir / "codellama-7b" / "v1").mkdir(parents=True)
+        registry.register(entry)
+        mock_select.return_value = MagicMock(value="codellama-7b@v1")
+
+        handler = ModelsRemoveHandler(registry, models_dir)
+        result = handler.execute([])
+
+        assert result.success is True
+        assert len(registry.list_models()) == 0
+
 
 # ---------------------------------------------------------------------------
 # Use handler
@@ -409,6 +429,27 @@ class TestModelsUse:
             result = handler.execute(["codellama-7b"])
         assert result.success is True
 
+    @patch("localagentcli.commands.models.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.models.select_option")
+    def test_use_uses_picker_when_name_missing(
+        self,
+        mock_select,
+        _mock_supports,
+        registry: ModelRegistry,
+        hw_detector: HardwareDetector,
+        session_manager: SessionManager,
+        console: Console,
+    ):
+        registry.register(_make_entry(size_bytes=1_000_000))
+        mock_select.return_value = MagicMock(value="codellama-7b@v1")
+
+        with patch.object(hw_detector, "can_run_model", return_value=(True, [])):
+            handler = ModelsUseHandler(registry, hw_detector, session_manager, console)
+            result = handler.execute([])
+
+        assert result.success is True
+        assert session_manager.current.model == "codellama-7b@v1"
+
 
 # ---------------------------------------------------------------------------
 # Inspect handler
@@ -442,3 +483,20 @@ class TestModelsInspect:
         result = handler.execute(["codellama-7b@v1"])
         assert result.success is True
         assert "v1" in result.message
+
+    @patch("localagentcli.commands.models.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.models.select_option")
+    def test_inspect_uses_picker_when_name_missing(
+        self,
+        mock_select,
+        _mock_supports,
+        registry: ModelRegistry,
+    ):
+        registry.register(_make_entry())
+        mock_select.return_value = MagicMock(value="codellama-7b@v1")
+
+        handler = ModelsInspectHandler(registry)
+        result = handler.execute([])
+
+        assert result.success is True
+        assert "codellama-7b" in result.message

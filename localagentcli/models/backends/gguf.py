@@ -49,6 +49,9 @@ class GGUFBackend(ModelBackend):
         self._model = None
         self._model_path = None
 
+    def cancel(self) -> None:
+        """Best-effort cancellation hook for compatibility with the shell."""
+
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         """Generate a complete response."""
         if self._model is None:

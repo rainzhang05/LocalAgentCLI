@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
-from rich.prompt import Confirm
 from rich.text import Text
 
 from localagentcli import __version__
@@ -52,7 +51,13 @@ from localagentcli.safety.layer import SafetyLayer
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.instructions import sync_workspace_instruction
 from localagentcli.session.manager import SessionManager
-from localagentcli.shell.prompt import create_prompt_session, get_prompt_history_strings
+from localagentcli.shell.prompt import (
+    SelectionOption,
+    confirm_choice,
+    create_prompt_session,
+    get_prompt_history_strings,
+    prompt_action,
+)
 from localagentcli.shell.streaming import StreamRenderer
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
@@ -111,13 +116,20 @@ class ShellUI:
         self._prompt_session = create_prompt_session(
             self._router,
             self._session_prompt_history(),
+            toolbar_provider=self._prompt_toolbar_text,
         )
         self._sync_workspace_instruction()
 
     def _register_commands(self) -> None:
         """Register all command handlers."""
         help_cmd.register(self._router)
-        status_cmd.register(self._router, self._session_manager, self._config)
+        status_cmd.register(
+            self._router,
+            self._session_manager,
+            self._config,
+            target_resolver=self._active_target_label,
+            workspace_formatter=self._abbreviate_home,
+        )
         config_cmd.register(self._router, self._config)
         hf_token_cmd.register(self._router, self._key_manager)
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
@@ -174,7 +186,6 @@ class ShellUI:
         while True:
             try:
                 self._sync_workspace_instruction()
-                self._display_status_header()
                 user_input = self._prompt_session.prompt("> ")
                 self._awaiting_idle_exit_confirmation = False
                 if not user_input.strip():
@@ -409,31 +420,29 @@ class ShellUI:
 
         label = backend_label(backend_name)
         dependency_list = ", ".join(backend_requirement_names(backend_name))
-        try:
-            should_install = Confirm.ask(
-                f"The {label} backend requires {dependency_list}. Install it now?",
-                default=True,
-                console=self._console,
-            )
-        except (KeyboardInterrupt, EOFError):
-            self._console.print(f"[yellow]{label} backend loading cancelled.[/yellow]")
+        should_install = confirm_choice(
+            f"The {label} backend requires {dependency_list}. Install it now?",
+            default=True,
+        )
+        if should_install is None:
+            self._stream_renderer.render_warning(f"{label} backend loading cancelled.")
             return False
 
         if not should_install:
-            self._console.print(
-                f"[yellow]{label} backend dependencies were not installed.[/yellow]"
+            self._stream_renderer.render_warning(
+                f"{label} backend dependencies were not installed."
             )
             return False
 
-        self._console.print(f"[dim]Installing {label} backend dependencies...[/dim]")
+        self._stream_renderer.render_status(f"Installing {label} backend dependencies...")
         success, message = install_backend_dependencies(backend_name)
         if not success:
-            self._console.print(
-                f"[red]Failed to install {label} backend dependencies: {message}[/red]"
+            self._stream_renderer.render_error(
+                f"Failed to install {label} backend dependencies: {message}"
             )
             return False
 
-        self._console.print(f"[green]{label} backend dependencies installed.[/green]")
+        self._stream_renderer.render_success(f"{label} backend dependencies installed.")
         return True
 
     def _create_backend(self, fmt: str) -> ModelBackend:
@@ -475,39 +484,60 @@ class ShellUI:
         self._console.print("  Use /mode chat for conversation, /mode agent for tasks.")
         self._console.print()
 
-    def _display_status_header(self) -> None:
-        """Render the status header line."""
+    def _status_snapshot(self) -> status_cmd.StatusSnapshot:
+        """Build the current shell-status snapshot for toolbar and /status views."""
         session = self._session_manager.current
-        workspace = self._abbreviate_home(session.workspace)
-        self._console.print(
-            f"[dim]LocalAgent | mode: {session.mode} | model: {self._active_target_label()} "
-            f"| workspace: {workspace}[/dim]"
+        approval_mode = str(
+            session.metadata.get(
+                "approval_mode",
+                self._config.get("safety.approval_mode", "balanced"),
+            )
         )
+        return status_cmd.build_status_snapshot(
+            mode=session.mode,
+            target=self._active_target_label(),
+            workspace=self._abbreviate_home(session.workspace),
+            session_name=session.name or "(unsaved)",
+            approval_mode=approval_mode,
+            message_count=len(session.history),
+        )
+
+    def _prompt_toolbar_text(self) -> str:
+        """Render the prompt-time status toolbar."""
+        return status_cmd.format_status_toolbar(self._status_snapshot())
 
     def _render_command_result(self, result: CommandResult) -> None:
         """Render a command result to the console."""
-        if result.success:
-            if result.message and result.message != "exit":
-                self._console.print(result.message)
+        if result.message == "exit" and result.data and result.data.get("action") == "exit":
             return
-        self._console.print(f"[red]✗ {result.message}[/red]")
+
+        if result.presentation == "status":
+            if result.message:
+                self._stream_renderer.render_status(result.message)
+        elif result.presentation == "success":
+            if result.message:
+                self._stream_renderer.render_success(result.message)
+        elif result.presentation == "warning":
+            if result.message:
+                self._stream_renderer.render_warning(result.message)
+        elif result.presentation == "error":
+            if result.message:
+                self._stream_renderer.render_error(result.message)
+        elif result.message:
+            self._console.print(result.message)
+
+        if result.body:
+            self._console.print(result.body)
 
     def _handle_exit(self, *, prompt_to_save: bool = True) -> None:
         """Handle clean shutdown with optional session save."""
         self._sync_prompt_history_to_session()
         session = self._session_manager.current
         if prompt_to_save and session.is_modified:
-            try:
-                save = Confirm.ask(
-                    "Save session before exiting?",
-                    default=False,
-                    console=self._console,
-                )
-                if save:
-                    path = self._session_manager.save_session()
-                    self._console.print(f"Session saved to {path}")
-            except (KeyboardInterrupt, EOFError):
-                pass
+            save = confirm_choice("Save session before exiting?", default=False)
+            if save:
+                path = self._session_manager.save_session()
+                self._console.print(f"Session saved to {path}")
 
         if self._active_backend is not None:
             try:
@@ -614,22 +644,49 @@ class ShellUI:
         while True:
             self._stream_renderer.flush_pending_details()
             self._stream_renderer.render_approval_prompt()
-            response = self._console.input("").strip()
-            if response == "":
+            selection = prompt_action(
+                "Choose approval action",
+                [
+                    SelectionOption(
+                        value="approve",
+                        label="Approve",
+                        description="Run the requested tool call now.",
+                    ),
+                    SelectionOption(
+                        value="deny",
+                        label="Deny",
+                        description="Reject this tool call and let the agent recover.",
+                        aliases=("d", "/agent deny"),
+                    ),
+                    SelectionOption(
+                        value="details",
+                        label="View details",
+                        description="Inspect a fuller preview before deciding.",
+                        aliases=("v", "view"),
+                    ),
+                    SelectionOption(
+                        value="approve_all",
+                        label="Approve all",
+                        description="Enable autonomous approvals for this and future sessions.",
+                        aliases=("a", "/agent approve"),
+                    ),
+                ],
+                default="approve",
+            )
+            if selection is None:
+                return "stop"
+            if selection.value == "approve":
                 return "approve"
-            if response in {"d", "/agent deny"}:
+            if selection.value == "deny":
                 return "deny"
-            if response in {"/agent approve"}:
+            if selection.value == "approve_all":
                 return "approve_all"
-            if response == "v":
+            if selection.value == "details":
                 self._stream_renderer.render_preview(
                     f"{event.tool_name} preview",
                     self._format_tool_preview(event),
                 )
                 continue
-            self._stream_renderer.render_error(
-                "Invalid response. Use Enter, d, v, /agent approve, or Ctrl+C."
-            )
 
     def _format_tool_preview(self, event: ToolCallRequested) -> str:
         """Render a detailed preview of a pending tool call."""
@@ -673,13 +730,11 @@ class ShellUI:
         """Stop an active agent task before mode or session changes."""
         if self._agent_controller is None or not self._agent_controller.has_active_task:
             return True
-        try:
-            stop = Confirm.ask(
-                "An agent task is active. Stop it before switching modes?",
-                default=True,
-                console=self._console,
-            )
-        except (KeyboardInterrupt, EOFError):
+        stop = confirm_choice(
+            "An agent task is active. Stop it before switching modes?",
+            default=True,
+        )
+        if stop is None:
             return False
         if not stop:
             return False
@@ -724,6 +779,7 @@ class ShellUI:
         self._prompt_session = create_prompt_session(
             self._router,
             self._session_prompt_history(),
+            toolbar_provider=self._prompt_toolbar_text,
         )
 
     def _abbreviate_home(self, path: str) -> str:

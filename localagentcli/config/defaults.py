@@ -40,7 +40,7 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "general.logging_level": (str, lambda v: v in ("normal", "verbose", "debug")),
     "model.active_model": (str, None),
     "provider.active_provider": (str, None),
-    "safety.approval_mode": (str, lambda v: v in ("balanced",)),
+    "safety.approval_mode": (str, lambda v: v in ("balanced", "autonomous")),
     "generation.temperature": (float, lambda v: 0.0 <= v <= 2.0),
     "generation.max_tokens": (int, lambda v: v > 0),
     "generation.top_p": (float, lambda v: 0.0 <= v <= 1.0),

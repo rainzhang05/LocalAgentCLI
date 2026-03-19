@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/models` now offers live Hugging Face family/model discovery across many model families, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, nested selection menus now keep matching options visible while typing and backspacing, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/models` now offers live Hugging Face family/model discovery across many model families, repository-root `AGENTS.md` files are auto-detected and injected as default system instructions, Hugging Face and direct URL downloads now refresh their progress output continuously, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -26,7 +26,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing, and exits on consecutive idle `Ctrl+C` presses without a save prompt |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, and exits on consecutive idle `Ctrl+C` presses without a save prompt |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-17 |
 | `[x]` | `/exit` command | 2026-03-17 |
@@ -68,8 +68,8 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Model registry (`registry.json`) | 2026-03-18 — ModelEntry dataclass, JSON persistence with filelock |
-| `[x]` | Model installer (HF download) | 2026-03-18 — huggingface_hub.snapshot_download |
-| `[x]` | Model installer (URL download) | 2026-03-18 — httpx streaming with resume support |
+| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, plus faster fallback progress refresh |
+| `[x]` | Model installer (URL download) | 2026-03-19 — httpx streaming with resume support and continuously refreshed progress output |
 | `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-19 — auto-detection pipeline with unsupported-backend-aware repair for stale registry entries |
 | `[x]` | Backend base class (ABC) | 2026-03-17 — already existed from Phase 2 |
 | `[x]` | MLX backend | 2026-03-19 — macOS Apple Silicon, lazy mlx-lm import, sampler-based generation compatibility |
@@ -94,7 +94,7 @@ After implementing a component:
 | `[x]` | Streaming output renderer | 2026-03-18 — reasoning/activity-aware renderer in `localagentcli/shell/streaming.py` |
 | `[x]` | Reasoning panel display | 2026-03-18 — buffered reasoning rendered in a distinct panel above assistant output |
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
-| `[x]` | Pinned instructions | 2026-03-18 — retained on `Session` and preserved by `ChatController` across compaction |
+| `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-18 |
 | `[x]` | `/mode agent` command | 2026-03-18 — mode switching implemented in Phase 4 and now activates the Phase 5 agent workflow |
 | `[x]` | Status header display | 2026-03-18 — header shows mode, active model/provider target, and workspace |
@@ -151,7 +151,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 691 tests total across unit, component, integration, and CLI coverage |
+| `[x]` | Unit tests | 2026-03-19 — 701 tests total across unit, component, integration, and CLI coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

@@ -15,8 +15,16 @@ from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands import agent as agent_cmd
-from localagentcli.commands import config_cmd, exit_cmd, set_cmd, setup_cmd
+from localagentcli.commands import (
+    config_cmd,
+    exit_cmd,
+    set_cmd,
+    setup_cmd,
+)
 from localagentcli.commands import help as help_cmd
+from localagentcli.commands import (
+    hf_token as hf_token_cmd,
+)
 from localagentcli.commands import mode as mode_cmd
 from localagentcli.commands import models as models_cmd
 from localagentcli.commands import providers as providers_cmd
@@ -70,15 +78,9 @@ class ShellUI:
             config.get("general.logging_level", "normal"),
         )
 
-        self._session_manager = SessionManager(storage.sessions_dir, config)
-        self._session_manager.new_session()
-
         self._key_manager = KeyManager(storage.secrets_dir)
+        hf_token_cmd.restore_hf_token_environment(self._key_manager)
         self._provider_registry = ProviderRegistry(config, self._key_manager)
-        self._stream_renderer = StreamRenderer(self._console)
-        self._active_provider: RemoteProvider | None = None
-        self._active_provider_name = ""
-
         self._model_registry = ModelRegistry(storage.registry_path)
         self._model_detector = ModelDetector()
         self._hardware_detector = HardwareDetector()
@@ -89,6 +91,15 @@ class ShellUI:
             detector=self._model_detector,
             console=self._console,
         )
+        self._session_manager = SessionManager(
+            storage.sessions_dir,
+            config,
+            default_target_resolver=self._resolve_default_target,
+        )
+        self._session_manager.new_session()
+        self._stream_renderer = StreamRenderer(self._console)
+        self._active_provider: RemoteProvider | None = None
+        self._active_provider_name = ""
         self._active_backend: ModelBackend | None = None
         self._active_backend_model = ""
         self._agent_controller: AgentController | None = None
@@ -108,6 +119,7 @@ class ShellUI:
         help_cmd.register(self._router)
         status_cmd.register(self._router, self._session_manager, self._config)
         config_cmd.register(self._router, self._config)
+        hf_token_cmd.register(self._router, self._key_manager)
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
@@ -133,6 +145,7 @@ class ShellUI:
             self._model_registry,
             self._provider_registry,
             self._hardware_detector,
+            self._config,
             self._session_manager,
             self._console,
         )
@@ -275,6 +288,11 @@ class ShellUI:
                 )
                 return None
         elif session.provider:
+            if not session.model:
+                self._console.print(
+                    "[dim]No provider model selected. Use /set or /set default to choose one.[/dim]"
+                )
+                return None
             backend = self._get_active_provider(session.provider)
             if backend is None:
                 self._console.print(
@@ -337,6 +355,48 @@ class ShellUI:
             self._active_backend = None
             self._active_backend_model = ""
             return None
+
+    def _resolve_default_target(self, provider_name: str, model_name: str) -> tuple[str, str]:
+        """Validate configured defaults and choose a fallback target when needed."""
+        if provider_name:
+            if self._provider_registry.get(provider_name) is not None and model_name:
+                return provider_name, model_name
+            return self._fallback_target()
+
+        if model_name:
+            name, version = self._parse_name_version(model_name)
+            if self._refresh_model_entry(name, version) is not None:
+                return "", model_name
+            return self._fallback_target()
+
+        return "", ""
+
+    def _fallback_target(self) -> tuple[str, str]:
+        """Choose a best-effort replacement target when the configured default is invalid."""
+        installed_models = self._model_registry.list_models()
+        if installed_models:
+            entry = installed_models[0]
+            return "", f"{entry.name}@{entry.version}"
+
+        for provider_entry in self._provider_registry.list_providers():
+            runtime: RemoteProvider | None = None
+            try:
+                runtime = self._provider_registry.create_provider(provider_entry.name)
+                models = runtime.list_models()
+            except Exception:
+                models = []
+            finally:
+                if runtime is not None:
+                    try:
+                        runtime.close()
+                    except Exception:
+                        pass
+            if models:
+                selected = models[0].id or models[0].name
+                if selected:
+                    return provider_entry.name, selected
+
+        return "", ""
 
     def _ensure_backend_dependencies(self, backend_name: str) -> bool:
         """Prompt to install missing optional backend dependencies when needed."""

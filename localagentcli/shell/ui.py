@@ -30,6 +30,9 @@ from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.safety.approval import ApprovalManager
+from localagentcli.safety.boundary import WorkspaceBoundary
+from localagentcli.safety.layer import SafetyLayer
+from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import create_prompt_session, get_prompt_history_strings
 from localagentcli.shell.streaming import StreamRenderer
@@ -404,11 +407,18 @@ class ShellUI:
     def _create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Build or replace the active agent controller for the current session."""
         workspace_root = self._workspace_root()
+        approval = ApprovalManager()
         self._agent_controller = AgentController(
             model=model,
             session=self._session_manager.current,
             tool_registry=create_default_tool_registry(workspace_root),
-            approval=ApprovalManager(),
+            approval=approval,
+            safety=SafetyLayer(
+                approval,
+                WorkspaceBoundary(workspace_root),
+                RollbackManager(self._session_manager.current.id, self._storage.cache_dir),
+            ),
+            rollback_storage=self._storage.cache_dir,
             context_limit=self._context_limit(),
             generation_config=self._generation_options(),
         )
@@ -459,8 +469,13 @@ class ShellUI:
     def _format_tool_preview(self, event: ToolCallRequested) -> str:
         """Render a detailed preview of a pending tool call."""
         arguments = dict(event.arguments)
+        prefix = ""
+        if event.risk_level == "high":
+            prefix = "HIGH RISK\n"
+        if event.warnings:
+            prefix = prefix + "\n".join(event.warnings) + "\n\n"
         if event.tool_name == "patch_apply":
-            return (
+            return prefix + (
                 f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n"
                 f"Replace:\n{arguments.get('old_text', '')}\n\n"
                 f"With:\n{arguments.get('new_text', '')}"
@@ -468,8 +483,8 @@ class ShellUI:
         if event.tool_name == "file_write":
             content = str(arguments.get("content", ""))
             preview = content[:500] + ("..." if len(content) > 500 else "")
-            return f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n\n{preview}"
-        return json.dumps(
+            return prefix + f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n\n{preview}"
+        return prefix + json.dumps(
             {"tool": event.tool_name, "arguments": arguments},
             indent=2,
             ensure_ascii=False,

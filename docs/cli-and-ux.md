@@ -64,25 +64,27 @@ two sub-arrays...█
 - The cursor (block `█`) advances as tokens arrive
 - Markdown formatting in model output is rendered in real time (bold, code blocks, lists)
 - Code blocks are syntax-highlighted using the detected language
+- Primary output (assistant text and important activity messages) stays high-contrast
+- Secondary output (reasoning, raw tool-call details, provider notifications, low-priority errors) is separated from the primary stream and rendered dimmed
 
-### Reasoning Panel
+### Secondary Details Panel
 
-When the model emits reasoning/thinking tokens, they are displayed in a visually distinct panel above the response:
+When the model emits reasoning/thinking tokens, raw tool-call metadata, provider notifications, or similar low-priority events, they are displayed in a visually distinct dimmed panel above the primary response:
 
 ```
-┌─ Reasoning ──────────────────────────────────────────┐
+┌─ Details ────────────────────────────────────────────┐
 │ The user wants an explanation of quicksort.           │
-│ I should cover the algorithm, complexity, and a       │
-│ simple example...                                     │
+│ Tool call: file_read                                  │
+│ local runtime warning: high memory pressure           │
 └──────────────────────────────────────────────────────┘
 
 Quicksort is a divide-and-conquer sorting algorithm...
 ```
 
 **Behavior:**
-- The reasoning panel is collapsible (shown by default, can be hidden via config)
-- If reasoning is long, the panel scrolls independently of the main output
-- Reasoning text is styled differently (dimmed or italic) to distinguish it from the response
+- Secondary entries are shown by default in dim styling so they remain visible without competing with the final answer
+- The on-screen panel is capped to a rolling window of recent secondary entries during active generation
+- Full normalized secondary events are still preserved in session metadata even when the on-screen view is capped
 
 ### Inline Activity Logs
 
@@ -109,7 +111,7 @@ Tool calls, approvals, and system events are displayed inline between user input
 - `✓` — completed action (green)
 - `⟳` — pending approval (yellow)
 - `✗` — failed or denied action (red)
-- `ℹ` — informational message (blue)
+- `ℹ` — informational message (default high-contrast text)
 
 ---
 
@@ -167,6 +169,7 @@ The picker must be keyboard-first:
 2. Tokens are rendered as soon as they are received — no buffering.
 3. Markdown is rendered progressively. A code block that hasn't been closed yet is still displayed with partial syntax highlighting.
 4. If the model is generating and the user scrolls up, generation continues in the background. Scrolling back down resumes live output.
+5. Secondary chunks are buffered separately from final assistant text so the renderer can dim and cap them without losing the full ordered event stream.
 
 ### Streaming Implementation
 
@@ -181,14 +184,10 @@ class StreamRenderer:
     def render_chunk(self, chunk: StreamChunk) -> None:
         """Render a single stream chunk to the terminal.
 
-        - Regular text: append and render inline
-        - Reasoning text: route to reasoning panel
-        - Tool call: route to activity log
-        - Done: finalize output (add newline, flush)
+        - final_text: append and render inline
+        - reasoning/tool_call/notification/error: route to dimmed details panel
+        - done: finalize output (add newline, flush)
         """
-
-    def render_reasoning(self, text: str) -> None:
-        """Append text to the reasoning panel."""
 
     def render_activity(self, event: AgentEvent) -> None:
         """Render an agent event (tool call, approval, etc.) in the activity log."""

@@ -32,6 +32,10 @@ DEFAULT_REQUEST_MAPPING: dict[str, str] = {
 DEFAULT_RESPONSE_MAPPING: dict[str, str] = {
     "content_field": "choices[0].message.content",
     "stream_content_field": "choices[0].delta.content",
+    "reasoning_field": "",
+    "tool_calls_field": "",
+    "stream_reasoning_field": "",
+    "stream_tool_calls_field": "",
 }
 
 
@@ -74,7 +78,9 @@ class GenericRESTProvider(RemoteProvider):
         """Send request using configured mapping."""
         body = self._build_request_body(messages, stream=False, **kwargs)
         try:
-            response = self._client.post(self._endpoint, json=body)
+            response = self._request_with_retries(
+                lambda: self._client.post(self._endpoint, json=body)
+            )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
@@ -83,9 +89,15 @@ class GenericRESTProvider(RemoteProvider):
 
         data = response.json()
         content_field = self._response_mapping.get("content_field", "choices[0].message.content")
+        reasoning_field = self._response_mapping.get("reasoning_field", "")
+        tool_calls_field = self._response_mapping.get("tool_calls_field", "")
         text = extract_field(data, content_field)
+        reasoning = extract_field(data, reasoning_field) if reasoning_field else None
+        tool_calls = extract_field(data, tool_calls_field) if tool_calls_field else []
         return GenerationResult(
             text=str(text) if text is not None else "",
+            reasoning=str(reasoning) if isinstance(reasoning, str) else "",
+            tool_calls=tool_calls if isinstance(tool_calls, list) else [],
             finish_reason="stop",
         )
 
@@ -97,26 +109,50 @@ class GenericRESTProvider(RemoteProvider):
         stream_field = self._response_mapping.get(
             "stream_content_field", "choices[0].delta.content"
         )
+        reasoning_field = self._response_mapping.get("stream_reasoning_field", "")
+        tool_calls_field = self._response_mapping.get("stream_tool_calls_field", "")
+        context = None
         try:
-            with self._client.stream("POST", self._endpoint, json=body) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    chunk = self._parse_sse_line(line, stream_field)
-                    if chunk is not None:
-                        yield chunk
-                        if chunk.is_done:
-                            return
+            context, resp = self._open_stream_with_retries(
+                lambda: self._client.stream("POST", self._endpoint, json=body)
+            )
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                for chunk in self._parse_sse_line(
+                    line,
+                    stream_field,
+                    reasoning_field,
+                    tool_calls_field,
+                ):
+                    yield chunk
+                    if chunk.is_done:
+                        return
         except httpx.HTTPStatusError as e:
-            yield StreamChunk(text=f"API error: {e.response.status_code}", is_done=True)
+            yield StreamChunk(
+                text=f"API error: {e.response.status_code}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
         except (httpx.TimeoutException, httpx.ConnectError) as e:
-            yield StreamChunk(text=f"Connection error: {e}", is_done=True)
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        finally:
+            if context is not None:
+                context.__exit__(None, None, None)
 
     def test_connection(self) -> ConnectionTestResult:
         """Send a minimal request to the configured endpoint."""
         start = time.monotonic()
         try:
             body = self._build_request_body([ModelMessage(role="user", content="Hi")], stream=False)
-            response = self._client.post(self._endpoint, json=body)
+            response = self._request_with_retries(
+                lambda: self._client.post(self._endpoint, json=body)
+            )
             response.raise_for_status()
             latency = (time.monotonic() - start) * 1000
             return ConnectionTestResult(
@@ -142,7 +178,7 @@ class GenericRESTProvider(RemoteProvider):
     def list_models(self) -> list[RemoteModelInfo]:
         """Try to discover models from a configured endpoint, then fall back."""
         try:
-            response = self._client.get(self._models_endpoint)
+            response = self._request_with_retries(lambda: self._client.get(self._models_endpoint))
             response.raise_for_status()
             payload = response.json()
             raw_models = payload
@@ -186,16 +222,20 @@ class GenericRESTProvider(RemoteProvider):
         ]
 
     def supports_tools(self) -> bool:
-        return False
+        return bool(self.capabilities().get("tool_use", False))
 
     def supports_reasoning(self) -> bool:
-        return False
+        return bool(self.capabilities().get("reasoning", False))
 
     def supports_streaming(self) -> bool:
         return True
 
     def capabilities(self) -> dict:
-        return {"tool_use": False, "reasoning": False, "streaming": True}
+        return {
+            "tool_use": bool(self._options.get("supports_tools", False)),
+            "reasoning": bool(self._options.get("supports_reasoning", False)),
+            "streaming": True,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -213,28 +253,58 @@ class GenericRESTProvider(RemoteProvider):
         stream_field = self._request_mapping.get("stream_field", "stream")
 
         body: dict = {
-            model_field: kwargs.get("model", self._default_model),
+            model_field: kwargs.get("model", self.active_model),
             messages_field: [{"role": m.role, "content": m.content} for m in messages],
             stream_field: stream,
         }
+        self.set_active_model(str(body[model_field]))
         return body
 
     @staticmethod
-    def _parse_sse_line(line: str, content_field: str) -> StreamChunk | None:
+    def _parse_sse_line(
+        line: str,
+        content_field: str,
+        reasoning_field: str,
+        tool_calls_field: str,
+    ) -> list[StreamChunk]:
         """Parse a single SSE line using the configured response mapping."""
         if not line or not line.startswith("data: "):
-            return None
+            return []
         data_str = line[6:]
         if data_str.strip() == "[DONE]":
-            return StreamChunk(is_done=True)
+            return [StreamChunk(kind="done", is_done=True)]
         try:
             data = json.loads(data_str)
         except json.JSONDecodeError:
-            return None
+            return []
+        chunks: list[StreamChunk] = []
         content = extract_field(data, content_field)
         if content:
-            return StreamChunk(text=str(content))
-        return None
+            chunks.append(StreamChunk(text=str(content), kind="final_text"))
+        if reasoning_field:
+            reasoning = extract_field(data, reasoning_field)
+            if isinstance(reasoning, str) and reasoning:
+                chunks.append(
+                    StreamChunk(
+                        text=reasoning,
+                        kind="reasoning",
+                        importance="secondary",
+                    )
+                )
+        if tool_calls_field:
+            tool_calls = extract_field(data, tool_calls_field)
+            if isinstance(tool_calls, list):
+                chunks.extend(
+                    StreamChunk(
+                        kind="tool_call",
+                        importance="secondary",
+                        payload=tool_call,
+                        tool_call_data=tool_call if isinstance(tool_call, dict) else None,
+                    )
+                    for tool_call in tool_calls
+                    if isinstance(tool_call, dict)
+                )
+        return chunks
 
 
 def extract_field(data: Any, path: str) -> Any:

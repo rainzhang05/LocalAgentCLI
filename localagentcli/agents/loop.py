@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Generator
 
 from localagentcli.agents.events import (
@@ -58,19 +59,31 @@ class AgentLoop:
         self,
         task: str,
         context: list[ModelMessage],
+        plan: TaskPlan | None = None,
         generation_options: dict[str, object] | None = None,
+        planning_options: dict[str, object] | None = None,
+        inactivity_timeout: int | None = None,
     ) -> Generator[AgentEvent, bool, None]:
         """Execute the full understand/plan/execute/observe loop."""
         options: dict[str, object] = {"temperature": 0.1, "max_tokens": 1200}
         if generation_options:
             options.update(generation_options)
 
-        plan = self._planner.create_plan(task, context)
+        plan = plan or self._planner.create_plan(
+            task,
+            context,
+            generation_options=planning_options,
+        )
         plan.status = "executing"
         transcript = list(context)
+        last_activity = time.monotonic()
         yield PlanGenerated(plan)
 
         while not self._stop_requested:
+            if inactivity_timeout and (time.monotonic() - last_activity) > inactivity_timeout:
+                plan.status = "failed"
+                yield TaskFailed(reason="Agent task timed out due to inactivity.", plan=plan)
+                return
             step = plan.next_step()
             if step is None:
                 plan.status = "completed"
@@ -89,6 +102,7 @@ class AgentLoop:
                 options,
             )
             transcript.extend(new_messages)
+            last_activity = time.monotonic()
 
             if self._stop_requested:
                 break
@@ -99,6 +113,7 @@ class AgentLoop:
                         task,
                         plan,
                         f"Step {step.index} encountered repeated tool failures.",
+                        generation_options=planning_options,
                     )
                     self._preserve_completed_steps(plan, revised)
                     plan = revised
@@ -159,6 +174,18 @@ class AgentLoop:
                 tool_choice="auto",
                 **options,
             )
+
+            if result.finish_reason == "error":
+                consecutive_errors += 1
+                if result.usage.get("error"):
+                    conversation.append(
+                        ModelMessage(
+                            role="assistant",
+                            content="",
+                            metadata={"error": result.usage["error"]},
+                        )
+                    )
+                continue
 
             if result.reasoning.strip():
                 yield ReasoningOutput(text=result.reasoning.strip())

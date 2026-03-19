@@ -36,10 +36,15 @@ class DetectionError(Exception):
 class ModelDetector:
     """Detects model format, assigns backend, validates, and extracts metadata."""
 
-    def detect(self, model_path: Path) -> DetectionResult:
+    def detect(
+        self,
+        model_path: Path,
+        *,
+        allow_unsupported_backend: bool = False,
+    ) -> DetectionResult:
         """Run the full detection pipeline on a model directory."""
         fmt = self._detect_format(model_path)
-        backend = self._assign_backend(fmt)
+        backend = self._assign_backend(fmt, allow_unsupported_backend=allow_unsupported_backend)
         self._validate(model_path, fmt)
         metadata = self._extract_metadata(model_path, fmt)
         return DetectionResult(format=fmt, backend=backend, metadata=metadata)
@@ -108,10 +113,10 @@ class ModelDetector:
 
         return False
 
-    def _assign_backend(self, fmt: str) -> str:
+    def _assign_backend(self, fmt: str, *, allow_unsupported_backend: bool = False) -> str:
         """Assign the appropriate backend for the detected format."""
         if fmt == "mlx":
-            if platform.system() != "Darwin":
+            if platform.system() != "Darwin" and not allow_unsupported_backend:
                 raise DetectionError(
                     "MLX models are only supported on macOS. "
                     "Consider converting to GGUF format for cross-platform use."

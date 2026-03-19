@@ -126,7 +126,6 @@ class ModelInstaller:
         snapshot_download(
             repo_id=repo,
             local_dir=str(target_dir),
-            local_dir_use_symlinks=False,
         )
 
     def _download_url(self, url: str, target_path: Path) -> None:

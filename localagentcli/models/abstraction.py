@@ -9,6 +9,7 @@ from localagentcli.models.backends.base import (
     ModelBackend,
     ModelMessage,
     StreamChunk,
+    collect_generation_result,
 )
 
 
@@ -24,8 +25,8 @@ class ModelAbstractionLayer:
         return self._backend
 
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
-        """Generate a complete response."""
-        return self._backend.generate(messages, **kwargs)
+        """Generate a complete response from the normalized streaming pipeline."""
+        return collect_generation_result(self.stream_generate(messages, **kwargs))
 
     def stream_generate(
         self, messages: list[ModelMessage], **kwargs: object
@@ -44,3 +45,7 @@ class ModelAbstractionLayer:
     def supports_streaming(self) -> bool:
         """Whether the backend supports streaming output."""
         return self._backend.supports_streaming()
+
+    def cancel(self) -> None:
+        """Cancel the active generation, if supported by the backend."""
+        self._backend.cancel()

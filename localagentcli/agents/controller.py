@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator, Iterator
 from datetime import datetime
+from pathlib import Path
 
 from localagentcli.agents.events import (
     AgentEvent,
@@ -18,6 +19,9 @@ from localagentcli.agents.planner import TaskPlanner
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage
 from localagentcli.safety.approval import ApprovalManager
+from localagentcli.safety.boundary import WorkspaceBoundary
+from localagentcli.safety.layer import SafetyLayer
+from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.compactor import ContextCompactor
 from localagentcli.session.state import Message, Session
 from localagentcli.tools.registry import ToolRegistry
@@ -32,6 +36,8 @@ class AgentController:
         session: Session,
         tool_registry: ToolRegistry,
         approval: ApprovalManager | None = None,
+        safety: SafetyLayer | None = None,
+        rollback_storage: Path | None = None,
         context_limit: int = 8192,
         generation_config: dict[str, object] | None = None,
     ):
@@ -39,8 +45,17 @@ class AgentController:
         self._session = session
         self._tools = tool_registry
         self._approval = approval or ApprovalManager()
+        workspace_root = Path(session.workspace).expanduser().resolve()
+        self._safety = safety or SafetyLayer(
+            self._approval,
+            WorkspaceBoundary(workspace_root),
+            RollbackManager(
+                session.id,
+                rollback_storage or (workspace_root / ".localagent_cache"),
+            ),
+        )
         self._planner = TaskPlanner(model)
-        self._loop = AgentLoop(model, tool_registry, self._planner, self._approval)
+        self._loop = AgentLoop(model, tool_registry, self._planner, self._safety)
         self._compactor = ContextCompactor(model, context_limit)
         self._generation_config = generation_config or {}
         self._generator: Generator[AgentEvent, bool, None] | None = None
@@ -227,6 +242,14 @@ class AgentController:
         self._approval.reset()
         self._session.metadata.pop("approval_mode", None)
         self._session.touch()
+
+    def undo_last(self):
+        """Undo the most recent file change recorded for this session."""
+        return self._safety.rollback.undo_last()
+
+    def undo_all(self):
+        """Undo all recorded file changes for this session."""
+        return self._safety.rollback.undo_all()
 
     def _build_context_messages(self) -> list[ModelMessage]:
         system_parts = list(self._session.pinned_instructions)

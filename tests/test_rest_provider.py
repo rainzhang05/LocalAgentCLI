@@ -203,6 +203,23 @@ class TestRESTCapabilities:
 
 
 class TestRESTListModels:
+    def test_returns_api_models(self):
+        provider = _make_provider()
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [{"id": "alpha"}, {"id": "beta"}]}
+        with patch.object(provider._client, "get", return_value=response):
+            models = provider.list_models()
+        assert len(models) == 2
+        assert models[0].id == "alpha"
+
+    def test_returns_default_model_when_discovery_fails(self):
+        provider = _make_provider()
+        with patch.object(provider._client, "get", side_effect=Exception("fail")):
+            models = provider.list_models()
+        assert len(models) == 1
+        assert models[0].id == "local-model"
+
     def test_returns_default_model(self):
         provider = _make_provider()
         models = provider.list_models()

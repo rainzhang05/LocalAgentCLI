@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Iterator
 
 from rich.console import Console
@@ -28,14 +29,14 @@ class StreamRenderer:
     def __init__(self, console: Console):
         self._console = console
         self._buffer = ""
-        self._reasoning_buffer = ""
-        self._reasoning_rendered = False
+        self._secondary_entries: deque[str] = deque(maxlen=8)
+        self._secondary_rendered = False
 
     def render_stream(self, chunks: Iterator[StreamChunk]) -> str:
         """Render all chunks to the terminal and return the full response text."""
         self._buffer = ""
-        self._reasoning_buffer = ""
-        self._reasoning_rendered = False
+        self._secondary_entries.clear()
+        self._secondary_rendered = False
         for chunk in chunks:
             self.render_chunk(chunk)
         return self._buffer
@@ -45,18 +46,20 @@ class StreamRenderer:
         if chunk.is_done:
             self._finalize()
             return
-        if chunk.is_tool_call:
+        if chunk.kind == "final_text":
+            self._render_secondary_panel()
+            self._console.print(chunk.text, end="", highlight=False)
+            self._buffer += chunk.text
             return
-        if chunk.is_reasoning:
-            self._reasoning_buffer += chunk.text
+        if chunk.kind in {"reasoning", "tool_call", "notification", "error"}:
+            detail = chunk.text or self._format_chunk_payload(chunk)
+            if detail:
+                self._append_secondary(detail)
             return
-        self._render_reasoning_panel()
-        self._console.print(chunk.text, end="", highlight=False)
-        self._buffer += chunk.text
 
     def _finalize(self) -> None:
         """Called when streaming is complete."""
-        self._render_reasoning_panel()
+        self._render_secondary_panel()
         self._console.print()
 
     def render_error(self, error: str) -> None:
@@ -65,7 +68,7 @@ class StreamRenderer:
 
     def render_activity(self, message: str) -> None:
         """Render an inline activity log entry."""
-        self._console.print(f"[blue]ℹ {message}[/blue]")
+        self._console.print(f"ℹ {message}")
 
     def render_agent_event(self, event: AgentEvent) -> None:
         """Render a structured agent event."""
@@ -136,15 +139,37 @@ class StreamRenderer:
         parts = [f"{key}={value!r}" for key, value in arguments.items()]
         return ", ".join(parts[:3])
 
-    def _render_reasoning_panel(self) -> None:
-        """Render the buffered reasoning once, above the response."""
-        if self._reasoning_rendered or not self._reasoning_buffer.strip():
+    def _append_secondary(self, detail: str) -> None:
+        """Append a dimmed secondary entry while keeping only a rolling window."""
+        for line in detail.splitlines() or [detail]:
+            cleaned = line.strip()
+            if cleaned:
+                self._secondary_entries.append(cleaned)
+
+    def _format_chunk_payload(self, chunk: StreamChunk) -> str:
+        """Render payload-only chunks into human-readable detail lines."""
+        payload = chunk.payload or chunk.tool_call_data or {}
+        if not isinstance(payload, dict):
+            return ""
+        if chunk.kind == "tool_call":
+            function = payload.get("function", payload)
+            if isinstance(function, dict):
+                tool_name = function.get("name", payload.get("name", "tool"))
+                return f"Tool call: {tool_name}"
+        source = payload.get("source")
+        if isinstance(source, str) and source:
+            return f"{source}: {chunk.text}".strip(": ")
+        return ""
+
+    def _render_secondary_panel(self) -> None:
+        """Render the latest secondary output once, above the main response."""
+        if self._secondary_rendered or not self._secondary_entries:
             return
         self._console.print(
             Panel(
-                self._reasoning_buffer.strip(),
-                title="Reasoning",
+                "\n".join(self._secondary_entries),
+                title="Details",
                 border_style="dim",
             )
         )
-        self._reasoning_rendered = True
+        self._secondary_rendered = True

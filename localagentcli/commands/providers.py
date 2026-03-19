@@ -6,9 +6,11 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.providers.base import RemoteModelInfo, RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderEntry, ProviderRegistry
 from localagentcli.session.manager import SessionManager
+from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
 
 # Default URLs and models per provider type
 _TYPE_DEFAULTS: dict[str, dict[str, str]] = {
@@ -40,8 +42,8 @@ class ProvidersParentHandler(CommandHandler):
             "  /providers list             List configured providers\n"
             "  /providers add              Add a new provider (wizard)\n"
             "  /providers remove <name>    Remove a provider\n"
-            "  /providers use <name>       Set active provider for session\n"
-            "  /providers test [name]      Test provider connectivity"
+            "  /providers test [name]      Test provider connectivity\n"
+            "Use /set to choose the active provider model."
         )
 
 
@@ -175,7 +177,21 @@ class ProvidersRemoveHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error("Provider name required.\nUsage: /providers remove <name>")
+            if not supports_interactive_prompt():
+                return CommandResult.error(
+                    "Provider name required.\nUsage: /providers remove <name>"
+                )
+            if not self._registry.list_providers():
+                return CommandResult.ok(
+                    "No providers configured. Use /providers add to set one up."
+                )
+            selection = _select_provider_option(
+                self._registry,
+                "Choose a provider to remove",
+            )
+            if selection is None:
+                return CommandResult.ok("Provider removal cancelled.")
+            args = [selection.value]
         name = args[0]
         try:
             self._registry.remove(name)
@@ -198,7 +214,20 @@ class ProvidersUseHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error("Provider name required.\nUsage: /providers use <name>")
+            if not supports_interactive_prompt():
+                return CommandResult.error("Provider name required.\nUsage: /providers use <name>")
+            if not self._registry.list_providers():
+                return CommandResult.ok(
+                    "No providers configured. Use /providers add to set one up."
+                )
+            selection = _select_provider_option(
+                self._registry,
+                "Choose a provider",
+                default=self._session_manager.current.provider,
+            )
+            if selection is None:
+                return CommandResult.ok("Provider selection cancelled.")
+            args = [selection.value]
         name = args[0]
         entry = self._registry.get(name)
         if entry is None:
@@ -209,10 +238,15 @@ class ProvidersUseHandler(CommandHandler):
         session = self._session_manager.current
         session.provider = name
         session.model = entry.default_model
+        session.touch()
         return CommandResult.ok(f"Active provider set to '{name}' (model: {entry.default_model}).")
 
     def help_text(self) -> str:
-        return "Set the active provider for this session.\nUsage: /providers use <name>"
+        return (
+            "Set the active provider for this session.\n"
+            "Usage: /providers use <name>\n"
+            "Prefer /set for interactive target selection."
+        )
 
 
 class ProvidersTestHandler(CommandHandler):
@@ -226,14 +260,30 @@ class ProvidersTestHandler(CommandHandler):
         if args:
             name = args[0]
         else:
-            # Use session provider or global active
-            name = self._session_manager.current.provider
-            if not name:
-                name = self._registry.get_active_name()
-            if not name:
-                return CommandResult.error(
-                    "No active provider. Specify a name or use /providers use first."
+            if not supports_interactive_prompt():
+                name = self._session_manager.current.provider
+                if not name:
+                    name = self._registry.get_active_name()
+                if not name:
+                    return CommandResult.error(
+                        "No active provider. Specify a name or use /set first."
+                    )
+            else:
+                if not self._registry.list_providers():
+                    return CommandResult.ok(
+                        "No providers configured. Use /providers add to set one up."
+                    )
+                default_name = (
+                    self._session_manager.current.provider or self._registry.get_active_name()
                 )
+                selection = _select_provider_option(
+                    self._registry,
+                    "Choose a provider to test",
+                    default=default_name,
+                )
+                if selection is None:
+                    return CommandResult.ok("Provider test cancelled.")
+                name = selection.value
 
         entry = self._registry.get(name)
         if entry is None:
@@ -268,9 +318,79 @@ def register(
     console: Console,
 ) -> None:
     """Register all /providers subcommands."""
-    router.register("providers", ProvidersParentHandler())
+    router.register("providers", ProvidersParentHandler(), visible_in_menu=False)
     router.register("providers list", ProvidersListHandler(registry))
     router.register("providers add", ProvidersAddHandler(registry, key_manager, console))
     router.register("providers remove", ProvidersRemoveHandler(registry))
-    router.register("providers use", ProvidersUseHandler(registry, session_manager))
+    router.register(
+        "providers use",
+        ProvidersUseHandler(registry, session_manager),
+        visible_in_menu=False,
+    )
     router.register("providers test", ProvidersTestHandler(registry, session_manager))
+
+
+def build_provider_selection_options(registry: ProviderRegistry) -> list[SelectionOption]:
+    """Build interactive selection options for configured providers."""
+    options: list[SelectionOption] = []
+    for entry in registry.list_providers():
+        options.append(
+            SelectionOption(
+                value=entry.name,
+                label=entry.name,
+                description=f"{entry.type} • default {entry.default_model}",
+                aliases=(entry.type, entry.default_model, entry.base_url),
+            )
+        )
+    return options
+
+
+def build_remote_model_selection_options(
+    provider: RemoteProvider,
+    fallback_model: str,
+) -> list[SelectionOption]:
+    """Build interactive selection options for models available from a provider."""
+    discovered = provider.list_models()
+    if not discovered:
+        discovered = [RemoteModelInfo(id=fallback_model, name=fallback_model)]
+
+    options: list[SelectionOption] = []
+    seen: set[str] = set()
+    for model in discovered:
+        model_id = model.id or model.name
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        capabilities = model.capabilities or {}
+        flags = [
+            label
+            for key, label in (
+                ("tool_use", "tools"),
+                ("reasoning", "reasoning"),
+                ("streaming", "streaming"),
+            )
+            if capabilities.get(key)
+        ]
+        description = ", ".join(flags) if flags else "remote model"
+        options.append(
+            SelectionOption(
+                value=model_id,
+                label=model.name or model_id,
+                description=description,
+                aliases=(model_id,),
+            )
+        )
+    return options
+
+
+def _select_provider_option(
+    registry: ProviderRegistry,
+    message: str,
+    *,
+    default: str | None = None,
+) -> SelectionOption | None:
+    """Prompt for one configured provider."""
+    options = build_provider_selection_options(registry)
+    if not options:
+        return None
+    return select_option(message, options, default=default)

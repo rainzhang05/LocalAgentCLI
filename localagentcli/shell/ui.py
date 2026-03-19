@@ -8,7 +8,9 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.prompt import Confirm
+from rich.text import Text
 
+from localagentcli import __version__
 from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import ToolCallRequested
@@ -40,6 +42,7 @@ from localagentcli.safety.approval import ApprovalManager
 from localagentcli.safety.boundary import WorkspaceBoundary
 from localagentcli.safety.layer import SafetyLayer
 from localagentcli.safety.rollback import RollbackManager
+from localagentcli.session.instructions import sync_workspace_instruction
 from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import create_prompt_session, get_prompt_history_strings
 from localagentcli.shell.streaming import StreamRenderer
@@ -97,6 +100,7 @@ class ShellUI:
             self._router,
             self._session_prompt_history(),
         )
+        self._sync_workspace_instruction()
 
     def _register_commands(self) -> None:
         """Register all command handlers."""
@@ -155,6 +159,7 @@ class ShellUI:
 
         while True:
             try:
+                self._sync_workspace_instruction()
                 self._display_status_header()
                 user_input = self._prompt_session.prompt("> ")
                 self._awaiting_idle_exit_confirmation = False
@@ -172,6 +177,7 @@ class ShellUI:
                     if action == "session_changed":
                         self._agent_controller = None
                         self._rebuild_prompt_session()
+                        self._sync_workspace_instruction()
                     if action == "agent_resume":
                         self._handle_agent_resume(result)
                     if action == "exit":
@@ -378,7 +384,7 @@ class ShellUI:
     def _display_welcome(self) -> None:
         """Show the welcome banner."""
         self._console.print()
-        self._console.print("[bold]LocalAgent CLI[/bold] v0.1.0")
+        self._console.print(Text(f"LocalAgent CLI v{__version__}", style="bold"))
         self._console.print()
 
     def _run_first_time_setup(self) -> None:
@@ -692,3 +698,10 @@ class ShellUI:
         self._awaiting_idle_exit_confirmation = True
         self._console.print("[dim]Press Ctrl+C again to exit.[/dim]")
         return False
+
+    def _sync_workspace_instruction(self) -> None:
+        """Cache repository-level AGENTS.md instructions for the active session."""
+        try:
+            sync_workspace_instruction(self._session_manager.current)
+        except Exception:
+            return

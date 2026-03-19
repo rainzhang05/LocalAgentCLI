@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator, Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -15,9 +16,10 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.agents.loop import AgentLoop
-from localagentcli.agents.planner import TaskPlanner
+from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
+from localagentcli.agents.triage import TaskTriage, TaskTriageClassifier
 from localagentcli.models.abstraction import ModelAbstractionLayer
-from localagentcli.models.backends.base import ModelMessage
+from localagentcli.models.backends.base import ModelMessage, StreamChunk
 from localagentcli.safety.approval import ApprovalManager
 from localagentcli.safety.boundary import WorkspaceBoundary
 from localagentcli.safety.layer import SafetyLayer
@@ -29,6 +31,15 @@ from localagentcli.session.instructions import (
 )
 from localagentcli.session.state import Message, Session
 from localagentcli.tools.registry import ToolRegistry
+
+
+@dataclass
+class AgentDispatch:
+    """Prepared execution path for one agent-mode plain-text input."""
+
+    triage: TaskTriage
+    events: Iterator[AgentEvent] | None = None
+    stream: Iterator[StreamChunk] | None = None
 
 
 class AgentController:
@@ -44,6 +55,7 @@ class AgentController:
         rollback_storage: Path | None = None,
         context_limit: int = 8192,
         generation_config: dict[str, object] | None = None,
+        inactivity_timeout: int | None = None,
     ):
         self._model = model
         self._session = session
@@ -60,11 +72,14 @@ class AgentController:
         )
         self._planner = TaskPlanner(model)
         self._loop = AgentLoop(model, tool_registry, self._planner, self._safety)
+        self._triage = TaskTriageClassifier(model)
         self._compactor = ContextCompactor(model, context_limit)
         self._generation_config = generation_config or {}
+        self._inactivity_timeout_value = inactivity_timeout
         self._generator: Generator[AgentEvent, bool, None] | None = None
         self._pending_tool: ToolCallRequested | None = None
         self._last_compaction_count = 0
+        self._last_triage: TaskTriage | None = None
 
     @property
     def has_active_task(self) -> bool:
@@ -93,22 +108,63 @@ class AgentController:
 
     def handle_task(self, task_input: str) -> Iterator[AgentEvent]:
         """Start a new task and stream its events."""
+        dispatch = self.dispatch_input(task_input)
+        if dispatch.events is None:
+            raise RuntimeError("The task was routed through the direct-answer fast path.")
+        return dispatch.events
+
+    def dispatch_input(self, task_input: str) -> AgentDispatch:
+        """Append input, compact, triage it, and return the correct execution path."""
         if self.has_active_task:
             raise RuntimeError("An agent task is already running.")
 
-        self._session.history.append(
-            Message(role="user", content=task_input, timestamp=datetime.now())
+        self._append_user_input(task_input)
+        context = self._build_context_messages()
+        triage = self._triage.classify(
+            task_input,
+            context,
+            generation_options=self._profile("triage"),
         )
+        self._last_triage = triage
+        self._session.metadata["last_triage"] = {
+            "outcome": triage.outcome,
+            "reason": triage.reason,
+            "timestamp": datetime.now().isoformat(),
+        }
         self._session.touch()
-        self.compact_if_needed()
-        self._session.metadata["approval_mode"] = self._approval.mode
 
+        if triage.outcome == "direct_answer":
+            return AgentDispatch(
+                triage=triage,
+                stream=self._stream_direct_answer(context, self._profile("direct")),
+            )
+
+        supports_tools = getattr(self._model, "supports_tools", lambda: True)
+        if not bool(supports_tools()):
+            raise RuntimeError(
+                "The active model/provider cannot execute tools in agent mode. "
+                "Switch targets or ask a simple direct question instead."
+            )
+
+        self._session.metadata["approval_mode"] = self._approval.mode
+        plan = (
+            TaskPlan(
+                task=task_input,
+                steps=[PlanStep(index=1, description=task_input)],
+                status="planning",
+            )
+            if triage.outcome == "single_step_task"
+            else None
+        )
         self._generator = self._loop.run(
             task_input,
-            self._build_context_messages(),
-            generation_options=self._generation_config,
+            context,
+            plan=plan,
+            generation_options=self._profile("step"),
+            planning_options=self._profile("planning"),
+            inactivity_timeout=self._inactivity_timeout(),
         )
-        return self._drain()
+        return AgentDispatch(triage=triage, events=self._drain())
 
     def approve_action(self, autonomous: bool = False) -> Iterator[AgentEvent]:
         """Approve the pending tool call and optionally enable autonomous mode."""
@@ -138,6 +194,7 @@ class AgentController:
             return
 
         self._loop.stop()
+        self._model.cancel()
         self._pending_tool = None
         self._generator = None
         self._approval.reset()
@@ -254,6 +311,123 @@ class AgentController:
     def undo_all(self):
         """Undo all recorded file changes for this session."""
         return self._safety.rollback.undo_all()
+
+    def _append_user_input(self, task_input: str) -> None:
+        self._session.history.append(
+            Message(role="user", content=task_input, timestamp=datetime.now())
+        )
+        self._session.touch()
+        self.compact_if_needed()
+
+    def _profile(self, phase: str) -> dict[str, object]:
+        """Derive an internal generation profile for a specific agent phase."""
+        base = dict(self._generation_config)
+        temperature = self._coerce_float(base.get("temperature"), 0.7)
+        max_tokens = self._coerce_int(base.get("max_tokens"), 4096)
+        top_p = self._coerce_float(base.get("top_p"), 1.0)
+
+        if phase == "triage":
+            return {
+                "temperature": min(temperature, 0.1),
+                "max_tokens": min(max_tokens, 120),
+                "top_p": top_p,
+            }
+        if phase == "planning":
+            return {
+                "temperature": min(temperature, 0.1),
+                "max_tokens": min(max_tokens, 600),
+                "top_p": top_p,
+            }
+        if phase == "step":
+            return {
+                "temperature": min(temperature, 0.2),
+                "max_tokens": min(max_tokens, 1600),
+                "top_p": top_p,
+            }
+        return {
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+        }
+
+    @staticmethod
+    def _coerce_float(value: object, default: float) -> float:
+        """Best-effort numeric coercion for generation profiles."""
+        if isinstance(value, bool):
+            return float(default)
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return default
+        return default
+
+    @staticmethod
+    def _coerce_int(value: object, default: int) -> int:
+        """Best-effort integer coercion for generation profiles."""
+        if isinstance(value, bool):
+            return int(default)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return default
+        return default
+
+    def _inactivity_timeout(self) -> int | None:
+        value = self._inactivity_timeout_value
+        if isinstance(value, int) and value > 0:
+            return value
+        value = self._session.config_overrides.get("timeouts.inactivity")
+        if isinstance(value, int) and value > 0:
+            return value
+        return None
+
+    def _stream_direct_answer(
+        self,
+        messages: list[ModelMessage],
+        generation_options: dict[str, object],
+    ) -> Iterator[StreamChunk]:
+        """Stream a direct-answer fast path while preserving session history."""
+        chunks: list[StreamChunk] = []
+        assistant_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        try:
+            for chunk in self._model.stream_generate(messages, **generation_options):
+                chunks.append(chunk)
+                if chunk.kind == "final_text" and chunk.text:
+                    assistant_parts.append(chunk.text)
+                elif chunk.kind == "reasoning" and chunk.text:
+                    reasoning_parts.append(chunk.text)
+                yield chunk
+        finally:
+            self._session.metadata.pop("approval_mode", None)
+            assistant_text = "".join(assistant_parts).strip()
+            reasoning_text = "".join(reasoning_parts).strip()
+            if assistant_text or reasoning_text:
+                self._session.history.append(
+                    Message(
+                        role="assistant",
+                        content=assistant_text,
+                        timestamp=datetime.now(),
+                        metadata={
+                            "agent_task": "direct_answer",
+                            "fast_path": True,
+                            "triage": (
+                                self._last_triage.outcome if self._last_triage else "direct_answer"
+                            ),
+                            "reasoning": reasoning_text,
+                            "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+                        },
+                    )
+                )
+            self._session.touch()
 
     def _build_context_messages(self) -> list[ModelMessage]:
         system_parts = build_system_instructions(self._session)

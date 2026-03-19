@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, cross-platform path normalization, live slash-command menu, layered Hugging Face `/models` picker, build + twine validation, publish workflow, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, cross-platform path normalization, live slash-command menu, layered Hugging Face `/models` picker, Windows-safe rollback restore, build + twine validation, workflows using `pipx` bin-dir discovery instead of hard-coded venv paths, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -140,7 +140,7 @@ After implementing a component:
 | `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
 | `[x]` | High-risk action detection | 2026-03-18 — shell commands and sensitive file paths are classified centrally so high-risk actions always require approval |
 | `[x]` | Rollback manager (file backups) | 2026-03-18 — `RollbackManager` stores per-session backups and a JSON rollback log under `cache/rollback/` |
-| `[x]` | Undo capability | 2026-03-18 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files |
+| `[x]` | Undo capability | 2026-03-18 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files, with Windows-safe modified-file restore behavior |
 
 ---
 
@@ -166,10 +166,10 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | `.github/workflows/test.yml` | 2026-03-18 — pytest + coverage on ubuntu/macos/windows × py3.11-3.13, plus package build, `twine check`, and `pipx` smoke verification through the installed venv entrypoint |
+| `[x]` | `.github/workflows/test.yml` | 2026-03-18 — pytest + coverage on ubuntu/macos/windows × py3.11-3.13, plus package build, `twine check`, and `pipx` smoke verification through the resolved `PIPX_BIN_DIR` entrypoint |
 | `[x]` | `.github/workflows/lint.yml` | 2026-03-17 — ruff check + format |
 | `[x]` | `.github/workflows/typecheck.yml` | 2026-03-17 — mypy |
-| `[x]` | `.github/workflows/publish.yml` | 2026-03-18 — build, artifact validation, `pipx` smoke test, and trusted publishing paths for TestPyPI/PyPI |
+| `[x]` | `.github/workflows/publish.yml` | 2026-03-18 — build, artifact validation, `pipx` smoke test via resolved `PIPX_BIN_DIR`, and trusted publishing paths for TestPyPI/PyPI |
 
 ---
 
@@ -187,7 +187,7 @@ After implementing a component:
 | `[x]` | `docs/session-and-config.md` | Complete |
 | `[x]` | `docs/cli-and-ux.md` | Complete |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
-| `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, and `pipx` smoke path documented |
+| `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |
 | `[x]` | `docs/current-state.md` | Complete |
 | `[x]` | `README.md` | 2026-03-18 — install, usage, backend, development, and release validation instructions refreshed |

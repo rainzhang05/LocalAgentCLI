@@ -7,7 +7,7 @@ LocalAgentCLI is a local-first AI command-line assistant with a persistent shell
 - Interactive `localagentcli` shell with slash commands, history, tab completion, and streaming output
 - Remote provider support for OpenAI-compatible, Anthropic, and generic REST APIs
 - Local model support for MLX, GGUF, and safetensors backends
-- Chat mode with context compaction and pinned instructions
+- Chat mode with context compaction, pinned instructions, and automatic repository-root `AGENTS.md` loading
 - Agent mode with planning, tool execution, approvals, rollback, and undo support
 - Persistent config, model registry, sessions, logs, and cache under `~/.localagent/`
 
@@ -76,7 +76,7 @@ Remote providers:
 Local models:
 
 - `/set` to choose the active local model or provider model interactively
-- `/models` for the interactive Hugging Face picker (backend → family → live Hub-discovered model)
+- `/models` for the interactive Hugging Face picker (backend → family → live Hub-discovered model) with continuously refreshed download progress
 - `/models install hf <repo>`
 - `/models install url <url>`
 - `/models list`

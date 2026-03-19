@@ -11,6 +11,7 @@ from localagentcli.models.backends.base import (
     ModelBackend,
     ModelMessage,
     StreamChunk,
+    backend_install_hint,
 )
 
 
@@ -152,7 +153,7 @@ class GGUFBackend(ModelBackend):
         except ImportError:
             raise RuntimeError(
                 "The GGUF backend requires 'llama-cpp-python'. "
-                "Install it with: pip install localagentcli[gguf]"
+                f"Install it with: {backend_install_hint('gguf')}"
             ) from None
 
     def _find_gguf_file(self, model_path: Path) -> Path:

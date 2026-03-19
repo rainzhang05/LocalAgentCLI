@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, approval autonomy persists via config, double-`Ctrl+C` exits from the idle shell, stale local model registry formats are repaired on load even on non-macOS CI, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/models` now offers live Hugging Face family/model discovery across many model families, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -26,7 +26,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-18 — prompt now shows a live slash-command menu with arrow-key selection |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing, and exits on consecutive idle `Ctrl+C` presses without a save prompt |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-17 |
 | `[x]` | `/exit` command | 2026-03-17 |
@@ -48,9 +48,9 @@ After implementing a component:
 |---|---|---|
 | `[x]` | Provider base class (ABC) | 2026-03-18 |
 | `[x]` | Provider registry | 2026-03-18 |
-| `[x]` | OpenAI-compatible provider | 2026-03-18 |
-| `[x]` | Anthropic provider | 2026-03-18 |
-| `[x]` | Generic REST provider | 2026-03-18 |
+| `[x]` | OpenAI-compatible provider | 2026-03-19 — model list now comes from the provider `GET /models` response with default-model fallback |
+| `[x]` | Anthropic provider | 2026-03-19 — model list and connection test now use the live `GET /v1/models` API with default-model fallback |
+| `[x]` | Generic REST provider | 2026-03-19 — configurable model discovery endpoint/fields now back provider model selection, with default-model fallback |
 | `[x]` | API key manager (keychain + encrypted) | 2026-03-18 |
 | `[x]` | `/providers add` command | 2026-03-18 |
 | `[x]` | `/providers list` command | 2026-03-18 |
@@ -78,7 +78,7 @@ After implementing a component:
 | `[x]` | Hardware detection and warnings | 2026-03-18 — CPU/RAM/GPU detection, >80% warning |
 | `[x]` | `/models list` command | 2026-03-18 |
 | `[x]` | `/models search` command | 2026-03-18 |
-| `[x]` | `/models install` command | 2026-03-18 — hf and url subcommands, plus `/models` layered picker for curated Hugging Face installs |
+| `[x]` | `/models install` command | 2026-03-19 — hf and url subcommands, plus `/models` layered picker backed by live Hugging Face family/model discovery across many families |
 | `[x]` | `/models remove` command | 2026-03-18 — with file cleanup |
 | `[x]` | `/models use` command | 2026-03-18 — hidden compatibility alias behind `/set`, still supports direct selection with hardware warnings |
 | `[x]` | `/models inspect` command | 2026-03-18 |
@@ -125,7 +125,7 @@ After implementing a component:
 | `[x]` | Agent events system | 2026-03-18 — structured plan, step, reasoning, tool, completion, and failure events rendered by the shell |
 | `[x]` | `/agent approve` command | 2026-03-18 — resumes pending tool actions and now persists autonomous approvals for the current and future sessions |
 | `[x]` | `/agent deny` command | 2026-03-18 — rejects the pending tool action and resumes the agent loop |
-| `[x]` | Ctrl+C agent stop path | 2026-03-18 — stops the active agent task from the shell and exits the idle shell after a double press |
+| `[x]` | Ctrl+C agent stop path | 2026-03-19 — stops the active agent task from the shell and exits the idle shell after a consecutive double press without prompting to save |
 
 ---
 
@@ -151,7 +151,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 683 tests total across unit, component, integration, and CLI coverage |
+| `[x]` | Unit tests | 2026-03-19 — 691 tests total across unit, component, integration, and CLI coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

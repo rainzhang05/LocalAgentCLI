@@ -8,6 +8,7 @@ from rich.prompt import Prompt
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
 from localagentcli.session.manager import SessionManager
+from localagentcli.shell.prompt import supports_interactive_prompt
 
 
 class SetupHandler(CommandHandler):
@@ -23,40 +24,39 @@ class SetupHandler(CommandHandler):
         self._console.print("[bold]Setup Wizard[/bold]")
         self._console.print("Configure your LocalAgent CLI settings.\n")
 
-        # Step 1: Workspace directory
         current_workspace = self._config.get("general.workspace", ".")
-        workspace = Prompt.ask(
-            "Workspace directory",
-            default=current_workspace,
-            console=self._console,
-        )
+        current_mode = self._config.get("general.default_mode", "agent")
+        current_level = self._config.get("general.logging_level", "normal")
+
+        if supports_interactive_prompt():
+            workspace = Prompt.ask(
+                "Workspace directory",
+                default=current_workspace,
+                console=self._console,
+            )
+            mode = Prompt.ask(
+                "Default mode",
+                choices=["chat", "agent"],
+                default=current_mode,
+                console=self._console,
+            )
+            level = Prompt.ask(
+                "Logging level",
+                choices=["normal", "verbose", "debug"],
+                default=current_level,
+                console=self._console,
+            )
+        else:
+            workspace = current_workspace
+            mode = current_mode
+            level = current_level
+            self._console.print(
+                "[dim]Non-interactive setup detected; using current default settings.[/dim]"
+            )
+
         try:
             self._config.set("general.workspace", workspace)
-        except ValueError as e:
-            self._console.print(f"[red]Warning: {e}[/red]")
-
-        # Step 2: Default mode
-        current_mode = self._config.get("general.default_mode", "agent")
-        mode = Prompt.ask(
-            "Default mode",
-            choices=["chat", "agent"],
-            default=current_mode,
-            console=self._console,
-        )
-        try:
             self._config.set("general.default_mode", mode)
-        except ValueError as e:
-            self._console.print(f"[red]Warning: {e}[/red]")
-
-        # Step 3: Logging level
-        current_level = self._config.get("general.logging_level", "normal")
-        level = Prompt.ask(
-            "Logging level",
-            choices=["normal", "verbose", "debug"],
-            default=current_level,
-            console=self._console,
-        )
-        try:
             self._config.set("general.logging_level", level)
         except ValueError as e:
             self._console.print(f"[red]Warning: {e}[/red]")

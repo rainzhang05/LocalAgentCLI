@@ -91,6 +91,15 @@ class CommandRouter:
         """Return the command registry."""
         return dict(self._commands)
 
+    def is_visible(self, name: str) -> bool:
+        """Return whether a command should appear in menus and help."""
+        return self._menu_visible.get(name, True)
+
+    def set_visibility(self, name: str, visible: bool) -> None:
+        """Update the menu/help visibility of a registered command."""
+        if name in self._commands:
+            self._menu_visible[name] = visible
+
     def get_visible_commands(self) -> dict[str, CommandHandler]:
         """Return only commands that should appear in the live slash menu."""
         return {

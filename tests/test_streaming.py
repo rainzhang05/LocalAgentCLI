@@ -34,7 +34,7 @@ class TestStreamRendererRenderChunk:
         renderer = StreamRenderer(console)
         renderer.render_chunk(StreamChunk(text="thinking...", is_reasoning=True))
         console.print.assert_not_called()
-        assert renderer._reasoning_buffer == "thinking..."
+        assert list(renderer._secondary_entries) == ["thinking..."]
 
     def test_done_chunk_prints_newline(self):
         console = MagicMock()
@@ -47,6 +47,7 @@ class TestStreamRendererRenderChunk:
         renderer = StreamRenderer(console)
         renderer.render_chunk(StreamChunk(is_tool_call=True, tool_call_data={"name": "test"}))
         console.print.assert_not_called()
+        assert list(renderer._secondary_entries) == ["Tool call: test"]
 
     def test_text_accumulates_in_buffer(self):
         console = MagicMock()
@@ -59,7 +60,7 @@ class TestStreamRendererRenderChunk:
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_chunk(StreamChunk(text="think", is_reasoning=True))
-        assert renderer._reasoning_buffer == "think"
+        assert list(renderer._secondary_entries) == ["think"]
         assert renderer._buffer == ""
 
 
@@ -88,7 +89,7 @@ class TestStreamRendererRenderStream:
         renderer.render_stream(iter([StreamChunk(text="new"), StreamChunk(is_done=True)]))
         assert renderer._buffer == "new"
 
-    def test_renders_reasoning_panel_before_text(self):
+    def test_renders_secondary_panel_before_text(self):
         console = MagicMock()
         renderer = StreamRenderer(console)
 
@@ -105,6 +106,7 @@ class TestStreamRendererRenderStream:
         panel_arg = console.print.call_args_list[0].args[0]
         assert isinstance(panel_arg, Panel)
         assert "thinking..." in panel_arg.renderable
+        assert panel_arg.title == "Details"
 
 
 class TestStreamRendererRenderError:
@@ -120,7 +122,7 @@ class TestStreamRendererActivity:
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_activity("Context compacted")
-        console.print.assert_called_once_with("[blue]ℹ Context compacted[/blue]")
+        console.print.assert_called_once_with("ℹ Context compacted")
 
 
 class TestStreamRendererAgentEvents:

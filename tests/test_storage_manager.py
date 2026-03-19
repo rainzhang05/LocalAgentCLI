@@ -38,7 +38,10 @@ class TestStorageManagerInitialize:
 
     def test_secrets_permissions(self, storage: StorageManager):
         mode = storage.secrets_dir.stat().st_mode & 0o777
-        assert mode == 0o700
+        if os.name == "nt":
+            assert mode & 0o700 == 0o700
+        else:
+            assert mode == 0o700
 
     def test_idempotent(self, storage: StorageManager):
         # Calling initialize twice should not raise

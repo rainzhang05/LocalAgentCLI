@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+from rich.prompt import Prompt
+
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.config.defaults import CONFIG_SCHEMA
 from localagentcli.config.manager import ConfigManager
+from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
+
+_CONFIG_CHOICES: dict[str, tuple[str, ...]] = {
+    "general.default_mode": ("agent", "chat"),
+    "general.logging_level": ("normal", "verbose", "debug"),
+    "safety.approval_mode": ("balanced", "autonomous"),
+}
 
 
 class ConfigHandler(CommandHandler):
@@ -14,10 +24,25 @@ class ConfigHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
+            if supports_interactive_prompt():
+                return self._interactive_edit()
             return self._show_all()
         if len(args) == 1:
             return self._show_key(args[0])
-        return self._set_key(args[0], args[1])
+        return self._set_key(args[0], " ".join(args[1:]))
+
+    def _interactive_edit(self) -> CommandResult:
+        """Open an interactive config picker for viewing or editing values."""
+        selection = select_option(
+            "Choose a config key",
+            _config_selection_options(self._config),
+            default=None,
+        )
+        if selection is None:
+            return CommandResult.ok("Config edit cancelled.")
+        if selection.value == "__show_all__":
+            return self._show_all()
+        return self._prompt_for_value(selection.value)
 
     def _show_all(self) -> CommandResult:
         config = self._config.get_all()
@@ -48,11 +73,42 @@ class ConfigHandler(CommandHandler):
         display_value = _format_value(self._config.get(key))
         return CommandResult.ok(f"Set {key} = {display_value}")
 
+    def _prompt_for_value(self, key: str) -> CommandResult:
+        """Prompt for a valid value and persist it."""
+        current_value = self._config.get(key)
+        choices = _CONFIG_CHOICES.get(key)
+        if choices:
+            selection = select_option(
+                f"Choose value for {key}",
+                [
+                    SelectionOption(
+                        value=choice,
+                        label=choice,
+                        description=_choice_description(choice, current_value),
+                    )
+                    for choice in choices
+                ],
+                default=str(current_value) if current_value is not None else None,
+            )
+            if selection is None:
+                return CommandResult.ok("Config edit cancelled.")
+            return self._set_key(key, selection.value)
+
+        try:
+            value = Prompt.ask(
+                f"Set {key}",
+                default=str(current_value) if current_value is not None else "",
+            )
+        except (KeyboardInterrupt, EOFError):
+            return CommandResult.ok("Config edit cancelled.")
+        return self._set_key(key, value)
+
     def help_text(self) -> str:
         return (
             "Read or write configuration values.\n"
             "Usage:\n"
-            "  /config                    Show all config values\n"
+            "  /config                    Open the interactive config editor "
+            "(or show all values without a TTY)\n"
             "  /config <key>              Show value for a specific key\n"
             "  /config <key> <value>      Set a config value\n"
             "\n"
@@ -65,6 +121,35 @@ def _format_value(value: object) -> str:
     if isinstance(value, str):
         return f'"{value}"'
     return str(value)
+
+
+def _choice_description(choice: str, current_value: object) -> str:
+    """Describe whether a choice matches the current value."""
+    return "Current value" if str(current_value) == choice else ""
+
+
+def _config_selection_options(config: ConfigManager) -> list[SelectionOption]:
+    """Build the interactive config picker options."""
+    options = [
+        SelectionOption(
+            value="__show_all__",
+            label="Show all values",
+            description="Display the current config without editing anything.",
+            aliases=("view", "list"),
+        )
+    ]
+
+    for key in sorted(CONFIG_SCHEMA):
+        current_value = config.get(key)
+        options.append(
+            SelectionOption(
+                value=key,
+                label=key,
+                description=f"Current: {_format_value(current_value)}",
+                aliases=tuple(key.split(".")),
+            )
+        )
+    return options
 
 
 def register(router: CommandRouter, config: ConfigManager) -> None:

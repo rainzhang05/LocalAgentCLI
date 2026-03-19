@@ -16,6 +16,10 @@ class StatusHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         session = self._session_manager.current
+        approval_mode = session.metadata.get(
+            "approval_mode",
+            self._config.get("safety.approval_mode", "balanced"),
+        )
         lines = [
             "Current Status:",
             "",
@@ -24,7 +28,7 @@ class StatusHandler(CommandHandler):
             f"  Provider:      {session.provider or '(none)'}",
             f"  Workspace:     {session.workspace}",
             f"  Session:       {session.name or '(unsaved)'}",
-            f"  Approval:      {self._config.get('safety.approval_mode', 'balanced')}",
+            f"  Approval:      {approval_mode}",
             f"  Messages:      {len(session.history)}",
         ]
         return CommandResult.ok("\n".join(lines))

@@ -240,7 +240,7 @@ These flows must be tested end-to-end and must pass before any release:
 2. **Model Install/Use**
    - `/models install hf <repo>` downloads and registers a model
    - `/models list` shows the installed model
-   - `/models use <name>` loads the model
+   - `/set` can switch to an installed local model and load it
    - `/models inspect <name>` shows correct metadata
    - `/models remove <name>` cleans up files and registry
 
@@ -254,7 +254,8 @@ These flows must be tested end-to-end and must pass before any release:
 
 4. **Interruption Handling**
    - Ctrl+C during model generation stops generation cleanly
-   - Ctrl+C during agent execution pauses the agent
+   - Ctrl+C during agent execution stops the current task
+   - A second Ctrl+C within 2 seconds from the idle prompt exits the shell
    - Partial output is displayed and not corrupted
    - The shell returns to the input prompt
 

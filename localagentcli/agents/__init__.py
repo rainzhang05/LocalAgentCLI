@@ -14,6 +14,7 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
+from localagentcli.agents.triage import TaskTriage, TaskTriageClassifier
 
 __all__ = [
     "AgentController",
@@ -28,6 +29,8 @@ __all__ = [
     "TaskFailed",
     "TaskPlan",
     "TaskPlanner",
+    "TaskTriage",
+    "TaskTriageClassifier",
     "ToolCallRequested",
     "ToolCallResult",
 ]

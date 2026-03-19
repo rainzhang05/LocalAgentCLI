@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -13,7 +14,7 @@ from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands import agent as agent_cmd
-from localagentcli.commands import config_cmd, exit_cmd, setup_cmd
+from localagentcli.commands import config_cmd, exit_cmd, set_cmd, setup_cmd
 from localagentcli.commands import help as help_cmd
 from localagentcli.commands import mode as mode_cmd
 from localagentcli.commands import models as models_cmd
@@ -32,7 +33,7 @@ from localagentcli.models.backends.base import (
 )
 from localagentcli.models.detector import HardwareDetector, ModelDetector
 from localagentcli.models.installer import ModelInstaller
-from localagentcli.models.registry import ModelRegistry
+from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
@@ -89,6 +90,7 @@ class ShellUI:
         self._active_backend: ModelBackend | None = None
         self._active_backend_model = ""
         self._agent_controller: AgentController | None = None
+        self._last_idle_interrupt_at: float | None = None
 
         self._router = CommandRouter()
         self._register_commands()
@@ -105,7 +107,7 @@ class ShellUI:
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
-        agent_cmd.register(self._router, lambda: self._agent_controller)
+        agent_cmd.register(self._router, lambda: self._agent_controller, self._config)
         providers_cmd.register(
             self._router,
             self._provider_registry,
@@ -121,6 +123,14 @@ class ShellUI:
             self._session_manager,
             self._console,
             self._storage.models_dir,
+        )
+        set_cmd.register(
+            self._router,
+            self._model_registry,
+            self._provider_registry,
+            self._hardware_detector,
+            self._session_manager,
+            self._console,
         )
         mode_cmd.register(
             self._router,
@@ -148,6 +158,7 @@ class ShellUI:
             try:
                 self._display_status_header()
                 user_input = self._prompt_session.prompt("> ")
+                self._last_idle_interrupt_at = None
                 if not user_input.strip():
                     continue
 
@@ -172,6 +183,9 @@ class ShellUI:
 
             except KeyboardInterrupt:
                 self._console.print()
+                if self._should_exit_after_idle_interrupt():
+                    self._handle_exit()
+                    break
                 continue
             except EOFError:
                 self._console.print()
@@ -183,7 +197,7 @@ class ShellUI:
         model = self._resolve_active_model()
         if model is None:
             self._console.print(
-                "[dim]No model connected. Use /setup or configure a "
+                "[dim]No model connected. Use /setup, /set, or configure a "
                 "model/provider to start chatting.[/dim]"
             )
             return
@@ -193,7 +207,8 @@ class ShellUI:
             agent_controller = self._create_agent_controller(model)
             if agent_controller.has_active_task:
                 self._stream_renderer.render_error(
-                    "An agent task is already running. Use /agent stop before starting a new one."
+                    "An agent task is already running. Press Ctrl+C to stop it before "
+                    "starting a new one."
                 )
                 return
 
@@ -231,6 +246,8 @@ class ShellUI:
 
         try:
             self._stream_renderer.render_stream(chunks)
+        except KeyboardInterrupt:
+            self._stream_renderer.render_activity("Generation interrupted.")
         except Exception as exc:
             self._stream_renderer.render_error(str(exc))
 
@@ -287,7 +304,7 @@ class ShellUI:
             self._active_backend_model = ""
 
         name, version = self._parse_name_version(model_name)
-        entry = self._model_registry.get_model(name, version)
+        entry = self._refresh_model_entry(name, version)
         if entry is None:
             return None
 
@@ -430,20 +447,24 @@ class ShellUI:
 
     def _generation_options(self) -> dict[str, object]:
         """Build generation options from the effective configuration."""
-        return {
+        options: dict[str, object] = {
             "temperature": self._session_manager.get_effective_config("generation.temperature")
             or 0.7,
             "max_tokens": self._session_manager.get_effective_config("generation.max_tokens")
             or 4096,
             "top_p": self._session_manager.get_effective_config("generation.top_p") or 1.0,
         }
+        session = self._session_manager.current
+        if session.provider and session.model:
+            options["model"] = session.model
+        return options
 
     def _context_limit(self) -> int:
         """Return the best-known context limit for the active target."""
         session = self._session_manager.current
         if session.model and not session.provider:
             name, version = self._parse_name_version(session.model)
-            entry = self._model_registry.get_model(name, version)
+            entry = self._refresh_model_entry(name, version)
             if entry is not None:
                 for key in ("context_length", "context_window", "n_ctx"):
                     value = entry.metadata.get(key)
@@ -454,7 +475,9 @@ class ShellUI:
     def _create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Build or replace the active agent controller for the current session."""
         workspace_root = self._workspace_root()
-        approval = ApprovalManager()
+        approval = ApprovalManager(
+            self._session_manager.get_effective_config("safety.approval_mode") or "balanced"
+        )
         self._agent_controller = AgentController(
             model=model,
             session=self._session_manager.current,
@@ -495,7 +518,7 @@ class ShellUI:
         while True:
             self._console.print(
                 "[yellow][Enter] Approve  |  [d] Deny  |  [v] View details  |  "
-                "/agent approve  |  /agent stop[/yellow]"
+                "/agent approve  |  Ctrl+C stop task[/yellow]"
             )
             response = self._console.input("").strip()
             if response == "":
@@ -504,13 +527,11 @@ class ShellUI:
                 return "deny"
             if response in {"/agent approve"}:
                 return "approve_all"
-            if response in {"/agent stop"}:
-                return "stop"
             if response == "v":
                 self._console.print(self._format_tool_preview(event))
                 continue
             self._console.print(
-                "[red]Invalid response. Use Enter, d, v, /agent approve, or /agent stop.[/red]"
+                "[red]Invalid response. Use Enter, d, v, /agent approve, or Ctrl+C.[/red]"
             )
 
     def _format_tool_preview(self, event: ToolCallRequested) -> str:
@@ -581,7 +602,7 @@ class ShellUI:
             return f"{session.provider} ({model_name})"
         if session.model:
             name, version = self._parse_name_version(session.model)
-            entry = self._model_registry.get_model(name, version)
+            entry = self._refresh_model_entry(name, version)
             if entry is not None:
                 return f"{session.model} ({entry.format})"
             return session.model
@@ -624,3 +645,49 @@ class ShellUI:
             name, version = model_name.rsplit("@", 1)
             return name, version
         return model_name, None
+
+    def _refresh_model_entry(self, name: str, version: str | None) -> ModelEntry | None:
+        """Re-detect a local model on disk and repair stale registry metadata."""
+        entry = self._model_registry.get_model(name, version)
+        if entry is None:
+            return None
+
+        model_path = Path(entry.path)
+        if not model_path.exists():
+            return entry
+
+        try:
+            detection = self._model_detector.detect(model_path)
+        except Exception:
+            return entry
+
+        updates: dict[str, object] = {}
+        if detection.format != entry.format:
+            updates["format"] = detection.format
+
+        merged_metadata = dict(entry.metadata)
+        if merged_metadata.get("backend") != detection.backend:
+            merged_metadata["backend"] = detection.backend
+        for key, value in detection.metadata.items():
+            if merged_metadata.get(key) != value:
+                merged_metadata[key] = value
+        if merged_metadata != entry.metadata:
+            updates["metadata"] = merged_metadata
+
+        if updates:
+            try:
+                self._model_registry.update_version(entry.name, entry.version, updates)
+                entry = self._model_registry.get_model(name, version) or entry
+            except KeyError:
+                return entry
+        return entry
+
+    def _should_exit_after_idle_interrupt(self) -> bool:
+        """Exit after two idle Ctrl+C presses within a short window."""
+        now = time.monotonic()
+        if self._last_idle_interrupt_at is not None and now - self._last_idle_interrupt_at <= 2:
+            self._last_idle_interrupt_at = None
+            return True
+        self._last_idle_interrupt_at = now
+        self._console.print("[dim]Press Ctrl+C again within 2 seconds to exit.[/dim]")
+        return False

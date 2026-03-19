@@ -13,7 +13,8 @@ _PLANNING_PROMPT = (
     "You are planning work for an autonomous software engineering agent. "
     "Return strict JSON with the shape "
     '{"steps":[{"description":"..."}]}. '
-    "Use 2 to 6 concise, concrete steps. Do not include markdown fences or prose."
+    "Use the minimum number of concise, concrete steps needed. "
+    "Do not include markdown fences or prose."
 )
 
 _REPLAN_PROMPT = (
@@ -133,21 +134,37 @@ class TaskPlanner:
     def __init__(self, model: ModelAbstractionLayer):
         self._model = model
 
-    def create_plan(self, task: str, context: list[ModelMessage]) -> TaskPlan:
+    def create_plan(
+        self,
+        task: str,
+        context: list[ModelMessage],
+        generation_options: dict[str, object] | None = None,
+    ) -> TaskPlan:
         """Ask the model for an initial task plan."""
+        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        if generation_options:
+            options.update(generation_options)
         result = self._model.generate(
             [
                 ModelMessage(role="system", content=_PLANNING_PROMPT),
                 *context[-8:],
                 ModelMessage(role="user", content=f"Task: {task}"),
             ],
-            temperature=0.1,
-            max_tokens=600,
+            **options,
         )
         return self._parse_plan_response(task, result)
 
-    def revise_plan(self, task: str, plan: TaskPlan, observation: str) -> TaskPlan:
+    def revise_plan(
+        self,
+        task: str,
+        plan: TaskPlan,
+        observation: str,
+        generation_options: dict[str, object] | None = None,
+    ) -> TaskPlan:
         """Ask the model for a revised plan after a failed or denied step."""
+        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        if generation_options:
+            options.update(generation_options)
         result = self._model.generate(
             [
                 ModelMessage(role="system", content=_REPLAN_PROMPT),
@@ -160,8 +177,7 @@ class TaskPlanner:
                     ),
                 ),
             ],
-            temperature=0.1,
-            max_tokens=600,
+            **options,
         )
         revised = self._parse_plan_response(task, result)
         revised.status = plan.status

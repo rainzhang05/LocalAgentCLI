@@ -51,6 +51,15 @@ class StreamRenderer:
             self._console.print(chunk.text, end="", highlight=False)
             self._buffer += chunk.text
             return
+        if chunk.importance == "primary":
+            detail = chunk.text or self._format_chunk_payload(chunk)
+            if not detail:
+                return
+            if chunk.kind == "error":
+                self.render_error(detail)
+                return
+            self.render_activity(detail)
+            return
         if chunk.kind in {"reasoning", "tool_call", "notification", "error"}:
             detail = chunk.text or self._format_chunk_payload(chunk)
             if detail:

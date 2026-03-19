@@ -12,7 +12,7 @@ This document covers installation, packaging, dependency management, entry point
 pipx install localagentcli
 ```
 
-- `pipx` is the recommended installation method because it creates an isolated virtual environment for the application while making the `localagent` command globally available.
+- `pipx` is the recommended installation method because it creates an isolated virtual environment for the application while making the `localagentcli` command globally available.
 - The package name on PyPI is `localagentcli`.
 
 ### Alternative Methods
@@ -32,16 +32,17 @@ pip install -e ".[dev]"
 ## Entry Point
 
 ```bash
-localagent
+localagentcli
 ```
 
-The single command launches the interactive shell. No subcommands are needed at the CLI level — all functionality is accessed through slash commands inside the shell.
+The primary command launches the interactive shell. No subcommands are needed at the CLI level — all functionality is accessed through slash commands inside the shell. The package also exposes `localagent` as a compatibility alias.
 
 ### Entry Point Configuration
 
 ```toml
 # pyproject.toml
 [project.scripts]
+localagentcli = "localagentcli.__main__:main"
 localagent = "localagentcli.__main__:main"
 ```
 
@@ -92,7 +93,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
@@ -155,6 +155,7 @@ Issues = "https://github.com/rainzhang05/LocalAgentCLI/issues"
 Changelog = "https://github.com/rainzhang05/LocalAgentCLI/blob/main/CHANGELOG.md"
 
 [project.scripts]
+localagentcli = "localagentcli.__main__:main"
 localagent = "localagentcli.__main__:main"
 ```
 
@@ -220,7 +221,7 @@ These flows must be tested end-to-end and must pass before any release:
 
 1. **Install → Launch → Setup**
    - `pipx install localagentcli` completes without errors
-   - `localagent` launches the interactive shell
+   - `localagentcli` launches the interactive shell
    - First-run `/setup` wizard completes successfully
    - Config file is created with valid defaults
 
@@ -273,7 +274,7 @@ tests/
 A release is complete when a user can:
 
 1. **Install via pipx**: `pipx install localagentcli` succeeds on macOS, Linux, and Windows
-2. **Launch CLI**: `localagent` opens the interactive shell
+2. **Launch CLI**: `localagentcli` opens the interactive shell
 3. **Configure model/provider**: Set up a local model or remote provider through the setup wizard or manual commands
 4. **Chat with streaming**: Have a streaming conversation in chat mode
 5. **Run agent tasks**: Submit a task in agent mode and have the agent execute it with tools
@@ -300,7 +301,7 @@ All 9 criteria must be verified by automated tests and manual testing before a v
 
 ```bash
 pipx install --force dist/localagentcli-0.1.0-py3-none-any.whl
-localagent
+localagentcli
 pipx uninstall localagentcli
 ```
 

@@ -84,10 +84,15 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     f"Cannot enter agent mode: provider '{session.provider}' is not configured."
                 )
+            if not session.model:
+                return CommandResult.error(
+                    "Cannot enter agent mode: no provider model is selected. "
+                    "Use /set or /set default to choose one."
+                )
             runtime = None
             try:
                 runtime = self._provider_registry.create_provider(session.provider)
-                runtime.set_active_model(session.model or provider.default_model)
+                runtime.set_active_model(session.model)
                 models = runtime.list_models()
             except Exception as exc:
                 return CommandResult.error(
@@ -101,7 +106,7 @@ class ModeAgentHandler(CommandHandler):
                 except Exception:
                     pass
 
-            selected_model = session.model or provider.default_model
+            selected_model = session.model
             matching = next((item for item in models if item.id == selected_model), None)
             capabilities = (
                 matching.capabilities

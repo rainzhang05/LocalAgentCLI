@@ -15,11 +15,15 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
 from prompt_toolkit.validation import ValidationError, Validator
 
-from localagentcli.commands.router import CommandRouter
+from localagentcli.commands.router import CommandRouter, CommandSpec
 
 MAX_INPUT_HISTORY = 1000
 COMMAND_MENU_HEIGHT = 10
 CHOICE_MENU_HEIGHT = 8
+TEXT_PROMPT_TOOLBAR = "Enter accepts. Ctrl+C cancels."
+SECRET_PROMPT_TOOLBAR = "Input is hidden. Enter accepts. Ctrl+C cancels."
+ACTION_PROMPT_TOOLBAR = "Type to filter. Enter selects the default. Ctrl+C cancels."
+CHOICE_PROMPT_TOOLBAR = "Type to filter. ↑/↓ choose. Enter selects. Ctrl+C cancels."
 
 
 @dataclass(frozen=True)
@@ -73,11 +77,15 @@ class CommandCompleter(Completer):
             if not command.lower().startswith(lowered):
                 continue
 
-            summary = handler.help_text().splitlines()[0] if handler.help_text() else ""
+            spec = handler.describe()
+            summary = _completion_summary(spec)
+            display = command
+            if spec.argument_hint:
+                display = f"{display} {spec.argument_hint}"
             yield Completion(
                 command,
                 start_position=-len(text),
-                display=command,
+                display=display,
                 display_meta=summary,
             )
 
@@ -118,6 +126,7 @@ class SelectionValidator(Validator):
 def create_prompt_session(
     router: CommandRouter,
     history_source: Path | Sequence[str] | None = None,
+    toolbar_provider: Callable[[], str] | None = None,
 ) -> PromptSession | LinePromptSession:
     """Create a configured PromptSession with session-backed history."""
     history = InMemoryHistory()
@@ -139,6 +148,7 @@ def create_prompt_session(
             complete_style=CompleteStyle.COLUMN,
             reserve_space_for_menu=COMMAND_MENU_HEIGHT,
             key_bindings=_build_prompt_key_bindings(),
+            bottom_toolbar=_build_status_toolbar(toolbar_provider),
         )
         _wire_live_command_menu(session, router)
         return session
@@ -151,6 +161,7 @@ def select_option(
     options: Sequence[SelectionOption],
     *,
     default: str | None = None,
+    bottom_toolbar: str = CHOICE_PROMPT_TOOLBAR,
 ) -> SelectionOption | None:
     """Prompt the user to choose from a filterable, arrow-key-friendly option list."""
     if not options or not supports_interactive_prompt():
@@ -164,7 +175,7 @@ def select_option(
         key_bindings=_build_prompt_key_bindings(always_navigate_completion=True),
         validator=SelectionValidator(options),
         validate_while_typing=False,
-        bottom_toolbar="Type to filter. ↑/↓ choose. Enter selects. Ctrl+C cancels.",
+        bottom_toolbar=bottom_toolbar,
     )
     _wire_live_selection_menu(session, options)
 
@@ -184,6 +195,56 @@ def select_option(
         return None
 
     return resolve_selection_option(selected, options)
+
+
+def prompt_text(message: str, *, default: str | None = None) -> str | None:
+    """Prompt for free-form text and return None when cancelled."""
+    return _prompt_value(message, default=default, password=False, toolbar=TEXT_PROMPT_TOOLBAR)
+
+
+def prompt_secret(message: str) -> str | None:
+    """Prompt for a secret value with hidden input."""
+    return _prompt_value(message, default=None, password=True, toolbar=SECRET_PROMPT_TOOLBAR)
+
+
+def prompt_action(
+    message: str,
+    options: Sequence[SelectionOption],
+    *,
+    default: str | None = None,
+) -> SelectionOption | None:
+    """Prompt for one short action using the shared selection surface."""
+    return select_option(
+        message,
+        options,
+        default=default,
+        bottom_toolbar=ACTION_PROMPT_TOOLBAR,
+    )
+
+
+def confirm_choice(message: str, *, default: bool = True) -> bool | None:
+    """Prompt for a yes/no confirmation using the shared action surface."""
+    selection = prompt_action(
+        message,
+        [
+            SelectionOption(
+                value="yes",
+                label="Yes",
+                description="Continue with the requested action.",
+                aliases=("y",),
+            ),
+            SelectionOption(
+                value="no",
+                label="No",
+                description="Cancel and keep the current state.",
+                aliases=("n",),
+            ),
+        ],
+        default="yes" if default else "no",
+    )
+    if selection is None:
+        return None
+    return selection.value == "yes"
 
 
 def get_prompt_history_strings(prompt_session: PromptSession | LinePromptSession) -> list[str]:
@@ -364,3 +425,65 @@ def _has_selection_matches(
 def _supports_interactive_prompt() -> bool:
     """Backward-compatible alias for older tests and patches."""
     return supports_interactive_prompt()
+
+
+def _completion_summary(spec: CommandSpec) -> str:
+    """Render concise completion metadata from command metadata."""
+    if spec.argument_hint:
+        return f"{spec.summary} ({spec.argument_hint})"
+    return spec.summary
+
+
+def _build_status_toolbar(
+    toolbar_provider: Callable[[], str] | None,
+) -> Callable[[], str] | None:
+    """Wrap a dynamic toolbar provider for prompt_toolkit."""
+    if toolbar_provider is None:
+        return None
+
+    def _toolbar() -> str:
+        try:
+            return toolbar_provider()
+        except Exception:
+            return ""
+
+    return _toolbar
+
+
+def _prompt_value(
+    message: str,
+    *,
+    default: str | None,
+    password: bool,
+    toolbar: str,
+) -> str | None:
+    """Prompt for one value using prompt-toolkit when available."""
+    if not supports_interactive_prompt():
+        try:
+            value = LinePromptSession(InMemoryHistory()).prompt(
+                _format_prompt_message(message, default)
+            )
+        except (EOFError, KeyboardInterrupt):
+            return None
+        return value or default
+
+    try:
+        session: PromptSession[str] = PromptSession(
+            key_bindings=_build_prompt_key_bindings(),
+            bottom_toolbar=toolbar,
+        )
+        value = session.prompt(
+            f"{message}: ",
+            default=default or "",
+            is_password=password,
+        )
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return value or default
+
+
+def _format_prompt_message(message: str, default: str | None) -> str:
+    """Render a consistent input prompt label."""
+    if default:
+        return f"{message} [{default}]: "
+    return f"{message}: "

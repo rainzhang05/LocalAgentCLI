@@ -52,7 +52,6 @@ def _add_openai(registry: ProviderRegistry) -> None:
         name="openai",
         type="openai",
         base_url="https://api.openai.com/v1",
-        default_model="gpt-4o",
     )
     registry.add(entry, "sk-test")
 
@@ -93,7 +92,7 @@ class TestProvidersList:
         result = handler.execute([])
         assert result.success is True
         assert "openai" in result.message
-        assert "gpt-4o" in result.message
+        assert "openai" in result.message
 
     def test_list_shows_active_marker(self, registry: ProviderRegistry):
         _add_openai(registry)
@@ -117,7 +116,6 @@ _ADD_INPUTS = [
     "my-openai",
     "https://api.openai.com/v1",
     "sk-test-key",
-    "gpt-4o",
 ]
 
 
@@ -146,7 +144,6 @@ class TestProvidersAdd:
             "openai",
             "https://api.openai.com/v1",
             "sk-key",
-            "gpt-4o",
         ],
     )
     def test_add_duplicate_name(
@@ -165,7 +162,7 @@ class TestProvidersAdd:
 
     @patch(
         _PROMPT_PATH,
-        side_effect=["openai", "test", "http://x", "", "m"],
+        side_effect=["openai", "test", "http://x", ""],
     )
     def test_add_empty_api_key(
         self,
@@ -257,7 +254,10 @@ class TestProvidersUse:
     ):
         _add_openai(registry)
         handler = ProvidersUseHandler(registry, session_manager)
-        result = handler.execute(["openai"])
+        mock_provider = MagicMock()
+        mock_provider.list_models.return_value = [MagicMock(id="gpt-4o", name="GPT-4o")]
+        with patch.object(registry, "create_provider", return_value=mock_provider):
+            result = handler.execute(["openai"])
         assert result.success is True
         assert session_manager.current.provider == "openai"
         assert session_manager.current.model == "gpt-4o"

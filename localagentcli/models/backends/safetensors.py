@@ -11,6 +11,7 @@ from localagentcli.models.backends.base import (
     ModelBackend,
     ModelMessage,
     StreamChunk,
+    backend_install_hint,
 )
 
 
@@ -171,14 +172,14 @@ class SafetensorsBackend(ModelBackend):
         except ImportError:
             raise RuntimeError(
                 "The Safetensors backend requires 'torch'. "
-                "Install it with: pip install localagentcli[torch]"
+                f"Install it with: {backend_install_hint('safetensors')}"
             ) from None
         try:
             import transformers
         except ImportError:
             raise RuntimeError(
                 "The Safetensors backend requires 'transformers'. "
-                "Install it with: pip install localagentcli[torch]"
+                f"Install it with: {backend_install_hint('safetensors')}"
             ) from None
         return torch, transformers
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
+from localagentcli.models.registry import ModelEntry
 from localagentcli.shell.prompt import (
     CommandCompleter,
     create_prompt_session,
@@ -141,6 +144,30 @@ class TestShellUIStatusHeader:
         assert "mode: agent" in call_args
         assert "(none)" in call_args  # no model set
 
+    def test_active_target_label_for_provider(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.provider = "openai"
+        ui._session_manager.current.model = "gpt-4.1"
+
+        assert ui._active_target_label() == "openai (gpt-4.1)"
+
+    def test_context_limit_uses_registered_model_metadata(self, config, storage, tmp_path: Path):
+        ui = ShellUI(config=config, storage=storage)
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        ui._model_registry.register(
+            ModelEntry(
+                name="demo",
+                version="v1",
+                format="gguf",
+                path=str(model_dir),
+                metadata={"context_length": 32768},
+            )
+        )
+        ui._session_manager.current.model = "demo@v1"
+
+        assert ui._context_limit() == 32768
+
 
 class TestShellUIHandleExit:
     """Tests for exit handling."""
@@ -271,3 +298,130 @@ class TestShellUIRun:
             mock_dispatch.return_value = CommandResult.ok("Setup complete.")
             ui._run_first_time_setup()
             mock_dispatch.assert_called_with("setup")
+
+
+class TestShellUIModelResolution:
+    def test_resolve_active_model_uses_provider_backend(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.provider = "openai"
+        backend = MagicMock()
+
+        with patch.object(ui, "_get_active_provider", return_value=backend):
+            model = ui._resolve_active_model()
+
+        assert model is not None
+        assert model.backend is backend
+
+    def test_resolve_active_model_reports_local_load_failure(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._session_manager.current.model = "demo@v1"
+
+        with patch.object(ui, "_get_active_backend", return_value=None):
+            model = ui._resolve_active_model()
+
+        assert model is None
+        assert "Failed to load model" in ui._console.print.call_args.args[0]
+
+    def test_ensure_backend_dependencies_installs_missing_packages(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+
+        with (
+            patch(
+                "localagentcli.shell.ui.check_backend_dependencies",
+                return_value=(False, ["llama_cpp"]),
+            ),
+            patch("localagentcli.shell.ui.Confirm.ask", return_value=True) as mock_confirm,
+            patch(
+                "localagentcli.shell.ui.install_backend_dependencies",
+                return_value=(True, "installed"),
+            ) as mock_install,
+        ):
+            result = ui._ensure_backend_dependencies("gguf")
+
+        assert result is True
+        mock_confirm.assert_called_once()
+        mock_install.assert_called_once_with("gguf")
+
+    def test_ensure_backend_dependencies_handles_cancelled_prompt(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+
+        with (
+            patch(
+                "localagentcli.shell.ui.check_backend_dependencies",
+                return_value=(False, ["llama_cpp"]),
+            ),
+            patch(
+                "localagentcli.shell.ui.Confirm.ask",
+                side_effect=KeyboardInterrupt,
+            ),
+        ):
+            result = ui._ensure_backend_dependencies("gguf")
+
+        assert result is False
+        assert "loading cancelled" in ui._console.print.call_args.args[0]
+
+
+class TestShellUIHelpers:
+    def test_format_tool_preview_for_patch_apply(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        event = ToolCallRequested(
+            tool_name="patch_apply",
+            arguments={"path": "file.py", "old_text": "old", "new_text": "new"},
+            requires_approval=True,
+        )
+
+        preview = ui._format_tool_preview(event)
+
+        assert "Replace" in preview
+        assert "With" in preview
+
+    def test_format_tool_preview_truncates_file_write(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        event = ToolCallRequested(
+            tool_name="file_write",
+            arguments={"path": "file.py", "content": "a" * 600},
+            requires_approval=True,
+        )
+
+        preview = ui._format_tool_preview(event)
+
+        assert preview.endswith("...")
+
+    def test_handle_agent_resume_approves_with_autonomy(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        controller = MagicMock()
+        controller.approve_action.return_value = iter(["event"])
+        ui._agent_controller = controller
+        ui._drain_agent_events = MagicMock()
+
+        ui._handle_agent_resume(
+            CommandResult.ok(
+                "approved",
+                data={"decision": "approve", "autonomous": True},
+            )
+        )
+
+        controller.approve_action.assert_called_once_with(autonomous=True)
+        ui._drain_agent_events.assert_called_once()
+
+    def test_stop_agent_task_with_confirmation_decline(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        controller = MagicMock()
+        controller.has_active_task = True
+        ui._agent_controller = controller
+        ui._stream_renderer = MagicMock()
+
+        with patch("localagentcli.shell.ui.Confirm.ask", return_value=False):
+            result = ui._stop_agent_task_with_confirmation()
+
+        assert result is False
+        controller.stop.assert_not_called()
+
+    def test_workspace_root_resolves_current_workspace(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.workspace = "."
+
+        assert ui._workspace_root() == Path(".").resolve()

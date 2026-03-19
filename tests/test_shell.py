@@ -427,12 +427,16 @@ class TestShellUIModelResolution:
 
         assert options["model"] == "gpt-5.4-nano"
 
-    def test_refresh_model_entry_repairs_stale_registry_format(
+    @patch("localagentcli.models.detector.platform")
+    def test_refresh_model_entry_repairs_stale_registry_format_on_non_macos(
         self,
+        mock_platform,
         config,
         storage,
         tmp_path: Path,
     ):
+        mock_platform.system.return_value = "Linux"
+        mock_platform.machine.return_value = "x86_64"
         ui = ShellUI(config=config, storage=storage)
         model_dir = tmp_path / "model"
         model_dir.mkdir()

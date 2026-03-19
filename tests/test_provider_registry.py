@@ -59,6 +59,11 @@ class TestProviderEntry:
         assert d["default_model"] == "gpt-4o"
         assert "name" not in d  # name is the key, not in the value
 
+    def test_to_dict_omits_empty_default_model(self):
+        e = ProviderEntry(name="test", type="openai", base_url="http://x")
+        d = e.to_dict()
+        assert "default_model" not in d
+
     def test_from_dict(self):
         d = {
             "type": "anthropic",

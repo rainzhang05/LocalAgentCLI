@@ -19,6 +19,8 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 2. **Hierarchical structure**: Related commands are grouped under a parent (e.g., `/models list`, `/models install`). Parent commands usually print subcommand help, but interactive parents are allowed when the command is explicitly acting as a wizard or picker.
 3. **Human-readable output**: All command responses use clear, formatted text. No raw data dumps.
 4. **Predictable errors**: Invalid commands return a structured error with the invalid input, a brief explanation, and a suggestion (e.g., "Did you mean `/models list`?").
+5. **Shared metadata**: Each handler declares a `CommandSpec` with group, summary, usage, argument hint, details, and examples. `/help`, slash-command completion metadata, and command-specific help all derive from that one contract.
+6. **Shared presentation**: Command handlers return `CommandResult` values with a presentation type (`plain`, `status`, `success`, `warning`, `error`) and an optional detail body so command outcomes use the same shell grammar as streaming activity.
 
 ---
 
@@ -28,7 +30,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/help`
 - **Syntax**: `/help [command]`
-- **Behavior**: Without arguments, prints a summary of all available commands grouped by category. With a command name, prints detailed help for that specific command including syntax, arguments, and examples.
+- **Behavior**: Without arguments, prints a summary of all visible commands grouped by each command's declared metadata category. With a command name, prints structured command help using that command's summary, usage, details, and examples.
 - **Output**: Formatted text table or section.
 
 #### `/setup`
@@ -37,15 +39,15 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
   1. Workspace directory
   2. Default mode (`chat` or `agent`)
   3. Logging level (`normal`, `verbose`, or `debug`)
+- **Prompt surface**: Uses the shared prompt-toolkit text and picker helpers instead of ad hoc `rich` prompts.
 - **Non-interactive behavior**: If stdin is not interactive (for example under `pipx` smoke tests, CI pipes, or shell redirection), the command does not prompt. It keeps the current/default values, persists them, and completes successfully so first launch does not fail.
 - **Idempotent**: Can be re-run at any time to reconfigure.
 
 #### `/status`
 - **Syntax**: `/status`
-- **Behavior**: Displays current session state:
+- **Behavior**: Displays the expanded form of the same shell status snapshot used by the prompt toolbar:
   - Active mode (chat / agent)
-  - Active model name and backend
-  - Active provider (if remote)
+  - Active target label
   - Workspace path
   - Session name (if saved)
   - Approval mode
@@ -60,17 +62,17 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Interactive editing**:
   - Presents only schema-approved config keys
   - Enum-like values (mode, logging level, approval mode) are chosen from valid options only
-  - Free-form values are still validated before being persisted
+  - Free-form values use the shared text-entry helper and are still validated before being persisted
 - **Valid keys**: dotted keys such as `general.default_mode`, `general.workspace`, `general.logging_level`, `model.active_model`, `provider.active_provider`, `safety.approval_mode`, `generation.temperature`, `generation.max_tokens`, `generation.top_p`, and the timeout keys
 
 #### `/hf-token`
 - **Syntax**: `/hf-token [token]`
-- **Behavior**: Stores or replaces the Hugging Face token used for private Hub model discovery and downloads. If no token is provided and the shell is interactive, prompts securely for it.
+- **Behavior**: Stores or replaces the Hugging Face token used for private Hub model discovery and downloads. If no token is provided and the shell is interactive, prompts securely for it with masked input.
 - **Visibility**: Always available in the live slash-command menu and `/help` so users can change the token later.
 
 #### `/exit`
 - **Syntax**: `/exit`
-- **Behavior**: Cleanly shuts down the shell. If the current session has unsaved changes, prompts the user to save. Unloads any loaded model. Flushes logs.
+- **Behavior**: Cleanly shuts down the shell. If the current session has unsaved changes, asks whether to save using the shared confirmation prompt. Unloads any loaded model. Flushes logs.
 
 ---
 
@@ -139,12 +141,14 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
   3. For local models: choose one installed local model directly
 - **Scope**: Applies to the current session only.
 - **Notes**: This is the primary interactive replacement for `/models use` and `/providers use`.
+- **Result framing**: Cancellation, empty-state guidance, and successful activation all use the shared status/success/warning command presentation contract.
 
 #### `/set default`
 - **Syntax**: `/set default`
 - **Behavior**: Opens the same layered picker as `/set`, but persists the selected target as the CLI-wide default for new sessions.
 - **Scope**: Global config. The selected target becomes the startup default until changed or removed.
 - **Fallback**: If the stored default target later becomes invalid (for example, a local model is deleted), the shell falls back to the next available installed model or configured provider model.
+- **Result framing**: Uses the same picker and presentation contract as `/set`.
 
 ---
 
@@ -158,16 +162,18 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Syntax**: `/providers add`
 - **Behavior**: Launches an interactive wizard to add a new provider:
   1. Select provider type (OpenAI-compatible, Anthropic, generic REST)
-  2. Enter API base URL (if not default)
-  3. Enter API key (stored securely)
-  4. Optionally test the connection
-  5. Register the provider
+  2. Enter provider name
+  3. Enter API base URL (if not default)
+  4. Enter API key with masked input (stored securely)
+  5. Confirm whether to test the connection now
+  6. Register the provider and optionally append the test result in the detail body
 - **Note**: Providers no longer own a user-configurable default model. Model selection happens through `/set` or `/set default`.
 
 #### `/providers remove`
 - **Syntax**: `/providers remove <name>`
 - **Behavior**: Removes a configured provider. Deletes stored credentials. Prompts for confirmation.
 - **Selection**: If no name is provided in an interactive terminal, opens a picker of configured providers.
+- **Cancellation**: Uses the shared warning-style cancellation result wording.
 
 #### `/providers test`
 - **Syntax**: `/providers test [name]`
@@ -201,6 +207,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Syntax**: `/session load <name>`
 - **Behavior**: Loads a previously saved session. Restores all session state including history and active model.
 - **Selection**: If no name is provided in an interactive terminal, opens a picker of saved sessions.
+- **Cancellation**: Uses the shared warning-style cancellation result wording.
 
 #### `/session list`
 - **Syntax**: `/session list`
@@ -222,6 +229,10 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/agent deny`
 - **Syntax**: `/agent deny`
 - **Behavior**: Denies the pending agent action and halts the current step. The agent re-plans from the current state.
+
+#### Approval Prompts
+- **Behavior**: Pending tool approvals now use the same action-prompt surface as other command flows, offering `Approve`, `Deny`, `View details`, and `Approve all`.
+- **Stop behavior**: Cancelling the prompt stops the pending task instead of leaving the shell in an ambiguous state.
 
 ---
 

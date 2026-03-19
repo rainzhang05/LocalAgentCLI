@@ -16,6 +16,9 @@ from localagentcli.commands import (
     help as help_cmd,
 )
 from localagentcli.commands import (
+    models as models_cmd,
+)
+from localagentcli.commands import (
     providers as providers_cmd,
 )
 from localagentcli.commands import (
@@ -26,7 +29,10 @@ from localagentcli.commands import (
 )
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
-from localagentcli.models.backends.base import ModelMessage
+from localagentcli.models.backends.base import ModelBackend, ModelMessage
+from localagentcli.models.detector import HardwareDetector, ModelDetector
+from localagentcli.models.installer import ModelInstaller
+from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
@@ -69,6 +75,20 @@ class ShellUI:
         self._active_provider: RemoteProvider | None = None
         self._active_provider_name: str = ""
 
+        # Initialize model infrastructure
+        self._model_registry = ModelRegistry(storage.registry_path)
+        self._model_detector = ModelDetector()
+        self._hardware_detector = HardwareDetector()
+        self._model_installer = ModelInstaller(
+            models_dir=storage.models_dir,
+            cache_dir=storage.cache_dir,
+            registry=self._model_registry,
+            detector=self._model_detector,
+            console=self._console,
+        )
+        self._active_backend: ModelBackend | None = None
+        self._active_backend_model: str = ""
+
         # Initialize command router and register commands
         self._router = CommandRouter()
         self._register_commands()
@@ -91,6 +111,15 @@ class ShellUI:
             self._key_manager,
             self._session_manager,
             self._console,
+        )
+        models_cmd.register(
+            self._router,
+            self._model_registry,
+            self._model_installer,
+            self._hardware_detector,
+            self._session_manager,
+            self._console,
+            self._storage.models_dir,
         )
 
     def run(self) -> None:
@@ -139,23 +168,36 @@ class ShellUI:
                 break
 
     def _handle_plain_text(self, text: str) -> None:
-        """Handle plain text input — route to active provider or show message."""
+        """Handle plain text input — route to active model/provider or show message."""
         session = self._session_manager.current
+        model_name = session.model
         provider_name = session.provider
 
-        if not provider_name:
+        # Determine which backend to use
+        backend: ModelBackend | None = None
+
+        if model_name and not provider_name:
+            # Local model — get or load the backend
+            backend = self._get_active_backend(model_name)
+            if backend is None:
+                self._console.print(
+                    f"[red]Failed to load model '{model_name}'. "
+                    "Check /models inspect for details.[/red]"
+                )
+                return
+        elif provider_name:
+            # Remote provider
+            backend = self._get_active_provider(provider_name)
+            if backend is None:
+                self._console.print(
+                    f"[red]Failed to connect to provider '{provider_name}'. "
+                    "Check /providers test.[/red]"
+                )
+                return
+        else:
             self._console.print(
                 "[dim]No model connected. Use /setup or configure a "
                 "model/provider to start chatting.[/dim]"
-            )
-            return
-
-        # Get or cache the active provider instance
-        provider = self._get_active_provider(provider_name)
-        if provider is None:
-            self._console.print(
-                f"[red]Failed to connect to provider '{provider_name}'. "
-                "Check /providers test.[/red]"
             )
             return
 
@@ -167,7 +209,7 @@ class ShellUI:
 
         # Stream the response
         try:
-            chunks = provider.stream_generate(model_messages)
+            chunks = backend.stream_generate(model_messages)
             response_text = self._stream_renderer.render_stream(chunks)
         except Exception as e:
             self._stream_renderer.render_error(str(e))
@@ -191,6 +233,51 @@ class ShellUI:
             self._active_provider = None
             self._active_provider_name = ""
             return None
+
+    def _get_active_backend(self, model_name: str) -> ModelBackend | None:
+        """Get the active local model backend, loading if needed."""
+        if self._active_backend and self._active_backend_model == model_name:
+            return self._active_backend
+
+        # Parse name@version
+        if "@" in model_name:
+            name, version = model_name.rsplit("@", 1)
+        else:
+            name, version = model_name, None
+
+        entry = self._model_registry.get_model(name, version)
+        if entry is None:
+            return None
+
+        try:
+            backend = self._create_backend(entry.format)
+            from pathlib import Path
+
+            backend.load(Path(entry.path))
+            self._active_backend = backend
+            self._active_backend_model = model_name
+            return backend
+        except Exception as e:
+            self._logger.error("Failed to load model '%s': %s", model_name, e)
+            self._active_backend = None
+            self._active_backend_model = ""
+            return None
+
+    def _create_backend(self, fmt: str) -> ModelBackend:
+        """Create the appropriate backend instance for a model format."""
+        if fmt == "mlx":
+            from localagentcli.models.backends.mlx import MLXBackend
+
+            return MLXBackend()
+        if fmt == "gguf":
+            from localagentcli.models.backends.gguf import GGUFBackend
+
+            return GGUFBackend()
+        if fmt == "safetensors":
+            from localagentcli.models.backends.safetensors import SafetensorsBackend
+
+            return SafetensorsBackend()
+        raise ValueError(f"Unknown model format: '{fmt}'")
 
     def _history_to_model_messages(self) -> list[ModelMessage]:
         """Convert session history to ModelMessage list for the provider."""

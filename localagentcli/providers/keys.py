@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class KeyManager:
         try:
             import keyring
 
-            return keyring.get_password(KEYRING_SERVICE, provider_name)
+            return cast(str | None, keyring.get_password(KEYRING_SERVICE, provider_name))
         except Exception:
             logger.debug("Keyring retrieve failed for %s", provider_name)
             return None

@@ -132,10 +132,7 @@ class StreamRenderer:
         """Render the inline approval prompt using the shared status grammar."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(
-            "[yellow][Enter] Approve  |  [d] Deny  |  [v] View details  |  "
-            "/agent approve  |  Ctrl+C stop task[/yellow]"
-        )
+        self._console.print("[yellow]⟳ Approval required.[/yellow]")
 
     def render_preview(self, title: str, body: str) -> None:
         """Render a preview block without changing task semantics."""

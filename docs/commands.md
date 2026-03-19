@@ -82,10 +82,10 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/models`
 - **Syntax**: `/models`
-- **Behavior**: Opens an interactive Hugging Face picker for popular local models. The flow is layered:
+- **Behavior**: Opens an interactive Hugging Face picker backed by live Hub API discovery. The flow is layered:
   1. Choose the runtime/backend family (`PyTorch / Safetensors`, `MLX` when supported, or `GGUF`)
-  2. Choose a curated model family (`GPT-OSS`, `Qwen`, `Gemma`, etc.)
-  3. Choose the exact model repo
+  2. Choose a model family (`GPT-OSS`, `Qwen`, `Llama`, `Gemma`, `Mistral`, `Phi`, `DeepSeek`, `Granite`, etc.)
+  3. Choose the exact model repo discovered live from the Hugging Face API
   4. Download the model immediately and set it as the active local model for the current session
 - **Navigation**: Up/Down arrows move through options, typing filters the current layer, and Enter accepts the highlighted choice.
 

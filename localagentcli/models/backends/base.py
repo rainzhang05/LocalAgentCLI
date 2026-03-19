@@ -35,6 +35,8 @@ BACKEND_LABELS: dict[str, str] = {
     "safetensors": "Safetensors",
 }
 
+_CONTROL_TOKEN_PATTERN = re.compile(r"<\|([a-zA-Z_]+)\|>")
+
 
 @dataclass
 class StreamChunk:
@@ -74,8 +76,6 @@ class StreamChunk:
                 self.tool_call_data = self.payload
         elif self.kind == "done":
             self.is_done = True
-        elif self.kind in {"notification", "error"} and self.importance == "primary":
-            self.importance = "secondary"
 
         if self.payload is None and self.tool_call_data is not None:
             self.payload = self.tool_call_data
@@ -174,6 +174,109 @@ class ModelBackend(ABC):
     def capabilities(self) -> dict:
         """Return a dict of all capability flags."""
         ...
+
+
+class EmbeddedStreamNormalizer:
+    """Normalize in-band channel markup emitted inside plain text streams."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._active_channel: str | None = None
+        self._in_message = False
+
+    def feed(self, chunk: StreamChunk) -> list[StreamChunk]:
+        """Normalize one streaming chunk."""
+        if chunk.kind != "final_text" or not chunk.text:
+            return [chunk]
+        self._buffer += chunk.text
+        return self._drain(final=False)
+
+    def flush(self) -> list[StreamChunk]:
+        """Flush any buffered text at stream end."""
+        return self._drain(final=True)
+
+    def _drain(self, *, final: bool) -> list[StreamChunk]:
+        chunks: list[StreamChunk] = []
+
+        while True:
+            match = _CONTROL_TOKEN_PATTERN.search(self._buffer)
+            if match is None:
+                text, self._buffer = self._split_safe_text(final=final)
+                chunks.extend(self._emit_text(text))
+                break
+
+            if match.start() > 0:
+                prefix = self._buffer[: match.start()]
+                self._buffer = self._buffer[match.start() :]
+                chunks.extend(self._emit_text(prefix))
+                continue
+
+            token = match.group(1).lower()
+            remainder = self._buffer[match.end() :]
+            if token in {"channel", "start"}:
+                next_match = _CONTROL_TOKEN_PATTERN.search(remainder)
+                if next_match is None:
+                    if not final:
+                        break
+                    value = remainder
+                    self._buffer = ""
+                else:
+                    value = remainder[: next_match.start()]
+                    self._buffer = remainder[next_match.start() :]
+                cleaned = value.strip()
+                if token == "channel":
+                    self._active_channel = cleaned.lower() or None
+                continue
+
+            self._buffer = remainder
+            if token == "message":
+                self._in_message = True
+                continue
+            if token == "end":
+                self._active_channel = None
+                self._in_message = False
+                continue
+
+        return chunks
+
+    def _split_safe_text(self, *, final: bool) -> tuple[str, str]:
+        """Split out safe plain text while preserving partial control tokens."""
+        if final:
+            return self._buffer, ""
+        partial_start = self._buffer.rfind("<|")
+        if partial_start == -1:
+            return self._buffer, ""
+        partial = self._buffer[partial_start:]
+        if "|>" in partial:
+            return self._buffer, ""
+        return self._buffer[:partial_start], partial
+
+    def _emit_text(self, text: str) -> list[StreamChunk]:
+        """Convert buffered text into normalized chunks."""
+        if not text:
+            return []
+        kind, importance = self._chunk_style()
+        return [StreamChunk(text=text, kind=kind, importance=importance)]
+
+    def _chunk_style(
+        self,
+    ) -> tuple[
+        Literal["final_text", "reasoning", "tool_call", "notification", "error", "done"],
+        Literal["primary", "secondary"],
+    ]:
+        if not (self._in_message and self._active_channel):
+            return "final_text", "primary"
+
+        channel = self._active_channel
+        if channel in {"analysis", "reasoning", "thinking"}:
+            return "reasoning", "secondary"
+        if channel == "final":
+            return "final_text", "primary"
+        if channel in {"commentary", "notification", "notifier"}:
+            return "notification", "primary"
+        if channel in {"tool", "tool_call", "function_call"}:
+            return "tool_call", "secondary"
+        return "notification", "secondary"
 
 
 def collect_generation_result(chunks: Iterable[StreamChunk]) -> GenerationResult:

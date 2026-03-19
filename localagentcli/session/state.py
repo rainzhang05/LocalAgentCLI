@@ -61,6 +61,10 @@ class Session:
         """Check if the session has been modified since creation."""
         return len(self.history) > 0 or self.updated_at > self.created_at
 
+    def touch(self) -> None:
+        """Update the session modification timestamp."""
+        self.updated_at = datetime.now()
+
     def to_dict(self) -> dict:
         """Serialize the full session to a JSON-compatible dict."""
         return {

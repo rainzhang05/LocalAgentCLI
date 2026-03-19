@@ -54,10 +54,19 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/config`
 - **Syntax**: `/config [key] [value]`
 - **Behavior**:
-  - No arguments: prints all current configuration values
+  - No arguments: opens an interactive config editor in a TTY, or prints all current configuration values in non-interactive environments
   - One argument (key): prints the value of that key
   - Two arguments (key + value): sets the key to the new value and persists to `config.toml`
-- **Valid keys**: `default_mode`, `active_model`, `provider`, `workspace`, `approval_mode`, `timeout`, `logging_level`, and generation settings (`temperature`, `max_tokens`, `top_p`, etc.)
+- **Interactive editing**:
+  - Presents only schema-approved config keys
+  - Enum-like values (mode, logging level, approval mode) are chosen from valid options only
+  - Free-form values are still validated before being persisted
+- **Valid keys**: dotted keys such as `general.default_mode`, `general.workspace`, `general.logging_level`, `model.active_model`, `provider.active_provider`, `safety.approval_mode`, `generation.temperature`, `generation.max_tokens`, `generation.top_p`, and the timeout keys
+
+#### `/hf-token`
+- **Syntax**: `/hf-token [token]`
+- **Behavior**: Stores the Hugging Face token used for private Hub model discovery and downloads. If no token is provided and the shell is interactive, prompts securely for it.
+- **Visibility**: Once a token is already available, the command is hidden from the live slash-command menu and `/help`.
 
 #### `/exit`
 - **Syntax**: `/exit`
@@ -131,6 +140,12 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Scope**: Applies to the current session only.
 - **Notes**: This is the primary interactive replacement for `/models use` and `/providers use`.
 
+#### `/set default`
+- **Syntax**: `/set default`
+- **Behavior**: Opens the same layered picker as `/set`, but persists the selected target as the CLI-wide default for new sessions.
+- **Scope**: Global config. The selected target becomes the startup default until changed or removed.
+- **Fallback**: If the stored default target later becomes invalid (for example, a local model is deleted), the shell falls back to the next available installed model or configured provider model.
+
 ---
 
 ### Provider Commands
@@ -147,6 +162,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
   3. Enter API key (stored securely)
   4. Optionally test the connection
   5. Register the provider
+- **Note**: Providers no longer own a user-configurable default model. Model selection happens through `/set` or `/set default`.
 
 #### `/providers remove`
 - **Syntax**: `/providers remove <name>`

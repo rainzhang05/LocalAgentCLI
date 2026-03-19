@@ -20,10 +20,10 @@ The system must distinguish between MLX-format safetensors and standard PyTorch 
 
 ### Curated Hugging Face Picker
 - Command: `/models`
-- Opens a layered interactive picker for popular Hugging Face local models
+- Opens a layered interactive picker for Hugging Face local models discovered live from the Hub API
 - First chooses the runtime/backend family (`PyTorch / Safetensors`, `MLX` when supported, or `GGUF`)
-- Then chooses the model family (`GPT-OSS`, `Qwen`, `Gemma`, etc.)
-- Then chooses the exact repository
+- Then chooses the model family (`GPT-OSS`, `Qwen`, `Llama`, `Gemma`, `Mistral`, `Phi`, `DeepSeek`, `Granite`, etc.)
+- Then chooses the exact repository returned by the Hugging Face API for that family/backend pair
 - After download completes, the installed model becomes the active local model for the current session
 
 ### Hugging Face

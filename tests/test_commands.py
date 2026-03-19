@@ -17,6 +17,9 @@ from localagentcli.commands import (
     help as help_cmd,
 )
 from localagentcli.commands import (
+    hf_token as hf_token_cmd,
+)
+from localagentcli.commands import (
     providers as providers_cmd,
 )
 from localagentcli.commands import (
@@ -31,6 +34,7 @@ from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.state import Message
+from localagentcli.shell.prompt import SelectionOption
 
 
 def _make_router(config, session_manager, tmp_path=None):
@@ -50,12 +54,14 @@ def _make_router(config, session_manager, tmp_path=None):
         km._keyring_available = False
         registry = ProviderRegistry(config, km)
         model_registry = ModelRegistry(tmp_path / "registry.json")
+        hf_token_cmd.register(router, km)
         providers_cmd.register(router, registry, km, session_manager, console)
         set_cmd.register(
             router,
             model_registry,
             registry,
             HardwareDetector(),
+            config,
             session_manager,
             console,
         )
@@ -123,6 +129,31 @@ class TestConfigCommand:
         assert "Configuration" in result.message
         assert "default_mode" in result.message
 
+    @patch("localagentcli.commands.config_cmd.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.config_cmd.select_option")
+    def test_interactive_editor_sets_valid_choice(
+        self,
+        mock_select,
+        _mock_interactive,
+        config,
+        session_manager,
+    ):
+        router = _make_router(config, session_manager)
+        mock_select.side_effect = [
+            SelectionOption(
+                value="general.default_mode",
+                label="general.default_mode",
+                description='Current: "agent"',
+            ),
+            SelectionOption(value="chat", label="chat"),
+        ]
+
+        result = router.dispatch("config")
+
+        assert result.success
+        assert config.get("general.default_mode") == "chat"
+        assert 'Set general.default_mode = "chat"' == result.message
+
     def test_show_key(self, config, session_manager):
         router = _make_router(config, session_manager)
         result = router.dispatch("config general.default_mode")
@@ -140,6 +171,12 @@ class TestConfigCommand:
         assert result.success
         assert "chat" in result.message
         assert config.get("general.default_mode") == "chat"
+
+    def test_set_string_value_from_remaining_tokens(self, config, session_manager):
+        router = _make_router(config, session_manager)
+        result = router.dispatch("config general.workspace /tmp/my project")
+        assert result.success
+        assert config.get("general.workspace") == "/tmp/my project"
 
     def test_set_invalid_value(self, config, session_manager):
         router = _make_router(config, session_manager)
@@ -177,6 +214,17 @@ class TestSetupCommand:
         assert config.get("general.workspace") == "."
         assert config.get("general.default_mode") == "agent"
         assert config.get("general.logging_level") == "normal"
+
+
+class TestHFTokenCommand:
+    def test_hf_token_command_hides_after_set(self, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("hf-token test-token")
+
+        assert result.success
+        assert "saved" in result.message.lower()
+        assert "hf-token" not in router.get_visible_commands()
 
 
 class TestSessionCommands:

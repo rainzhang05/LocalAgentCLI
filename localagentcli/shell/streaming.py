@@ -82,10 +82,13 @@ class StreamRenderer:
         if isinstance(event, ToolCallRequested):
             marker = "⟳" if event.requires_approval else "✓"
             color = "yellow" if event.requires_approval else "green"
+            suffix = " (HIGH RISK)" if event.risk_level == "high" else ""
             self._console.print(
                 f"[{color}]{marker} {event.tool_name}: "
-                f"{self._tool_summary(event.arguments)}[/{color}]"
+                f"{self._tool_summary(event.arguments)}{suffix}[/{color}]"
             )
+            for warning in event.warnings:
+                self._console.print(f"[yellow]  ! {warning}[/yellow]")
             return
         if isinstance(event, ToolCallResult):
             marker = "✓" if event.result.status == "success" else "✗"

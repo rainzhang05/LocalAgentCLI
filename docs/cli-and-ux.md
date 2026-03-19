@@ -137,6 +137,8 @@ Tool calls, approvals, and system events are displayed inline between user input
 - `✗` — failed or denied action (red)
 - `ℹ` — informational message (default high-contrast text)
 
+When the active terminal encoding cannot represent these glyphs, the shell falls back to ASCII-safe markers instead of failing the session.
+
 Supporting warnings or reasoning that do not deserve the main status lane are queued into the dimmed `Details` lane instead of being mixed into the main answer body.
 
 ### Command Result Presentation

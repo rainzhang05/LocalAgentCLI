@@ -38,7 +38,7 @@ active_model = ""               # Name of the active local model (empty = none)
 active_provider = ""            # Name of the active remote provider (empty = none)
 
 [safety]
-approval_mode = "balanced"      # "balanced" (only mode currently)
+approval_mode = "balanced"      # "balanced" | "autonomous"
 
 [generation]
 temperature = 0.7
@@ -69,7 +69,7 @@ inactivity = 600                # Seconds of agent inactivity before pause
 | `general.logging_level` | string | `"normal"` | Log verbosity |
 | `model.active_model` | string | `""` | Active local model name |
 | `provider.active_provider` | string | `""` | Active remote provider name |
-| `safety.approval_mode` | string | `"balanced"` | Approval mode |
+| `safety.approval_mode` | string | `"balanced"` | Approval mode (`balanced` or `autonomous`) |
 | `generation.temperature` | float | `0.7` | Sampling temperature |
 | `generation.max_tokens` | int | `4096` | Maximum tokens to generate |
 | `generation.top_p` | float | `1.0` | Nucleus sampling threshold |

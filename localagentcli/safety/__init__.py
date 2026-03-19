@@ -1,5 +1,12 @@
-"""Minimal approval primitives used by the Phase 5 agent loop."""
+"""Safety primitives for approvals, boundaries, and rollback."""
 
-from localagentcli.safety.approval import ApprovalManager
-
-__all__ = ["ApprovalManager"]
+__all__ = [
+    "ApprovalManager",
+    "ApprovalResult",
+    "RiskLevel",
+    "RollbackEntry",
+    "RollbackManager",
+    "SafetyLayer",
+    "WorkspaceBoundary",
+    "WorkspaceBoundaryError",
+]

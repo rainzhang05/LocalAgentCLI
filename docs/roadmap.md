@@ -24,7 +24,7 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 
 | Component | Description | Key Files |
 |---|---|---|
-| CLI entry point | `localagent` command launches the shell | `localagentcli/__main__.py` |
+| CLI entry point | `localagentcli` command launches the shell | `localagentcli/__main__.py` |
 | Shell UI | Input loop, prompt, basic output rendering | `localagentcli/shell/ui.py`, `prompt.py` |
 | Command Router | Slash command parsing and dispatch | `localagentcli/commands/router.py` |
 | Core commands | `/help`, `/exit`, `/status`, `/config`, `/setup` | `localagentcli/commands/*.py` |
@@ -34,7 +34,7 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 | Basic logging | File-based logging with levels | `localagentcli/storage/logger.py` |
 
 ### Exit Criteria
-- `localagent` launches and displays the shell prompt
+- `localagentcli` launches and displays the shell prompt
 - `/help` lists all commands
 - `/config` reads and writes `config.toml`
 - `/session save` and `/session load` work correctly

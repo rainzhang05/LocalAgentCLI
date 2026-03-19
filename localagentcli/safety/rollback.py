@@ -113,7 +113,7 @@ class RollbackManager:
                 raise ValueError("Rollback entry is missing a backup path.")
             backup = Path(entry.backup_path)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(backup, target)
+            shutil.copyfile(backup, target)
         else:
             raise ValueError(f"Unsupported rollback action '{entry.action}'")
 

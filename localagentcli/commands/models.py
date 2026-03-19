@@ -9,7 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.hf_catalog import (
     HubModelChoice,
@@ -73,12 +73,14 @@ class ModelsParentHandler(CommandHandler):
             )
         if not supports_interactive_prompt():
             return CommandResult.ok(
-                "Interactive model picker requires a terminal TTY.\n\n" + self.help_text()
+                "Interactive model picker requires a terminal TTY.",
+                presentation="status",
+                body=self.help_text(),
             )
 
         selection = self._pick_featured_model()
         if selection is None:
-            return CommandResult.ok("Model selection cancelled.")
+            return CommandResult.ok("Model selection cancelled.", presentation="warning")
 
         install_result = self._installer.install_from_hf(
             selection.repo,
@@ -100,21 +102,20 @@ class ModelsParentHandler(CommandHandler):
             )
 
         return CommandResult.ok(
-            f"Installed '{selection.label}' from {selection.repo}.\n{activation.message}"
+            f"Installed '{selection.label}' from {selection.repo}.",
+            presentation="success",
+            body=activation.message,
         )
 
-    def help_text(self) -> str:
-        return (
-            "Manage local models.\n"
-            "/models opens an interactive Hugging Face picker with live Hub-backed families.\n"
-            "Subcommands:\n"
-            "  /models list                    List installed models\n"
-            "  /models search <query>          Search installed models\n"
-            "  /models install hf <repo>       Install from HuggingFace\n"
-            "  /models install url <url>       Install from URL\n"
-            "  /models remove <name[@version]> Remove a model\n"
-            "  /models inspect <name[@version]> Show model details\n"
-            "Use /set to switch the active local or remote model."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="Open the interactive Hugging Face model picker.",
+            usage="/models",
+            details=(
+                "Choose a runtime, then a model family, then an exact Hugging Face repo "
+                "to install and activate."
+            ),
         )
 
     def _pick_featured_model(self) -> HubModelChoice | None:
@@ -208,7 +209,10 @@ class ModelsListHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         entries = self._registry.list_models()
         if not entries:
-            return CommandResult.ok("No models installed. Use /models install to add one.")
+            return CommandResult.ok(
+                "No models installed. Use /models install to add one.",
+                presentation="status",
+            )
 
         lines = ["Installed models:", ""]
         lines.append(f"  {'Name':<25s} {'Version':<10s} {'Format':<12s} {'Size':<12s} {'Backend'}")
@@ -221,8 +225,12 @@ class ModelsListHandler(CommandHandler):
             )
         return CommandResult.ok("\n".join(lines))
 
-    def help_text(self) -> str:
-        return "List all installed local models.\nUsage: /models list"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="List installed local models.",
+            usage="/models list",
+        )
 
 
 class ModelsSearchHandler(CommandHandler):
@@ -237,7 +245,10 @@ class ModelsSearchHandler(CommandHandler):
         query = " ".join(args)
         results = self._registry.search(query)
         if not results:
-            return CommandResult.ok(f"No models matching '{query}'.")
+            return CommandResult.ok(
+                f"No models matching '{query}'.",
+                presentation="status",
+            )
 
         lines = [f"Search results for '{query}':", ""]
         for entry in results:
@@ -246,8 +257,13 @@ class ModelsSearchHandler(CommandHandler):
             )
         return CommandResult.ok("\n".join(lines))
 
-    def help_text(self) -> str:
-        return "Search installed models.\nUsage: /models search <query>"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="Search installed models by name or metadata.",
+            usage="/models search <query>",
+            argument_hint="<query>",
+        )
 
 
 class ModelsInstallHandler(CommandHandler):
@@ -276,15 +292,15 @@ class ModelsInstallHandler(CommandHandler):
             return CommandResult.error(f"Unknown source type '{source_type}'. Use 'hf' or 'url'.")
 
         if result.success:
-            return CommandResult.ok(result.message)
+            return CommandResult.ok(result.message, presentation="success")
         return CommandResult.error(result.message)
 
-    def help_text(self) -> str:
-        return (
-            "Install a model.\n"
-            "Usage: /models install hf <repo>        Install from HuggingFace Hub\n"
-            "       /models install url <url>        Install from direct URL\n"
-            "       /models install hf <repo> <name> Install with custom name"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="Install a model from Hugging Face or a direct URL.",
+            usage="/models install <hf|url> <location> [name]",
+            argument_hint="<hf|url> <location> [name]",
         )
 
 
@@ -302,13 +318,16 @@ class ModelsRemoveHandler(CommandHandler):
                     "Model name required.\nUsage: /models remove <name[@version]>"
                 )
             if not self._registry.list_models():
-                return CommandResult.ok("No models installed. Use /models install to add one.")
+                return CommandResult.ok(
+                    "No models installed. Use /models install to add one.",
+                    presentation="status",
+                )
             selection = _select_installed_model_option(
                 self._registry,
                 "Choose a model to remove",
             )
             if selection is None:
-                return CommandResult.ok("Model removal cancelled.")
+                return CommandResult.ok("Model removal cancelled.", presentation="warning")
             args = [selection.value]
 
         name, version = _parse_name_version(args[0])
@@ -343,13 +362,14 @@ class ModelsRemoveHandler(CommandHandler):
             shutil.rmtree(model_dir)
 
         label = f"{name}@{version}" if version else name
-        return CommandResult.ok(f"Model '{label}' removed.")
+        return CommandResult.ok(f"Model '{label}' removed.", presentation="success")
 
-    def help_text(self) -> str:
-        return (
-            "Remove an installed model.\n"
-            "Usage: /models remove <name>        Remove all versions\n"
-            "       /models remove <name@v1>     Remove specific version"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="Remove an installed model.",
+            usage="/models remove <name[@version]>",
+            argument_hint="[name[@version]]",
         )
 
 
@@ -375,14 +395,17 @@ class ModelsUseHandler(CommandHandler):
                     "Model name required.\nUsage: /models use <name[@version]>"
                 )
             if not self._registry.list_models():
-                return CommandResult.ok("No models installed. Use /models install to add one.")
+                return CommandResult.ok(
+                    "No models installed. Use /models install to add one.",
+                    presentation="status",
+                )
             selection = _select_installed_model_option(
                 self._registry,
                 "Choose a local model",
                 default=self._session_manager.current.model,
             )
             if selection is None:
-                return CommandResult.ok("Model selection cancelled.")
+                return CommandResult.ok("Model selection cancelled.", presentation="warning")
             args = [selection.value]
 
         name, version = _parse_name_version(args[0])
@@ -400,12 +423,13 @@ class ModelsUseHandler(CommandHandler):
             self._console,
         )
 
-    def help_text(self) -> str:
-        return (
-            "Set the active local model for this session.\n"
-            "Usage: /models use <name>        Use latest version\n"
-            "       /models use <name@v1>     Use specific version\n"
-            "Prefer /set for interactive target selection."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="Set the active local model for this session.",
+            usage="/models use <name[@version]>",
+            argument_hint="[name[@version]]",
+            details="Prefer /set for interactive target selection.",
         )
 
 
@@ -422,14 +446,17 @@ class ModelsInspectHandler(CommandHandler):
                     "Model name required.\nUsage: /models inspect <name[@version]>"
                 )
             if not self._registry.list_models():
-                return CommandResult.ok("No models installed. Use /models install to add one.")
+                return CommandResult.ok(
+                    "No models installed. Use /models install to add one.",
+                    presentation="status",
+                )
             selection = _select_installed_model_option(
                 self._registry,
                 "Choose a model to inspect",
                 default="",
             )
             if selection is None:
-                return CommandResult.ok("Model inspection cancelled.")
+                return CommandResult.ok("Model inspection cancelled.", presentation="warning")
             args = [selection.value]
 
         name, version = _parse_name_version(args[0])
@@ -457,8 +484,13 @@ class ModelsInspectHandler(CommandHandler):
 
         return CommandResult.ok("\n".join(lines))
 
-    def help_text(self) -> str:
-        return "Show detailed model information.\nUsage: /models inspect <name[@version]>"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Model",
+            summary="Show detailed information about an installed model.",
+            usage="/models inspect <name[@version]>",
+            argument_hint="[name[@version]]",
+        )
 
 
 def register(
@@ -514,7 +546,8 @@ def _activate_model_entry(
     session.touch()
 
     return CommandResult.ok(
-        f"Active model set to '{entry.name}' ({entry.version}, {entry.format})."
+        f"Active model set to '{entry.name}' ({entry.version}, {entry.format}).",
+        presentation="success",
     )
 
 

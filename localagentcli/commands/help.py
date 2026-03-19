@@ -6,8 +6,8 @@ from localagentcli.commands.router import CommandHandler, CommandResult, Command
 
 # Command groupings for organized help display
 COMMAND_GROUPS = [
-    ("System", ["help", "setup", "status", "config", "exit"]),
-    ("Target", ["set"]),
+    ("System", ["help", "setup", "status", "config", "hf-token", "exit"]),
+    ("Target", ["set", "set default"]),
     ("Mode", ["mode chat", "mode agent"]),
     ("Agent", ["agent approve", "agent deny"]),
     ("Session", ["session new", "session save", "session load", "session list", "session clear"]),
@@ -51,7 +51,7 @@ class HelpHandler(CommandHandler):
         for group_name, command_names in COMMAND_GROUPS:
             group_lines: list[str] = []
             for name in command_names:
-                if name in commands:
+                if name in commands and self._router.is_visible(name):
                     handler = commands[name]
                     # Get first line of help text as summary
                     summary = handler.help_text().split("\n")[0]

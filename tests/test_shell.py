@@ -9,6 +9,7 @@ from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.models.registry import ModelEntry
 from localagentcli.shell.prompt import (
+    COMMAND_MENU_HEIGHT,
     CommandCompleter,
     create_prompt_session,
     get_prompt_history_strings,
@@ -54,6 +55,19 @@ class TestCommandCompleter:
         completions = list(completer.get_completions(doc, None))
         assert len(completions) == 2
 
+    def test_includes_command_help_as_completion_metadata(self):
+        router = CommandRouter()
+        from tests.test_command_router import StubHandler
+
+        router.register("help", StubHandler())
+
+        completer = CommandCompleter(router)
+        doc = MagicMock()
+        doc.text_before_cursor = "/h"
+        completion = next(iter(completer.get_completions(doc, None)))
+
+        assert completion.display_meta_text == "Stub: ok"
+
 
 class TestCreatePromptSession:
     """Tests for prompt session creation."""
@@ -74,6 +88,18 @@ class TestCreatePromptSession:
         router = CommandRouter()
         session = create_prompt_session(router, ["/status", "hello"])
         assert get_prompt_history_strings(session) == ["/status", "hello"]
+
+    @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_enables_live_command_menu(self, mock_prompt_session, _mock_supports):
+        router = CommandRouter()
+
+        create_prompt_session(router, ["/help"])
+
+        kwargs = mock_prompt_session.call_args.kwargs
+        assert kwargs["complete_while_typing"] is True
+        assert kwargs["reserve_space_for_menu"] == COMMAND_MENU_HEIGHT
+        assert kwargs["key_bindings"] is not None
 
     @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=False)
     @patch("localagentcli.shell.prompt.sys.stdin.readline", return_value="/status\n")

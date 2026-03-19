@@ -235,6 +235,7 @@ class TestShellUIInit:
         assert "status" in commands
         assert "config" in commands
         assert "setup" in commands
+        assert "hf-token" in commands
         assert "session save" in commands
         assert "session load" in commands
         assert "providers list" in commands
@@ -243,6 +244,7 @@ class TestShellUIInit:
         assert "providers use" in commands
         assert "providers test" in commands
         assert "set" in commands
+        assert "set default" in commands
         assert "mode chat" in commands
         assert "mode agent" in commands
 
@@ -500,6 +502,7 @@ class TestShellUIModelResolution:
     def test_resolve_active_model_uses_provider_backend(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._session_manager.current.provider = "openai"
+        ui._session_manager.current.model = "gpt-4o"
         backend = MagicMock()
 
         with patch.object(ui, "_get_active_provider", return_value=backend):

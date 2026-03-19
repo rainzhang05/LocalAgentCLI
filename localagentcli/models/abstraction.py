@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Iterator
 
 from localagentcli.models.backends.base import (
+    EmbeddedStreamNormalizer,
     GenerationResult,
     ModelBackend,
     ModelMessage,
@@ -32,7 +34,20 @@ class ModelAbstractionLayer:
         self, messages: list[ModelMessage], **kwargs: object
     ) -> Iterator[StreamChunk]:
         """Generate a streaming response."""
-        yield from self._backend.stream_generate(messages, **kwargs)
+        capture = _CapturedOutput()
+        normalizer = EmbeddedStreamNormalizer()
+
+        with redirect_stdout(capture), redirect_stderr(capture):
+            for raw_chunk in self._backend.stream_generate(messages, **kwargs):
+                yield from self._drain_captured_output(capture)
+                if raw_chunk.is_done:
+                    yield from normalizer.flush()
+                    yield raw_chunk
+                    continue
+                yield from normalizer.feed(raw_chunk)
+
+        yield from self._drain_captured_output(capture, final=True)
+        yield from normalizer.flush()
 
     def supports_tools(self) -> bool:
         """Whether the backend supports tool/function calling."""
@@ -49,3 +64,47 @@ class ModelAbstractionLayer:
     def cancel(self) -> None:
         """Cancel the active generation, if supported by the backend."""
         self._backend.cancel()
+
+    def _drain_captured_output(
+        self,
+        capture: "_CapturedOutput",
+        *,
+        final: bool = False,
+    ) -> Iterator[StreamChunk]:
+        """Convert captured backend stdout/stderr lines into notification chunks."""
+        for line in capture.drain(final=final):
+            yield StreamChunk(text=line, kind="notification", importance="primary")
+
+
+class _CapturedOutput:
+    """Capture backend stdout/stderr so it can be rendered separately."""
+
+    def __init__(self) -> None:
+        self._partial = ""
+        self._lines: list[str] = []
+
+    def write(self, text: str) -> int:
+        self._partial += text
+        while "\n" in self._partial:
+            line, self._partial = self._partial.split("\n", 1)
+            cleaned = line.strip()
+            if cleaned:
+                self._lines.append(cleaned)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+    def drain(self, *, final: bool = False) -> list[str]:
+        """Drain any captured complete lines."""
+        if final:
+            cleaned = self._partial.strip()
+            if cleaned:
+                self._lines.append(cleaned)
+            self._partial = ""
+        lines = list(self._lines)
+        self._lines.clear()
+        return lines

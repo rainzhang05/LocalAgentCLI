@@ -31,7 +31,7 @@ The system must distinguish between MLX-format safetensors and standard PyTorch 
 - Downloads from the Hugging Face Hub using the `huggingface_hub` library
 - Uses a live per-file progress display when the installed Hub client supports dry-run planning, so large model downloads keep updating continuously instead of waiting for coarse repo-level refreshes
 - Supports private repos (with token authentication)
-- `/hf-token` stores the Hugging Face token used for private Hub discovery and downloads, then hides itself from menus/help once configured
+- `/hf-token` stores or replaces the Hugging Face token used for private Hub discovery and downloads
 - Respects `.gitignore`-style patterns in repo to skip unnecessary files
 
 ### Direct URL

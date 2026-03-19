@@ -11,7 +11,7 @@ from localagentcli.commands.providers import (
     build_provider_selection_options,
     build_remote_model_selection_options,
 )
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.config.manager import ConfigManager
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.registry import ModelRegistry
@@ -53,30 +53,39 @@ class SetHandler(CommandHandler):
             )
         if not supports_interactive_prompt():
             return CommandResult.ok(
-                "Interactive target picker requires a terminal TTY.\n\n" + self.help_text()
+                "Interactive target picker requires a terminal TTY.",
+                presentation="status",
+                body=self.help_text(),
             )
 
         target_type = self._choose_target_type()
         if target_type is None:
-            return CommandResult.ok("Target selection cancelled.")
+            return CommandResult.ok("Target selection cancelled.", presentation="warning")
         if target_type == "local":
             return self._choose_local_model()
         if target_type == "provider":
             return self._choose_provider_model()
         return CommandResult.error(f"Unknown target type '{target_type}'.")
 
-    def help_text(self) -> str:
-        action = "Choose the active local model or remote provider model."
+    def describe(self) -> CommandSpec:
         if self._persist_default:
-            action = "Choose the default CLI target for new sessions."
-        return (
-            f"{action}\n"
-            f"Usage: {self._usage()}\n"
-            "Flow:\n"
-            "  1. Choose Local models or Providers\n"
-            "  2. For providers, choose the provider then the remote model\n"
-            "  3. For local models, choose one installed model\n"
-            "See also: /set default"
+            return CommandSpec(
+                group="Target",
+                summary="Choose the default CLI target for new sessions.",
+                usage="/set default",
+                details=(
+                    "Pick Local models or Providers, then complete the layered selection flow "
+                    "to persist the startup target."
+                ),
+            )
+        return CommandSpec(
+            group="Target",
+            summary="Choose the active local model or remote provider model.",
+            usage="/set",
+            details=(
+                "Pick Local models or Providers, then complete the layered selection flow "
+                "for the current session."
+            ),
         )
 
     def _choose_target_type(self) -> str | None:
@@ -103,11 +112,14 @@ class SetHandler(CommandHandler):
     def _choose_local_model(self) -> CommandResult:
         options = build_model_selection_options(self._model_registry)
         if not options:
-            return CommandResult.ok("No models installed. Use /models install to add one.")
+            return CommandResult.ok(
+                "No models installed. Use /models install to add one.",
+                presentation="status",
+            )
 
         selection = self._selector("Choose a local model", options, None)
         if selection is None:
-            return CommandResult.ok("Target selection cancelled.")
+            return CommandResult.ok("Target selection cancelled.", presentation="warning")
 
         name, version = _parse_name_version(selection.value)
         entry = self._model_registry.get_model(name, version)
@@ -120,13 +132,19 @@ class SetHandler(CommandHandler):
         )
         if self._persist_default:
             self._persist_target("", selection.value)
-            return CommandResult.ok(f"Default model set to '{selection.value}'.")
+            return CommandResult.ok(
+                f"Default model set to '{selection.value}'.",
+                presentation="success",
+            )
         return result
 
     def _choose_provider_model(self) -> CommandResult:
         provider_options = build_provider_selection_options(self._provider_registry)
         if not provider_options:
-            return CommandResult.ok("No providers configured. Use /providers add to set one up.")
+            return CommandResult.ok(
+                "No providers configured. Use /providers add to set one up.",
+                presentation="status",
+            )
 
         selection = self._selector(
             "Choose a provider",
@@ -134,7 +152,7 @@ class SetHandler(CommandHandler):
             self._session_manager.current.provider or None,
         )
         if selection is None:
-            return CommandResult.ok("Target selection cancelled.")
+            return CommandResult.ok("Target selection cancelled.", presentation="warning")
 
         entry = self._provider_registry.get(selection.value)
         if entry is None:
@@ -168,7 +186,7 @@ class SetHandler(CommandHandler):
             None,
         )
         if model_selection is None:
-            return CommandResult.ok("Target selection cancelled.")
+            return CommandResult.ok("Target selection cancelled.", presentation="warning")
 
         session = self._session_manager.current
         session.provider = entry.name
@@ -180,7 +198,7 @@ class SetHandler(CommandHandler):
             f"{self._target_label()} provider set to '{entry.name}' "
             f"(model: {model_selection.value})."
         )
-        return CommandResult.ok(message)
+        return CommandResult.ok(message, presentation="success")
 
     def _persist_target(self, provider_name: str, model_name: str) -> None:
         """Persist the selected target as the CLI default."""

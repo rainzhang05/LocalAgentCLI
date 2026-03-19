@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo, plus Phase 1 output-contract polish for the shell — the renderer now owns shared status/success/warning/error formatting, chat and planned-agent reasoning both flow through the dimmed `Details` lane, late secondary detail is flushed once at safe boundaries instead of being lost after the first primary text, approval prompts flush pending detail before asking for input, and planned-task completion now uses a quiet success line plus summary body. The status header still prints in scrollback before each prompt; true persistent-header behavior remains future work.)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo, plus Phase 1 output-contract polish and Phase 2 UX unification for the shell — the renderer owns shared status/success/warning/error formatting, chat and planned-agent reasoning both flow through the dimmed `Details` lane, prompt-time status now lives in a persistent prompt-toolkit toolbar instead of repeated scrollback headers, slash commands expose shared `CommandSpec` metadata for help/completion, interactive flows reuse one prompt contract, and command results can opt into renderer-backed presentation without a full-screen TUI rewrite.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -26,13 +26,13 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, and exits on consecutive idle `Ctrl+C` presses without a save prompt |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and now exposes a persistent prompt-time status toolbar plus shared action/confirm prompts |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
-| `[x]` | `/help` command | 2026-03-17 |
+| `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations |
 | `[x]` | `/exit` command | 2026-03-17 |
-| `[x]` | `/status` command | 2026-03-17 |
-| `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use |
-| `[x]` | `/setup` wizard | 2026-03-18 — simplified for Phase 1 (workspace, mode, logging level) and now falls back to persisted defaults in non-interactive launches |
+| `[x]` | `/status` command | 2026-03-19 — `/status` now renders the expanded form of the same shared status snapshot used by the prompt toolbar |
+| `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
+| `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-17 |
 | `[x]` | Session state dataclass | 2026-03-17 |
@@ -52,7 +52,7 @@ After implementing a component:
 | `[x]` | Anthropic provider | 2026-03-19 — model list and connection test now use the live `GET /v1/models` API with default-model fallback, and mixed text/thinking/tool blocks are preserved in order for non-streaming and streaming paths |
 | `[x]` | Generic REST provider | 2026-03-19 — configurable model discovery endpoint/fields now back provider model selection, with default-model fallback plus optional mapped reasoning/tool-call fields |
 | `[x]` | API key manager (keychain + encrypted) | 2026-03-18 |
-| `[x]` | `/providers add` command | 2026-03-18 |
+| `[x]` | `/providers add` command | 2026-03-19 — provider type/name/base URL/API key/test-now prompts now share the same picker/text/secret/confirm contract as the rest of the shell |
 | `[x]` | `/providers list` command | 2026-03-18 |
 | `[x]` | `/providers remove` command | 2026-03-18 |
 | `[x]` | `/providers use` command | 2026-03-18 — retained as a hidden compatibility alias behind `/set` |
@@ -95,9 +95,9 @@ After implementing a component:
 | `[x]` | Reasoning panel display | 2026-03-19 — chat, direct-answer, and planned-agent reasoning now all use the same dimmed `Details` lane rather than mixing separate reasoning presentations |
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
-| `[x]` | `/mode chat` command | 2026-03-18 |
-| `[x]` | `/mode agent` command | 2026-03-18 — mode switching implemented in Phase 4 and now activates the Phase 5 agent workflow |
-| `[x]` | Status header display | 2026-03-19 — header shows mode, active model/provider target, and workspace, and still renders as repeated scrollback before each prompt; pinned-header behavior is deferred |
+| `[x]` | `/mode chat` command | 2026-03-19 — mode changes now use shared success/warning presentation for normal switches and cancelled stop-confirmation paths |
+| `[x]` | `/mode agent` command | 2026-03-19 — mode switching implemented in Phase 4, now activates the Phase 5 agent workflow, and uses shared success/status presentation for readiness guidance |
+| `[x]` | Status header display | 2026-03-19 — replaced by a persistent prompt-time status toolbar showing mode, active target, workspace, and a short hint; `/status` uses the same snapshot data in expanded form |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
 | `[x]` | Tab completion for commands | 2026-03-18 — live slash-command menu, typed filtering, arrow-key navigation, and Tab acceptance via prompt-toolkit |
 
@@ -136,7 +136,7 @@ After implementing a component:
 | `[x]` | Safety layer (central gate) | 2026-03-18 — `localagentcli/safety/layer.py` now validates boundaries, classifies risk, applies approval policy, and records rollback history around tool execution |
 | `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
 | `[x]` | Approval manager (autonomous mode) | 2026-03-18 — autonomous mode auto-approves standard actions but still pauses high-risk operations for explicit approval |
-| `[x]` | Approval UX (inline prompts) | 2026-03-19 — inline prompts now flush pending renderer detail before blocking for input, keep the existing Enter/deny/preview semantics, and render previews through the same shell output grammar |
+| `[x]` | Approval UX (inline prompts) | 2026-03-19 — inline prompts now flush pending renderer detail before blocking for input, use the shared action-prompt surface for approve/deny/details/approve-all, and render previews through the same shell output grammar |
 | `[x]` | Workspace boundary enforcement | 2026-03-18 — dedicated `WorkspaceBoundary` enforces root confinement for tool paths and shell working directories |
 | `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
 | `[x]` | High-risk action detection | 2026-03-18 — shell commands and sensitive file paths are classified centrally so high-risk actions always require approval |
@@ -179,14 +179,14 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | `docs/architecture.md` | Complete |
-| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, and always-available `/hf-token` documented |
+| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, always-available `/hf-token`, shared command metadata, and renderer-backed command presentation documented |
 | `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, backend cancellation behavior, and editable Hugging Face token flow documented |
 | `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, and the CLI-wide default-target model selection flow documented |
 | `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, and updated safeguard behavior documented |
 | `[x]` | `docs/tool-system.md` | Complete |
 | `[x]` | `docs/safety-and-permissions.md` | Complete |
 | `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage and interactive `/config` editing documented |
-| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, command visibility rules, and normalized streaming UX documented |
+| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, shared prompt helpers, and renderer-backed command-result presentation documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |

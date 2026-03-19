@@ -181,7 +181,8 @@ class ModelDetector:
 - Multiple versions of the same model are allowed (e.g., different quantizations)
 - Each version gets a unique identifier (`v1`, `v2`, ...)
 - The registry tracks all versions per model name
-- `/models use <name>` loads the latest version by default
+- `/set` is the primary interactive way to switch to an installed local model
+- `/models use <name>` remains available as a direct alias and loads the latest version by default
 - `/models use <name>@v1` loads a specific version
 - `/models remove <name>` removes all versions; `/models remove <name>@v1` removes a specific version
 

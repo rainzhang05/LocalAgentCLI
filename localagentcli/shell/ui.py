@@ -92,6 +92,7 @@ class ShellUI:
         self._active_backend: ModelBackend | None = None
         self._active_backend_model = ""
         self._agent_controller: AgentController | None = None
+        self._agent_controller_key: tuple[object, ...] | None = None
         self._awaiting_idle_exit_confirmation = False
 
         self._router = CommandRouter()
@@ -176,6 +177,7 @@ class ShellUI:
                     action = result.data.get("action") if result.data else None
                     if action == "session_changed":
                         self._agent_controller = None
+                        self._agent_controller_key = None
                         self._rebuild_prompt_session()
                         self._sync_workspace_instruction()
                     if action == "agent_resume":
@@ -209,25 +211,27 @@ class ShellUI:
 
         session = self._session_manager.current
         if session.mode == "agent":
-            agent_controller = self._create_agent_controller(model)
-            if agent_controller.has_active_task:
+            if self._agent_controller is not None and self._agent_controller.has_active_task:
                 self._stream_renderer.render_error(
                     "An agent task is already running. Press Ctrl+C to stop it before "
                     "starting a new one."
                 )
                 return
+            agent_controller = self._get_or_create_agent_controller(model)
 
             try:
-                events = agent_controller.handle_task(
-                    text,
-                )
+                dispatch = agent_controller.dispatch_input(text)
                 if agent_controller.last_compaction_count:
                     self._stream_renderer.render_activity(
                         "Context compacted: summarized "
                         f"{agent_controller.last_compaction_count} messages"
                     )
-                self._drain_agent_events(events)
+                if dispatch.stream is not None:
+                    self._stream_renderer.render_stream(dispatch.stream)
+                elif dispatch.events is not None:
+                    self._drain_agent_events(dispatch.events)
             except KeyboardInterrupt:
+                model.cancel()
                 agent_controller.stop()
                 self._stream_renderer.render_activity("Agent task interrupted.")
             except Exception as exc:
@@ -252,6 +256,7 @@ class ShellUI:
         try:
             self._stream_renderer.render_stream(chunks)
         except KeyboardInterrupt:
+            model.cancel()
             self._stream_renderer.render_activity("Generation interrupted.")
         except Exception as exc:
             self._stream_renderer.render_error(str(exc))
@@ -285,12 +290,18 @@ class ShellUI:
     def _get_active_provider(self, provider_name: str) -> RemoteProvider | None:
         """Get the active provider, caching the instance."""
         if self._active_provider and self._active_provider_name == provider_name:
+            self._active_provider.set_active_model(self._session_manager.current.model or None)
             return self._active_provider
         try:
+            if self._active_provider is not None:
+                self._active_provider.close()
             self._active_provider = self._provider_registry.create_provider(provider_name)
             self._active_provider_name = provider_name
+            self._active_provider.set_active_model(self._session_manager.current.model or None)
             return self._active_provider
         except Exception:
+            if self._active_provider is not None:
+                self._active_provider.close()
             self._active_provider = None
             self._active_provider_name = ""
             return None
@@ -444,6 +455,9 @@ class ShellUI:
             except Exception:
                 pass
 
+        if self._active_provider is not None:
+            self._active_provider.close()
+
         if self._agent_controller is not None:
             self._agent_controller.stop()
 
@@ -477,6 +491,21 @@ class ShellUI:
                         return value
         return 8192
 
+    def _get_or_create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
+        """Reuse the current agent controller when the target/session is unchanged."""
+        key = (
+            self._session_manager.current.id,
+            self._session_manager.current.workspace,
+            self._session_manager.current.provider,
+            self._session_manager.current.model,
+            id(model.backend),
+        )
+        if self._agent_controller is not None and self._agent_controller_key == key:
+            return self._agent_controller
+        self._agent_controller = self._create_agent_controller(model)
+        self._agent_controller_key = key
+        return self._agent_controller
+
     def _create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Build or replace the active agent controller for the current session."""
         workspace_root = self._workspace_root()
@@ -496,6 +525,8 @@ class ShellUI:
             rollback_storage=self._storage.cache_dir,
             context_limit=self._context_limit(),
             generation_config=self._generation_options(),
+            inactivity_timeout=self._session_manager.get_effective_config("timeouts.inactivity")
+            or 600,
         )
         return self._agent_controller
 

@@ -157,3 +157,34 @@ class TestPackagingCLI:
         assert stdout.count("LocalAgent | mode: agent") >= 2
         assert "Goodbye." in stdout
         assert "Traceback" not in stderr
+
+    def test_double_keyboard_interrupt_exits_from_homepage(self, tmp_path: Path):
+        home = tmp_path / "home"
+        _write_config(home)
+
+        process = subprocess.Popen(
+            [sys.executable, "-m", "localagentcli"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=REPO_ROOT,
+            env=_cli_env(home),
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+
+        try:
+            time.sleep(1)
+            _interrupt_process(process)
+            time.sleep(0.3)
+            _interrupt_process(process)
+            stdout, stderr = process.communicate(timeout=20)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
+        assert process.returncode == 0
+        assert "Press Ctrl+C again within 2 seconds to exit." in stdout
+        assert "Goodbye." in stdout
+        assert "Traceback" not in stderr

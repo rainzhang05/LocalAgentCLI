@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Iterator
 
 import httpx
@@ -21,6 +22,50 @@ from localagentcli.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _OpenAIToolCallAccumulator:
+    """Accumulate streamed OpenAI tool-call deltas into complete tool calls."""
+
+    calls: dict[int, dict] = field(default_factory=dict)
+    announced: set[int] = field(default_factory=set)
+
+    def ingest(self, raw_tool_calls: list[dict]) -> list[StreamChunk]:
+        notifications: list[StreamChunk] = []
+        for raw_call in raw_tool_calls:
+            index = int(raw_call.get("index", len(self.calls)))
+            call = self.calls.setdefault(
+                index,
+                {
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                },
+            )
+            if raw_call.get("id"):
+                call["id"] = raw_call["id"]
+            function = raw_call.get("function", {})
+            if function.get("name"):
+                call["function"]["name"] = function["name"]
+            if function.get("arguments"):
+                call["function"]["arguments"] += function["arguments"]
+
+            if call["function"]["name"] and index not in self.announced:
+                self.announced.add(index)
+                notifications.append(
+                    StreamChunk(
+                        text=f"Model prepared tool call: {call['function']['name']}",
+                        kind="notification",
+                        importance="secondary",
+                        transient=True,
+                        payload={"tool_name": call["function"]["name"]},
+                    )
+                )
+        return notifications
+
+    def finalized(self) -> list[dict]:
+        return [self.calls[index] for index in sorted(self.calls)]
 
 
 class OpenAIProvider(RemoteProvider):
@@ -53,7 +98,9 @@ class OpenAIProvider(RemoteProvider):
         """POST /chat/completions without streaming."""
         body = self._build_request_body(messages, stream=False, **kwargs)
         try:
-            response = self._client.post("/chat/completions", json=body)
+            response = self._request_with_retries(
+                lambda: self._client.post("/chat/completions", json=body)
+            )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
@@ -66,7 +113,8 @@ class OpenAIProvider(RemoteProvider):
         usage = data.get("usage", {})
 
         return GenerationResult(
-            text=message.get("content", ""),
+            text=self._extract_message_text(message),
+            reasoning=self._extract_message_reasoning(message),
             tool_calls=message.get("tool_calls", []),
             usage=usage,
             finish_reason=choice.get("finish_reason", ""),
@@ -77,25 +125,41 @@ class OpenAIProvider(RemoteProvider):
     ) -> Iterator[StreamChunk]:
         """POST /chat/completions with stream=True. Parse SSE."""
         body = self._build_request_body(messages, stream=True, **kwargs)
+        accumulator = _OpenAIToolCallAccumulator()
+        context = None
         try:
-            with self._client.stream("POST", "/chat/completions", json=body) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    chunk = self._parse_sse_line(line)
-                    if chunk is not None:
-                        yield chunk
-                        if chunk.is_done:
-                            return
+            context, resp = self._open_stream_with_retries(
+                lambda: self._client.stream("POST", "/chat/completions", json=body)
+            )
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                for chunk in self._parse_sse_line(line, accumulator):
+                    yield chunk
+                    if chunk.is_done:
+                        return
         except httpx.HTTPStatusError as e:
-            yield StreamChunk(text=f"API error: {e.response.status_code}", is_done=True)
+            yield StreamChunk(
+                text=f"API error: {e.response.status_code}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
         except (httpx.TimeoutException, httpx.ConnectError) as e:
-            yield StreamChunk(text=f"Connection error: {e}", is_done=True)
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        finally:
+            if context is not None:
+                context.__exit__(None, None, None)
 
     def test_connection(self) -> ConnectionTestResult:
         """GET /models to verify API key and connectivity."""
         start = time.monotonic()
         try:
-            response = self._client.get("/models")
+            response = self._request_with_retries(lambda: self._client.get("/models"))
             response.raise_for_status()
             latency = max((time.monotonic() - start) * 1000, 0.001)
             data = response.json()
@@ -123,7 +187,7 @@ class OpenAIProvider(RemoteProvider):
     def list_models(self) -> list[RemoteModelInfo]:
         """GET /models and parse the response."""
         try:
-            response = self._client.get("/models")
+            response = self._request_with_retries(lambda: self._client.get("/models"))
             response.raise_for_status()
             data = response.json()
             models: list[RemoteModelInfo] = []
@@ -151,16 +215,16 @@ class OpenAIProvider(RemoteProvider):
         ]
 
     def supports_tools(self) -> bool:
-        return True
+        return bool(self._capabilities_for_model(self.active_model).get("tool_use", False))
 
     def supports_reasoning(self) -> bool:
-        return False
+        return bool(self._capabilities_for_model(self.active_model).get("reasoning", False))
 
     def supports_streaming(self) -> bool:
         return True
 
     def capabilities(self) -> dict:
-        return {"tool_use": True, "reasoning": False, "streaming": True}
+        return self._capabilities_for_model(self.active_model)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -173,8 +237,10 @@ class OpenAIProvider(RemoteProvider):
         **kwargs: object,
     ) -> dict:
         """Build the request body for /chat/completions."""
+        model_name = str(kwargs.get("model", self.active_model) or self.active_model)
+        self.set_active_model(model_name)
         body: dict = {
-            "model": kwargs.get("model", self._default_model),
+            "model": model_name,
             "messages": self._format_messages(messages),
             "stream": stream,
         }
@@ -223,35 +289,153 @@ class OpenAIProvider(RemoteProvider):
         return formatted
 
     @staticmethod
-    def _parse_sse_line(line: str) -> StreamChunk | None:
-        """Parse a single SSE line into a StreamChunk, or None to skip."""
+    def _parse_sse_line(
+        line: str,
+        accumulator: _OpenAIToolCallAccumulator,
+    ) -> list[StreamChunk]:
+        """Parse a single SSE line into normalized stream chunks."""
         if not line or not line.startswith("data: "):
-            return None
+            return []
         data_str = line[6:]
         if data_str.strip() == "[DONE]":
-            return StreamChunk(is_done=True)
+            final_chunks = [
+                StreamChunk(
+                    kind="tool_call",
+                    importance="secondary",
+                    payload=tool_call,
+                    tool_call_data=tool_call,
+                )
+                for tool_call in accumulator.finalized()
+            ]
+            final_chunks.append(StreamChunk(kind="done", is_done=True))
+            return final_chunks
         try:
             data = json.loads(data_str)
         except json.JSONDecodeError:
-            return None
+            return []
         choices = data.get("choices", [])
         if not choices:
-            return None
+            return []
         delta = choices[0].get("delta", {})
+        chunks: list[StreamChunk] = []
+
         content = delta.get("content", "")
-        if content:
-            return StreamChunk(text=content)
-        # Check for finish reason on the final chunk
-        if choices[0].get("finish_reason"):
+        if isinstance(content, str) and content:
+            chunks.append(StreamChunk(text=content, kind="final_text"))
+
+        for reasoning in OpenAIProvider._extract_delta_reasoning(delta):
+            chunks.append(
+                StreamChunk(
+                    text=reasoning,
+                    kind="reasoning",
+                    importance="secondary",
+                )
+            )
+
+        refusal = delta.get("refusal", "")
+        if isinstance(refusal, str) and refusal:
+            chunks.append(
+                StreamChunk(
+                    text=refusal,
+                    kind="notification",
+                    importance="secondary",
+                    payload={"source": "refusal"},
+                )
+            )
+
+        tool_calls = delta.get("tool_calls", [])
+        if isinstance(tool_calls, list) and tool_calls:
+            chunks.extend(accumulator.ingest(tool_calls))
+
+        finish_reason = choices[0].get("finish_reason", "")
+        if finish_reason:
+            chunks.extend(
+                StreamChunk(
+                    kind="tool_call",
+                    importance="secondary",
+                    payload=tool_call,
+                    tool_call_data=tool_call,
+                )
+                for tool_call in accumulator.finalized()
+            )
             usage = data.get("usage")
-            return StreamChunk(is_done=True, usage=usage)
-        return None
+            chunks.append(
+                StreamChunk(
+                    kind="done",
+                    is_done=True,
+                    usage=usage if isinstance(usage, dict) else None,
+                    payload={"finish_reason": finish_reason},
+                )
+            )
+        return chunks
+
+    @staticmethod
+    def _extract_delta_reasoning(delta: dict) -> list[str]:
+        values: list[str] = []
+        for key in ("reasoning", "reasoning_content", "thinking"):
+            raw = delta.get(key)
+            if isinstance(raw, str) and raw:
+                values.append(raw)
+            elif isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, str) and item:
+                        values.append(item)
+                    elif isinstance(item, dict):
+                        text = item.get("text") or item.get("content")
+                        if isinstance(text, str) and text:
+                            values.append(text)
+        return values
+
+    @staticmethod
+    def _extract_message_text(message: dict) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        return ""
+
+    @classmethod
+    def _extract_message_reasoning(cls, message: dict) -> str:
+        parts: list[str] = []
+        for key in ("reasoning", "reasoning_content", "thinking"):
+            raw = message.get(key)
+            if isinstance(raw, str) and raw:
+                parts.append(raw)
+            elif isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, str):
+                        parts.append(item)
+                    elif isinstance(item, dict):
+                        text = item.get("text") or item.get("content")
+                        if isinstance(text, str):
+                            parts.append(text)
+        return "".join(parts)
 
     @staticmethod
     def _capabilities_for_model(model_id: str) -> dict:
         lowered = model_id.lower()
         return {
-            "tool_use": True,
+            "tool_use": not any(
+                token in lowered
+                for token in (
+                    "embedding",
+                    "whisper",
+                    "tts",
+                    "transcribe",
+                    "moderation",
+                    "image",
+                    "rerank",
+                )
+            ),
             "reasoning": lowered.startswith(("o1", "o3", "o4")) or lowered.startswith("gpt-5"),
             "streaming": True,
         }

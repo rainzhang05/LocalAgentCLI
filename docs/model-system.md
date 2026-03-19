@@ -29,12 +29,14 @@ The system must distinguish between MLX-format safetensors and standard PyTorch 
 ### Hugging Face
 - Command: `/models install hf <repo>`
 - Downloads from the Hugging Face Hub using the `huggingface_hub` library
+- Uses a live per-file progress display when the installed Hub client supports dry-run planning, so large model downloads keep updating continuously instead of waiting for coarse repo-level refreshes
 - Supports private repos (with token authentication)
 - Respects `.gitignore`-style patterns in repo to skip unnecessary files
 
 ### Direct URL
 - Command: `/models install url <url>`
 - Downloads a single model file or archive from a URL
+- Download progress is rendered continuously with live bytes transferred, speed, and ETA updates
 - Supports HTTP/HTTPS with resume capability
 - Validates file integrity after download (checksum if available)
 

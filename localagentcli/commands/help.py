@@ -7,7 +7,19 @@ from localagentcli.commands.router import CommandHandler, CommandResult, Command
 # Command groupings for organized help display
 COMMAND_GROUPS = [
     ("System", ["help", "setup", "status", "config", "exit"]),
+    ("Mode", ["mode chat", "mode agent"]),
     ("Session", ["session new", "session save", "session load", "session list", "session clear"]),
+    (
+        "Model",
+        [
+            "models list",
+            "models search",
+            "models install",
+            "models remove",
+            "models use",
+            "models inspect",
+        ],
+    ),
     (
         "Provider",
         [

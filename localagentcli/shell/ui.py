@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -22,7 +23,12 @@ from localagentcli.commands import status as status_cmd
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
-from localagentcli.models.backends.base import ModelBackend
+from localagentcli.models.backends.base import (
+    ModelBackend,
+    backend_label,
+    check_backend_dependencies,
+    install_backend_dependencies,
+)
 from localagentcli.models.detector import HardwareDetector, ModelDetector
 from localagentcli.models.installer import ModelInstaller
 from localagentcli.models.registry import ModelRegistry
@@ -285,6 +291,8 @@ class ShellUI:
             return None
 
         try:
+            if not self._ensure_backend_dependencies(entry.format):
+                return None
             backend = self._create_backend(entry.format)
             backend.load(Path(entry.path))
             self._active_backend = backend
@@ -295,6 +303,44 @@ class ShellUI:
             self._active_backend = None
             self._active_backend_model = ""
             return None
+
+    def _ensure_backend_dependencies(self, backend_name: str) -> bool:
+        """Prompt to install missing optional backend dependencies when needed."""
+        if backend_name == "mlx" and sys.platform != "darwin":
+            return True
+
+        installed, missing = check_backend_dependencies(backend_name)
+        if installed:
+            return True
+
+        label = backend_label(backend_name)
+        dependency_list = ", ".join(missing)
+        try:
+            should_install = Confirm.ask(
+                f"The {label} backend requires {dependency_list}. Install it now?",
+                default=True,
+                console=self._console,
+            )
+        except (KeyboardInterrupt, EOFError):
+            self._console.print(f"[yellow]{label} backend loading cancelled.[/yellow]")
+            return False
+
+        if not should_install:
+            self._console.print(
+                f"[yellow]{label} backend dependencies were not installed.[/yellow]"
+            )
+            return False
+
+        self._console.print(f"[dim]Installing {label} backend dependencies...[/dim]")
+        success, message = install_backend_dependencies(backend_name)
+        if not success:
+            self._console.print(
+                f"[red]Failed to install {label} backend dependencies: {message}[/red]"
+            )
+            return False
+
+        self._console.print(f"[green]{label} backend dependencies installed.[/green]")
+        return True
 
     def _create_backend(self, fmt: str) -> ModelBackend:
         """Create the appropriate backend instance for a model format."""

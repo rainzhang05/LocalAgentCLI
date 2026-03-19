@@ -131,7 +131,7 @@ def create_prompt_session(
         return LinePromptSession(history)
 
     try:
-        return PromptSession(
+        session: PromptSession[str] = PromptSession(
             history=history,
             completer=CommandCompleter(router),
             complete_while_typing=True,
@@ -139,6 +139,8 @@ def create_prompt_session(
             reserve_space_for_menu=COMMAND_MENU_HEIGHT,
             key_bindings=_build_prompt_key_bindings(),
         )
+        _wire_live_command_menu(session, router)
+        return session
     except Exception:
         return LinePromptSession(history)
 
@@ -268,6 +270,30 @@ def _build_prompt_key_bindings(*, always_navigate_completion: bool = False) -> K
     return bindings
 
 
+def _wire_live_command_menu(session: PromptSession, router: CommandRouter) -> None:
+    """Keep the slash-command menu open while the user types or deletes characters."""
+
+    def _refresh(_event) -> None:
+        _refresh_command_completion(session.default_buffer, router)
+
+    session.default_buffer.on_text_changed += _refresh
+
+
+def _refresh_command_completion(buffer, router: CommandRouter) -> None:
+    """Refresh slash-command completion so the menu tracks edits and backspaces."""
+    text = buffer.document.text_before_cursor
+    if not text.startswith("/"):
+        buffer.cancel_completion()
+        return
+    if not _has_command_matches(router, text):
+        buffer.cancel_completion()
+        return
+    buffer.start_completion(
+        select_first=False,
+        complete_event=CompleteEvent(completion_requested=True),
+    )
+
+
 def _should_navigate_completions(
     text_before_cursor: str,
     *,
@@ -276,6 +302,14 @@ def _should_navigate_completions(
     if always_navigate_completion:
         return True
     return text_before_cursor.startswith("/")
+
+
+def _has_command_matches(router: CommandRouter, text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        f"/{command_name}".lower().startswith(lowered)
+        for command_name in router.get_visible_commands()
+    )
 
 
 def _supports_interactive_prompt() -> bool:

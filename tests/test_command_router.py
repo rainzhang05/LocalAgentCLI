@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 
 
 class StubHandler(CommandHandler):
@@ -14,8 +14,12 @@ class StubHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.ok(self._response, data={"args": args})
 
-    def help_text(self) -> str:
-        return f"Stub: {self._response}"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="System",
+            summary=f"Stub: {self._response}",
+            usage="/stub",
+        )
 
 
 class TestCommandResult:

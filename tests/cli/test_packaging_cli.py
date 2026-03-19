@@ -10,8 +10,6 @@ import textwrap
 import time
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _CONFIG_TEMPLATE = """
@@ -76,6 +74,14 @@ def _run_cli(home: Path, user_input: str, timeout: int = 20) -> subprocess.Compl
     )
 
 
+def _interrupt_process(process: subprocess.Popen[str]) -> None:
+    """Send the closest available Ctrl+C-style signal for the current platform."""
+    if os.name == "nt":
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+        return
+    process.send_signal(signal.SIGINT)
+
+
 class TestPackagingCLI:
     def test_first_run_setup_creates_config(self, tmp_path: Path):
         home = tmp_path / "home"
@@ -101,10 +107,6 @@ class TestPackagingCLI:
         assert "Mode:          chat" in second.stdout
         assert "Session:       smoke" in second.stdout
 
-    @pytest.mark.skipif(
-        os.name == "nt",
-        reason="SIGINT subprocess handling is unreliable on Windows",
-    )
     def test_keyboard_interrupt_returns_to_prompt(self, tmp_path: Path):
         home = tmp_path / "home"
         _write_config(home)
@@ -117,11 +119,12 @@ class TestPackagingCLI:
             text=True,
             cwd=REPO_ROOT,
             env=_cli_env(home),
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         )
 
         try:
             time.sleep(1)
-            process.send_signal(signal.SIGINT)
+            _interrupt_process(process)
             time.sleep(0.5)
             assert process.stdin is not None
             process.stdin.write("/exit\n")

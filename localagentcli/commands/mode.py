@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.manager import SessionManager
@@ -24,12 +24,13 @@ class ModeParentHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.error("/mode requires a subcommand: chat, agent")
 
-    def help_text(self) -> str:
-        return (
-            "Switch execution mode.\n"
-            "Subcommands:\n"
-            "  /mode chat               Switch to conversational chat mode\n"
-            "  /mode agent              Switch to agent mode (tool-capable model required)"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Mode",
+            summary="Switch between chat mode and agent mode.",
+            usage="/mode <chat|agent>",
+            argument_hint="<subcommand>",
+            details=("Use /mode chat for conversation or /mode agent for tool-capable task work."),
         )
 
 
@@ -46,14 +47,18 @@ class ModeChatHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if self._stop_agent_callback is not None and not self._stop_agent_callback():
-            return CommandResult.error("Mode change cancelled.")
+            return CommandResult.ok("Mode change cancelled.", presentation="warning")
         session = self._session_manager.current
         session.mode = "chat"
         session.touch()
-        return CommandResult.ok("Switched to chat mode.")
+        return CommandResult.ok("Switched to chat mode.", presentation="success")
 
-    def help_text(self) -> str:
-        return "Switch to chat mode.\nUsage: /mode chat"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Mode",
+            summary="Switch to conversational chat mode.",
+            usage="/mode chat",
+        )
 
 
 class ModeAgentHandler(CommandHandler):
@@ -76,7 +81,8 @@ class ModeAgentHandler(CommandHandler):
             session.touch()
             return CommandResult.ok(
                 "Switched to agent mode. Configure a tool-capable model or provider before "
-                "running tasks."
+                "running tasks.",
+                presentation="status",
             )
         if session.provider:
             provider = self._provider_registry.get(session.provider)
@@ -135,10 +141,14 @@ class ModeAgentHandler(CommandHandler):
 
         session.mode = "agent"
         session.touch()
-        return CommandResult.ok("Switched to agent mode.")
+        return CommandResult.ok("Switched to agent mode.", presentation="success")
 
-    def help_text(self) -> str:
-        return "Switch to agent mode.\nUsage: /mode agent"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Mode",
+            summary="Switch to agent mode when the active target supports tool use.",
+            usage="/mode agent",
+        )
 
 
 def register(

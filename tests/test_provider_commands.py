@@ -23,9 +23,12 @@ from localagentcli.providers.registry import (
     ProviderRegistry,
 )
 from localagentcli.session.manager import SessionManager
+from localagentcli.shell.prompt import SelectionOption
 
-_PROMPT_PATH = "localagentcli.commands.providers.Prompt.ask"
-_CONFIRM_PATH = "localagentcli.commands.providers.Confirm.ask"
+_SELECT_PATH = "localagentcli.commands.providers.select_option"
+_TEXT_PATH = "localagentcli.commands.providers.prompt_text"
+_SECRET_PATH = "localagentcli.commands.providers.prompt_secret"
+_CONFIRM_PATH = "localagentcli.commands.providers.confirm_choice"
 
 
 @pytest.fixture
@@ -121,10 +124,14 @@ _ADD_INPUTS = [
 
 class TestProvidersAdd:
     @patch(_CONFIRM_PATH, return_value=False)
-    @patch(_PROMPT_PATH, side_effect=_ADD_INPUTS)
+    @patch(_SECRET_PATH, return_value="sk-test-key")
+    @patch(_TEXT_PATH, side_effect=["my-openai", "https://api.openai.com/v1"])
+    @patch(_SELECT_PATH, return_value=SelectionOption(value="openai", label="openai"))
     def test_add_success(
         self,
-        _mock_prompt: MagicMock,
+        _mock_select: MagicMock,
+        _mock_text: MagicMock,
+        mock_secret: MagicMock,
         _mock_confirm: MagicMock,
         registry: ProviderRegistry,
         key_manager: KeyManager,
@@ -135,20 +142,17 @@ class TestProvidersAdd:
         assert result.success is True
         assert "my-openai" in result.message
         assert registry.get("my-openai") is not None
+        mock_secret.assert_called_once_with("API key")
 
     @patch(_CONFIRM_PATH, return_value=False)
-    @patch(
-        _PROMPT_PATH,
-        side_effect=[
-            "openai",
-            "openai",
-            "https://api.openai.com/v1",
-            "sk-key",
-        ],
-    )
+    @patch(_SECRET_PATH, return_value="sk-key")
+    @patch(_TEXT_PATH, side_effect=["openai", "https://api.openai.com/v1"])
+    @patch(_SELECT_PATH, return_value=SelectionOption(value="openai", label="openai"))
     def test_add_duplicate_name(
         self,
-        _mock_prompt: MagicMock,
+        _mock_select: MagicMock,
+        _mock_text: MagicMock,
+        _mock_secret: MagicMock,
         _mock_confirm: MagicMock,
         registry: ProviderRegistry,
         key_manager: KeyManager,
@@ -160,13 +164,14 @@ class TestProvidersAdd:
         assert result.success is False
         assert "already exists" in result.message
 
-    @patch(
-        _PROMPT_PATH,
-        side_effect=["openai", "test", "http://x", ""],
-    )
+    @patch(_SECRET_PATH, return_value="")
+    @patch(_TEXT_PATH, side_effect=["test", "http://x"])
+    @patch(_SELECT_PATH, return_value=SelectionOption(value="openai", label="openai"))
     def test_add_empty_api_key(
         self,
-        _mock_prompt: MagicMock,
+        _mock_select: MagicMock,
+        _mock_text: MagicMock,
+        _mock_secret: MagicMock,
         registry: ProviderRegistry,
         key_manager: KeyManager,
     ):
@@ -176,10 +181,10 @@ class TestProvidersAdd:
         assert result.success is False
         assert "required" in result.message
 
-    @patch(_PROMPT_PATH, side_effect=KeyboardInterrupt)
+    @patch(_SELECT_PATH, return_value=None)
     def test_add_cancelled(
         self,
-        _mock_prompt: MagicMock,
+        _mock_select: MagicMock,
         registry: ProviderRegistry,
         key_manager: KeyManager,
     ):
@@ -224,10 +229,12 @@ class TestProvidersRemove:
         assert handler.help_text() != ""
 
     @patch("localagentcli.commands.providers.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.providers.confirm_choice", return_value=True)
     @patch("localagentcli.commands.providers.select_option")
     def test_remove_uses_picker_when_name_missing(
         self,
         mock_select,
+        _mock_confirm,
         _mock_supports,
         registry: ProviderRegistry,
     ):

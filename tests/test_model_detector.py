@@ -114,6 +114,25 @@ class TestModelDetectorMLX:
         assert result.format == "mlx"
 
     @patch("localagentcli.models.detector.platform")
+    def test_detect_mlx_with_top_level_quantization(
+        self, mock_platform, detector: ModelDetector, tmp_path: Path
+    ):
+        mock_platform.system.return_value = "Darwin"
+        mock_platform.machine.return_value = "arm64"
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"\x00" * 100)
+        config = {
+            "model_type": "gemma3",
+            "quantization": {"group_size": 64, "bits": 4},
+        }
+        (model_dir / "config.json").write_text(json.dumps(config))
+
+        result = detector.detect(model_dir)
+
+        assert result.format == "mlx"
+
+    @patch("localagentcli.models.detector.platform")
     def test_mlx_on_non_macos_raises(self, mock_platform, tmp_path: Path):
         mock_platform.system.return_value = "Linux"
         mock_platform.machine.return_value = "x86_64"

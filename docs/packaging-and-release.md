@@ -22,7 +22,7 @@ pipx install localagentcli
 pip install localagentcli
 
 # Development install from source
-git clone <repo-url>
+git clone https://github.com/rainzhang05/LocalAgentCLI.git
 cd LocalAgentCLI
 pip install -e ".[dev]"
 ```
@@ -85,6 +85,25 @@ description = "A production-grade, local-first AI CLI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "rainzhang05"}]
+keywords = ["ai", "agent", "cli", "llm", "local models"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 
 dependencies = [
     "prompt-toolkit>=3.0",
@@ -125,7 +144,15 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.5",
+    "twine>=5.1",
+    "types-toml>=0.10",
 ]
+
+[project.urls]
+Homepage = "https://github.com/rainzhang05/LocalAgentCLI"
+Repository = "https://github.com/rainzhang05/LocalAgentCLI"
+Issues = "https://github.com/rainzhang05/LocalAgentCLI/issues"
+Changelog = "https://github.com/rainzhang05/LocalAgentCLI/blob/main/CHANGELOG.md"
 
 [project.scripts]
 localagent = "localagentcli.__main__:main"
@@ -162,30 +189,14 @@ When a user attempts to use a backend whose dependencies are not installed:
 
 1. Detect the missing dependency
 2. Display an inline confirmation prompt from the shell UI
-3. On confirmation, run `python -m pip install localagentcli[mlx]` (or equivalent)
+3. On confirmation, run `python -m pip install <backend requirements>` for the selected backend
 4. Verify the installation succeeded
 5. Proceed with model loading
 
-```python
-# localagentcli/models/backends/base.py
+The implementation keeps two maps:
 
-def check_backend_dependencies(backend: str) -> tuple[bool, list[str]]:
-    """Check if required packages for a backend are installed.
-    Returns (all_installed, missing_packages).
-    """
-    requirements = {
-        "mlx": ["mlx", "mlx_lm"],
-        "gguf": ["llama_cpp"],
-        "safetensors": ["torch", "transformers", "safetensors"],
-    }
-    missing = []
-    for pkg in requirements.get(backend, []):
-        try:
-            importlib.import_module(pkg)
-        except ImportError:
-            missing.append(pkg)
-    return len(missing) == 0, missing
-```
+- import names used to detect missing modules, such as `mlx_lm` or `llama_cpp`
+- pinned requirement specifiers used for installation, such as `mlx-lm>=0.5` or `llama-cpp-python>=0.2`
 
 The shell owns the confirmation and retry loop so backend modules remain focused on loading and generation.
 
@@ -277,14 +288,51 @@ All 9 criteria must be verified by automated tests and manual testing before a v
 
 ## Release Process
 
-1. All tests pass (`pytest --cov`)
-2. Type checking passes (`mypy localagentcli/`)
-3. Linting passes (`ruff check localagentcli/`)
-4. Version bumped in `pyproject.toml`
-5. Changelog updated
-6. Tagged in git (`git tag v0.1.0`)
-7. Built (`python -m build`)
-8. Published to PyPI (`twine upload dist/*`)
-9. Verified with `pipx install localagentcli` on a clean system
+### Local Release Checklist
 
-CI should run the full test matrix on macOS, Linux, and Windows, and it should build the package artifacts on every change.
+1. Install development dependencies: `pip install -e ".[dev]"`
+2. Run tests with coverage: `python -m pytest --cov=localagentcli --cov-fail-under=80`
+3. Run lint and formatting checks: `ruff check .` and `ruff format --check .`
+4. Run static typing: `mypy localagentcli/`
+5. Build artifacts: `python -m build`
+6. Validate metadata: `python -m twine check dist/*`
+7. Smoke test the built wheel locally:
+
+```bash
+pipx install --force dist/localagentcli-0.1.0-py3-none-any.whl
+localagent
+pipx uninstall localagentcli
+```
+
+### CI / Automation
+
+The repository uses:
+
+- `.github/workflows/test.yml` for the cross-platform test matrix on macOS, Linux, and Windows plus package build and `pipx` smoke validation
+- `.github/workflows/lint.yml` for Ruff validation
+- `.github/workflows/typecheck.yml` for mypy
+- `.github/workflows/publish.yml` for build, artifact validation, `pipx` smoke testing, and trusted publishing to TestPyPI or PyPI
+
+### PyPI Publishing Prerequisites
+
+Before the first real release, complete these repository-side setup steps:
+
+1. Create the `localagentcli` project on PyPI and optionally on TestPyPI
+2. Configure Trusted Publishing on PyPI/TestPyPI for `rainzhang05/LocalAgentCLI`
+3. Add matching GitHub environments named `testpypi` and `pypi`
+4. Restrict release permissions and reviewers as desired in those environments
+5. Confirm the package name, metadata, README rendering, and changelog content are correct
+
+Trusted publishing is preferred over long-lived API tokens because GitHub Actions can obtain short-lived publish credentials directly from PyPI.
+
+### Publish Flow
+
+1. Bump the version in `pyproject.toml`
+2. Update `CHANGELOG.md`
+3. Commit the release changes
+4. Tag the release: `git tag v0.1.0`
+5. Push the branch and tag
+6. Run the `Publish` workflow manually for TestPyPI, or let the tag trigger the PyPI publish path
+7. Verify installation from the target index with `pipx install localagentcli`
+
+If trusted publishing is not available yet, a maintainer can still perform a one-off manual upload with `twine upload dist/*`, but that path is a fallback rather than the preferred release mechanism.

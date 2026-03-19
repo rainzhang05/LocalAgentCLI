@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rich.console import Console
 from rich.prompt import Confirm
 
 from localagentcli.agents.chat import ChatController
+from localagentcli.agents.controller import AgentController
+from localagentcli.agents.events import ToolCallRequested
+from localagentcli.commands import agent as agent_cmd
 from localagentcli.commands import config_cmd, exit_cmd, setup_cmd
 from localagentcli.commands import help as help_cmd
 from localagentcli.commands import mode as mode_cmd
@@ -25,11 +29,13 @@ from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
+from localagentcli.safety.approval import ApprovalManager
 from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import create_prompt_session, get_prompt_history_strings
 from localagentcli.shell.streaming import StreamRenderer
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
+from localagentcli.tools import create_default_tool_registry
 
 
 class ShellUI:
@@ -72,6 +78,7 @@ class ShellUI:
         )
         self._active_backend: ModelBackend | None = None
         self._active_backend_model = ""
+        self._agent_controller: AgentController | None = None
 
         self._router = CommandRouter()
         self._register_commands()
@@ -88,6 +95,7 @@ class ShellUI:
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
+        agent_cmd.register(self._router, lambda: self._agent_controller)
         providers_cmd.register(
             self._router,
             self._provider_registry,
@@ -109,6 +117,7 @@ class ShellUI:
             self._session_manager,
             self._model_registry,
             self._provider_registry,
+            self._stop_agent_task_with_confirmation,
         )
 
     def run(self) -> None:
@@ -141,7 +150,10 @@ class ShellUI:
 
                     action = result.data.get("action") if result.data else None
                     if action == "session_changed":
+                        self._agent_controller = None
                         self._rebuild_prompt_session()
+                    if action == "agent_resume":
+                        self._handle_agent_resume(result)
                     if action == "exit":
                         self._handle_exit()
                         break
@@ -168,19 +180,43 @@ class ShellUI:
 
         session = self._session_manager.current
         if session.mode == "agent":
-            self._stream_renderer.render_activity(
-                "Agent mode orchestration arrives in Phase 5. Streaming this request directly."
-            )
+            agent_controller = self._create_agent_controller(model)
+            if agent_controller.has_active_task:
+                self._stream_renderer.render_error(
+                    "An agent task is already running. Use /agent stop before starting a new one."
+                )
+                return
 
-        controller = ChatController(
+            try:
+                events = agent_controller.handle_task(
+                    text,
+                )
+                if agent_controller.last_compaction_count:
+                    self._stream_renderer.render_activity(
+                        "Context compacted: summarized "
+                        f"{agent_controller.last_compaction_count} messages"
+                    )
+                self._drain_agent_events(events)
+            except KeyboardInterrupt:
+                agent_controller.stop()
+                self._stream_renderer.render_activity("Agent task interrupted.")
+            except Exception as exc:
+                agent_controller.stop()
+                self._stream_renderer.render_error(str(exc))
+            return
+
+        chat_controller = ChatController(
             model=model,
             session=session,
             context_limit=self._context_limit(),
         )
-        chunks = controller.handle_input(text, generation_options=self._generation_options())
-        if controller.last_compaction_count:
+        chunks = chat_controller.handle_input(
+            text,
+            generation_options=self._generation_options(),
+        )
+        if chat_controller.last_compaction_count:
             self._stream_renderer.render_activity(
-                f"Context compacted: summarized {controller.last_compaction_count} messages"
+                f"Context compacted: summarized {chat_controller.last_compaction_count} messages"
             )
 
         try:
@@ -336,6 +372,9 @@ class ShellUI:
             except Exception:
                 pass
 
+        if self._agent_controller is not None:
+            self._agent_controller.stop()
+
         self._logger.normal("Session ended")
         self._console.print("[dim]Goodbye.[/dim]")
 
@@ -361,6 +400,116 @@ class ShellUI:
                     if isinstance(value, int) and value > 0:
                         return value
         return 8192
+
+    def _create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
+        """Build or replace the active agent controller for the current session."""
+        workspace_root = self._workspace_root()
+        self._agent_controller = AgentController(
+            model=model,
+            session=self._session_manager.current,
+            tool_registry=create_default_tool_registry(workspace_root),
+            approval=ApprovalManager(),
+            context_limit=self._context_limit(),
+            generation_config=self._generation_options(),
+        )
+        return self._agent_controller
+
+    def _drain_agent_events(self, events) -> None:
+        """Render agent events and handle any inline approval prompts."""
+        for event in events:
+            self._stream_renderer.render_agent_event(event)
+            if isinstance(event, ToolCallRequested) and event.requires_approval:
+                decision = self._prompt_for_tool_approval(event)
+                if self._agent_controller is None:
+                    return
+                if decision == "approve":
+                    self._drain_agent_events(self._agent_controller.approve_action())
+                elif decision == "approve_all":
+                    self._drain_agent_events(self._agent_controller.approve_action(autonomous=True))
+                elif decision == "deny":
+                    self._drain_agent_events(self._agent_controller.deny_action())
+                else:
+                    self._agent_controller.stop()
+                    self._stream_renderer.render_activity("Agent task stopped.")
+                return
+
+    def _prompt_for_tool_approval(self, event: ToolCallRequested) -> str:
+        """Prompt inline for approval of a pending tool call."""
+        while True:
+            self._console.print(
+                "[yellow][Enter] Approve  |  [d] Deny  |  [v] View details  |  "
+                "/agent approve  |  /agent stop[/yellow]"
+            )
+            response = self._console.input("").strip()
+            if response == "":
+                return "approve"
+            if response in {"d", "/agent deny"}:
+                return "deny"
+            if response in {"/agent approve"}:
+                return "approve_all"
+            if response in {"/agent stop"}:
+                return "stop"
+            if response == "v":
+                self._console.print(self._format_tool_preview(event))
+                continue
+            self._console.print(
+                "[red]Invalid response. Use Enter, d, v, /agent approve, or /agent stop.[/red]"
+            )
+
+    def _format_tool_preview(self, event: ToolCallRequested) -> str:
+        """Render a detailed preview of a pending tool call."""
+        arguments = dict(event.arguments)
+        if event.tool_name == "patch_apply":
+            return (
+                f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n"
+                f"Replace:\n{arguments.get('old_text', '')}\n\n"
+                f"With:\n{arguments.get('new_text', '')}"
+            )
+        if event.tool_name == "file_write":
+            content = str(arguments.get("content", ""))
+            preview = content[:500] + ("..." if len(content) > 500 else "")
+            return f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n\n{preview}"
+        return json.dumps(
+            {"tool": event.tool_name, "arguments": arguments},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    def _handle_agent_resume(self, result: CommandResult) -> None:
+        """Resume a paused agent task after an /agent command."""
+        if self._agent_controller is None:
+            return
+        decision = result.data.get("decision") if result.data else None
+        autonomous = bool(result.data.get("autonomous")) if result.data else False
+        if decision == "approve":
+            events = self._agent_controller.approve_action(autonomous=autonomous)
+        elif decision == "deny":
+            events = self._agent_controller.deny_action()
+        else:
+            return
+        self._drain_agent_events(events)
+
+    def _stop_agent_task_with_confirmation(self) -> bool:
+        """Stop an active agent task before mode or session changes."""
+        if self._agent_controller is None or not self._agent_controller.has_active_task:
+            return True
+        try:
+            stop = Confirm.ask(
+                "An agent task is active. Stop it before switching modes?",
+                default=True,
+                console=self._console,
+            )
+        except (KeyboardInterrupt, EOFError):
+            return False
+        if not stop:
+            return False
+        self._agent_controller.stop()
+        self._stream_renderer.render_activity("Agent task stopped.")
+        return True
+
+    def _workspace_root(self) -> Path:
+        """Resolve the current session workspace to an absolute path."""
+        return Path(self._session_manager.current.workspace).expanduser().resolve()
 
     def _active_target_label(self) -> str:
         """Describe the active local model or remote provider for the status header."""

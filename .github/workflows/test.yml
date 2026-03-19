@@ -60,5 +60,5 @@ jobs:
       - name: Smoke test pipx install
         run: |
           python -m pipx install --force dist/*.whl
-          printf "/exit\n" | "$HOME/.local/bin/localagent"
+          printf "/exit\n" | "$HOME/.local/pipx/venvs/localagentcli/bin/localagentcli"
           python -m pipx uninstall localagentcli

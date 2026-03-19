@@ -44,11 +44,12 @@ The `/providers add` command launches an interactive wizard:
 3. **Enter base URL**: The API endpoint (defaults provided for known types)
 4. **Enter API key**: Stored securely (see Key Storage below)
 5. **Configure options** (optional):
-   - Default model name (e.g., "gpt-4o", "claude-sonnet-4-20250514")
    - Custom headers
    - Timeout settings
    - For Generic REST: request/response field mappings
 6. **Test connection**: Optional connectivity test
+
+Provider-level default models are no longer part of the interactive configuration flow. Users choose the actual remote target through `/set` for the current session or `/set default` for the CLI-wide startup default.
 
 ### Provider Registry Entry
 
@@ -57,7 +58,6 @@ The `/providers add` command launches an interactive wizard:
   "name": "openai",
   "type": "openai",
   "base_url": "https://api.openai.com/v1",
-  "default_model": "gpt-4o",
   "options": {
     "timeout": 30,
     "custom_headers": {}
@@ -114,7 +114,7 @@ Remote providers can advertise their available models:
 
 - **OpenAI-compatible**: `GET /v1/models` returns a list of available models
 - **Anthropic**: `GET /v1/models` returns the models accessible to the current API key
-- **Generic REST**: Attempts `GET /models` (or a configured models endpoint) and falls back to the configured default model if discovery is unavailable
+- **Generic REST**: Attempts `GET /models` (or a configured models endpoint); optional legacy fallback to an older stored `default_model` remains only for backwards compatibility with pre-existing provider configs
 - Provider instances are always bound to one active remote model id. Capability checks (`tool_use`, `reasoning`) are evaluated against that active model, not just the provider type.
 
 ```python
@@ -132,9 +132,9 @@ class RemoteProvider(ABC):
 
 ## Provider Scope
 
-- **Global config**: The default provider is set in `~/.localagent/config.toml`
+- **CLI-wide default target**: `provider.active_provider` + `model.active_model` in `~/.localagent/config.toml` store the startup target selected by `/set default`
 - **Session override**: `/set` overrides the provider and remote model for the current session only. This override is held in memory and not persisted.
-- **Precedence**: Session override > global config
+- **Precedence**: Session override > CLI-wide default target
 
 ---
 
@@ -171,6 +171,7 @@ Shared provider requirements:
 - Requests must go through a bounded retry wrapper for timeout, connection-reset, and retryable HTTP status handling.
 - Streaming requests must surface normalized `error` and `done` chunks instead of leaking raw transport exceptions into the shell.
 - Provider HTTP clients must be closed when the active provider changes or the shell exits.
+- New provider configs should not depend on provider-level `default_model` values; that field is legacy compatibility only.
 
 ---
 
@@ -182,7 +183,7 @@ Shared provider requirements:
 # localagentcli/providers/openai.py
 
 class OpenAIProvider(RemoteProvider):
-    def __init__(self, name: str, base_url: str, api_key: str, default_model: str):
+    def __init__(self, name: str, base_url: str, api_key: str, default_model: str = ""):
         ...
 
     def load(self, model_path: Path, **kwargs) -> None:
@@ -219,7 +220,7 @@ class OpenAIProvider(RemoteProvider):
 # localagentcli/providers/anthropic.py
 
 class AnthropicProvider(RemoteProvider):
-    def __init__(self, name: str, base_url: str, api_key: str, default_model: str):
+    def __init__(self, name: str, base_url: str, api_key: str, default_model: str = ""):
         ...
 
     def stream_generate(self, messages: list[Message], **kwargs) -> Iterator[StreamChunk]:
@@ -252,7 +253,7 @@ class GenericRESTProvider(RemoteProvider):
         """Send request using configured mapping. Parse primary and optional secondary fields."""
 
     def list_models(self) -> list[RemoteModelInfo]:
-        """Try a configured models endpoint, then fall back to the provider's default model."""
+        """Try a configured models endpoint, then use any legacy stored fallback only if present."""
 ```
 
 The `request_mapping` and `response_mapping` dicts define how to translate between the unified message format and the provider's expected format:
@@ -306,8 +307,8 @@ class StreamChunk:
     usage: dict | None = None  # Token counts, present on final chunk
 ```
 
-- `notification` is used for low-priority provider status, streamed tool preparation notices, and similar mid-process signals.
-- `error` is used for transport or provider failures and is followed by a `done` chunk with `finish_reason="error"`.
+- `notification` may be primary or secondary. Important mid-process notices can stay high-contrast, while low-priority provider status remains dimmed.
+- `error` may be primary or secondary depending on severity and is followed by a `done` chunk with `finish_reason="error"`.
 - Ordered chunks are preserved into `GenerationResult.chunks` so the shell and session history can render or inspect the full sequence.
 
 ---

@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 5 complete — tool system, agent loop, planner, approvals, and agent commands)
+> **Last updated**: 2026-03-18 (Phase 6 complete — central safety layer, workspace boundary enforcement, high-risk detection, rollback, undo, and safety tests)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -132,15 +132,15 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | Safety layer (central gate) | |
-| `[~]` | Approval manager (balanced mode) | 2026-03-18 — agent mode now pauses side-effecting tool calls for confirmation; central safety gate still pending |
-| `[~]` | Approval manager (autonomous mode) | 2026-03-18 — task-scoped autonomous approvals supported after explicit user approval; broader safety integration still pending |
-| `[~]` | Approval UX (inline prompts) | 2026-03-18 — inline approve/deny/view/stop prompts implemented for agent tool calls; not yet generalized beyond agent mode |
-| `[~]` | Workspace boundary enforcement | 2026-03-18 — tool path resolution rejects escapes outside the workspace root; central enforcement layer still pending |
-| `[ ]` | Symlink validation | |
-| `[ ]` | High-risk action detection | |
-| `[ ]` | Rollback manager (file backups) | |
-| `[ ]` | Undo capability | |
+| `[x]` | Safety layer (central gate) | 2026-03-18 — `localagentcli/safety/layer.py` now validates boundaries, classifies risk, applies approval policy, and records rollback history around tool execution |
+| `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
+| `[x]` | Approval manager (autonomous mode) | 2026-03-18 — autonomous mode auto-approves standard actions but still pauses high-risk operations for explicit approval |
+| `[x]` | Approval UX (inline prompts) | 2026-03-18 — inline prompts now surface high-risk labels and outside-workspace warnings from the safety layer |
+| `[x]` | Workspace boundary enforcement | 2026-03-18 — dedicated `WorkspaceBoundary` enforces root confinement for tool paths and shell working directories |
+| `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
+| `[x]` | High-risk action detection | 2026-03-18 — shell commands and sensitive file paths are classified centrally so high-risk actions always require approval |
+| `[x]` | Rollback manager (file backups) | 2026-03-18 — `RollbackManager` stores per-session backups and a JSON rollback log under `cache/rollback/` |
+| `[x]` | Undo capability | 2026-03-18 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files |
 
 ---
 
@@ -150,11 +150,11 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-17 |
 | `[ ]` | Backend auto-install on demand | |
-| `[x]` | Unit tests | 2026-03-18 — 605 tests |
+| `[x]` | Unit tests | 2026-03-18 — 619 tests |
 | `[ ]` | Integration tests | |
 | `[ ]` | CLI tests | |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
-| `[ ]` | Safety tests | |
+| `[x]` | Safety tests | 2026-03-18 — added boundary, rollback, safety-layer, and high-risk approval coverage |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Linux) | 2026-03-17 — via CI matrix |
 | `[ ]` | Cross-platform testing (Windows) | |

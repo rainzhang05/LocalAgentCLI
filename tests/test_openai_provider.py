@@ -243,6 +243,57 @@ class TestOpenAIFormatMessages:
             {"role": "user", "content": "Hi"},
         ]
 
+    def test_format_messages_with_tool_calls_and_tool_result(self):
+        msgs = [
+            ModelMessage(
+                role="assistant",
+                content="",
+                metadata={
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "file_read", "arguments": "{}"},
+                        }
+                    ]
+                },
+            ),
+            ModelMessage(
+                role="tool",
+                content='{"status":"success"}',
+                metadata={"tool_call_id": "call_1"},
+            ),
+        ]
+
+        result = OpenAIProvider._format_messages(msgs)
+
+        assert result[0]["tool_calls"][0]["function"]["name"] == "file_read"
+        assert result[1] == {
+            "role": "tool",
+            "content": '{"status":"success"}',
+            "tool_call_id": "call_1",
+        }
+
+
+class TestOpenAIBuildRequestBody:
+    def test_includes_tools(self):
+        provider = _make_provider()
+        body = provider._build_request_body(
+            [ModelMessage(role="user", content="Hi")],
+            tools=[
+                {
+                    "name": "file_read",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_choice="auto",
+        )
+
+        assert body["tools"][0]["type"] == "function"
+        assert body["tools"][0]["function"]["name"] == "file_read"
+        assert body["tool_choice"] == "auto"
+
 
 # ---------------------------------------------------------------------------
 # _parse_sse_line() tests

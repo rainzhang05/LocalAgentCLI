@@ -85,6 +85,24 @@ class AnthropicProvider(RemoteProvider):
                 text_parts.append(block.get("text", ""))
             elif block.get("type") == "thinking":
                 reasoning_parts.append(block.get("thinking", ""))
+            elif block.get("type") == "tool_use":
+                tool_calls = [
+                    {
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    }
+                ]
+                return GenerationResult(
+                    text="".join(text_parts),
+                    reasoning="".join(reasoning_parts),
+                    tool_calls=tool_calls,
+                    usage=data.get("usage", {}),
+                    finish_reason=data.get("stop_reason", ""),
+                )
 
         return GenerationResult(
             text="".join(text_parts),
@@ -188,6 +206,19 @@ class AnthropicProvider(RemoteProvider):
             body["system"] = system_text
         if "temperature" in kwargs:
             body["temperature"] = kwargs["temperature"]
+        tool_definitions = kwargs.get("tools")
+        if isinstance(tool_definitions, list) and tool_definitions:
+            body["tools"] = [
+                {
+                    "name": definition["name"],
+                    "description": definition["description"],
+                    "input_schema": definition["parameters"],
+                }
+                for definition in tool_definitions
+                if isinstance(definition, dict)
+            ]
+        if "tool_choice" in kwargs:
+            body["tool_choice"] = kwargs["tool_choice"]
         return body
 
     @staticmethod
@@ -199,14 +230,62 @@ class AnthropicProvider(RemoteProvider):
         Returns (system_text, api_messages).
         Anthropic requires alternating user/assistant roles.
         """
-        system_text = ""
+        system_parts: list[str] = []
         api_messages: list[dict] = []
-        for msg in messages:
+        index = 0
+        while index < len(messages):
+            msg = messages[index]
             if msg.role == "system":
-                system_text = msg.content
-            else:
-                api_messages.append({"role": msg.role, "content": msg.content})
-        return system_text, api_messages
+                system_parts.append(msg.content)
+                index += 1
+                continue
+
+            if msg.role == "tool":
+                blocks = []
+                while index < len(messages) and messages[index].role == "tool":
+                    tool_message = messages[index]
+                    blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_message.metadata.get("tool_call_id", ""),
+                            "content": tool_message.content,
+                        }
+                    )
+                    index += 1
+                api_messages.append({"role": "user", "content": blocks})
+                continue
+
+            if msg.role == "assistant" and msg.metadata.get("tool_calls"):
+                blocks = []
+                if msg.content:
+                    blocks.append({"type": "text", "text": msg.content})
+                for tool_call in msg.metadata["tool_calls"]:
+                    function = tool_call.get("function", {})
+                    raw_arguments = function.get("arguments", "{}")
+                    try:
+                        parsed_arguments = (
+                            raw_arguments
+                            if isinstance(raw_arguments, dict)
+                            else json.loads(raw_arguments)
+                        )
+                    except json.JSONDecodeError:
+                        parsed_arguments = {}
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tool_call.get("id", ""),
+                            "name": function.get("name", ""),
+                            "input": parsed_arguments,
+                        }
+                    )
+                api_messages.append({"role": "assistant", "content": blocks})
+                index += 1
+                continue
+
+            api_messages.append({"role": msg.role, "content": msg.content})
+            index += 1
+
+        return "\n\n".join(system_parts), api_messages
 
     @staticmethod
     def _parse_sse_event(event_type: str, data_str: str) -> StreamChunk | None:

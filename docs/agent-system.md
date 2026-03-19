@@ -85,7 +85,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 
 1. **Adaptive planning**: Trivial requests in agent mode do not incur planning overhead. Plans are shown only for `single_step_task` and `multi_step_task` paths.
 2. **Multi-step execution**: Tasks are broken into discrete steps. Each step may involve one or more tool calls.
-3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user.
+3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
 
@@ -131,6 +131,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 - Each step describes the action, the tool(s) to use, and the expected outcome
 - The plan is displayed before or as execution begins
 - There is no separate plan-review pause; only tool approvals can pause execution
+- Before an approval prompt is shown, the renderer flushes any pending secondary detail so reasoning and warnings do not appear mid-prompt
 
 #### 3. Execute Step
 - The agent selects the next step from the plan
@@ -305,6 +306,13 @@ class TaskFailed(AgentEvent):
     reason: str
     plan: TaskPlan
 ```
+
+Rendering rules:
+- `PlanGenerated`, `PlanUpdated`, `StepStarted`, and `ToolCallResult` use the shared status/activity grammar in the shell renderer
+- `ReasoningOutput` is treated as secondary detail and flows into the dimmed `Details` lane instead of a dedicated reasoning panel
+- `ToolCallRequested` renders a concise inline summary in the primary lane, while supporting warnings are shown through the quieter `Details` lane before approval is requested
+- `TaskComplete` renders a quiet success line followed by the final summary body
+- `TaskFailed` renders a failure line without changing the persisted task/session semantics
 
 Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They stream normalized `StreamChunk` events directly and are persisted in session history with metadata marking the response as `agent_task="direct_answer"` and `fast_path=True`.
 

@@ -657,7 +657,10 @@ class ShellUI:
             return entry
 
         try:
-            detection = self._model_detector.detect(model_path)
+            detection = self._model_detector.detect(
+                model_path,
+                allow_unsupported_backend=True,
+            )
         except Exception:
             return entry
 

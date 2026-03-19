@@ -6,25 +6,22 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
-from localagentcli.providers.base import RemoteModelInfo, RemoteProvider
+from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderEntry, ProviderRegistry
 from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
 
-# Default URLs and models per provider type
+# Default URLs per provider type
 _TYPE_DEFAULTS: dict[str, dict[str, str]] = {
     "openai": {
         "base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-4o",
     },
     "anthropic": {
         "base_url": "https://api.anthropic.com",
-        "default_model": "claude-sonnet-4-20250514",
     },
     "rest": {
         "base_url": "http://localhost:8000",
-        "default_model": "default",
     },
 }
 
@@ -60,14 +57,11 @@ class ProvidersListHandler(CommandHandler):
 
         active = self._registry.get_active_name()
         lines = ["Configured providers:", ""]
-        lines.append(f"  {'Name':<20s} {'Type':<12s} {'Default Model':<25s} {'Status'}")
-        lines.append(f"  {'─' * 20} {'─' * 12} {'─' * 25} {'─' * 12}")
+        lines.append(f"  {'Name':<20s} {'Type':<12s} {'Status'}")
+        lines.append(f"  {'─' * 20} {'─' * 12} {'─' * 12}")
         for entry in entries:
             marker = " *" if entry.name == active else ""
-            lines.append(
-                f"  {entry.name:<20s} {entry.type:<12s} "
-                f"{entry.default_model:<25s} {entry.status}{marker}"
-            )
+            lines.append(f"  {entry.name:<20s} {entry.type:<12s} {entry.status}{marker}")
         if active:
             lines.append(f"\n  * = active provider ({active})")
         return CommandResult.ok("\n".join(lines))
@@ -126,17 +120,10 @@ class ProvidersAddHandler(CommandHandler):
             if not api_key:
                 return CommandResult.error("API key is required.")
 
-            default_model = Prompt.ask(
-                "Default model",
-                default=defaults["default_model"],
-                console=self._console,
-            )
-
             entry = ProviderEntry(
                 name=name,
                 type=ptype,
                 base_url=base_url,
-                default_model=default_model,
             )
             self._registry.add(entry, api_key)
 
@@ -237,9 +224,25 @@ class ProvidersUseHandler(CommandHandler):
         # Session-only override (not persisted to config)
         session = self._session_manager.current
         session.provider = name
-        session.model = entry.default_model
+        session.model = ""
+        try:
+            provider = self._registry.create_provider(name)
+            models = provider.list_models()
+        except Exception:
+            models = []
+        else:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        if models:
+            session.model = models[0].id or models[0].name
         session.touch()
-        return CommandResult.ok(f"Active provider set to '{name}' (model: {entry.default_model}).")
+        if session.model:
+            return CommandResult.ok(f"Active provider set to '{name}' (model: {session.model}).")
+        return CommandResult.ok(
+            f"Active provider set to '{name}'. Use /set to choose a provider model."
+        )
 
     def help_text(self) -> str:
         return (
@@ -338,8 +341,8 @@ def build_provider_selection_options(registry: ProviderRegistry) -> list[Selecti
             SelectionOption(
                 value=entry.name,
                 label=entry.name,
-                description=f"{entry.type} • default {entry.default_model}",
-                aliases=(entry.type, entry.default_model, entry.base_url),
+                description=f"{entry.type} • {entry.base_url}",
+                aliases=(entry.type, entry.base_url),
             )
         )
     return options
@@ -347,12 +350,9 @@ def build_provider_selection_options(registry: ProviderRegistry) -> list[Selecti
 
 def build_remote_model_selection_options(
     provider: RemoteProvider,
-    fallback_model: str,
 ) -> list[SelectionOption]:
     """Build interactive selection options for models available from a provider."""
     discovered = provider.list_models()
-    if not discovered:
-        discovered = [RemoteModelInfo(id=fallback_model, name=fallback_model)]
 
     options: list[SelectionOption] = []
     seen: set[str] = set()

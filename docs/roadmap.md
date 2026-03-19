@@ -65,7 +65,7 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 | Anthropic provider | Anthropic Messages API integration | `localagentcli/providers/anthropic.py` |
 | Generic REST provider | Configurable REST endpoint | `localagentcli/providers/rest.py` |
 | Key management | OS keychain + encrypted fallback | `localagentcli/providers/keys.py` |
-| Provider commands | `/providers add`, `list`, `remove`, `use`, `test` | `localagentcli/commands/providers.py` |
+| Provider commands | `/providers add`, `list`, `remove`, `test`, and `/set` remote-target selection | `localagentcli/commands/providers.py`, `localagentcli/commands/set_cmd.py` |
 | Streaming | SSE-based streaming for all providers | `localagentcli/shell/streaming.py` |
 | Model abstraction | Unified interface for remote models | `localagentcli/models/abstraction.py` |
 
@@ -98,12 +98,12 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 | MLX backend | Apple Silicon inference | `localagentcli/models/backends/mlx.py` |
 | GGUF backend | llama.cpp inference | `localagentcli/models/backends/gguf.py` |
 | Safetensors backend | PyTorch inference | `localagentcli/models/backends/safetensors.py` |
-| Model commands | `/models install`, `list`, `use`, `remove`, `inspect`, `search` | `localagentcli/commands/models.py` |
+| Model commands | `/models install`, `list`, `remove`, `inspect`, `search`, and `/set` local-target selection | `localagentcli/commands/models.py`, `localagentcli/commands/set_cmd.py` |
 | Hardware detection | Detect capabilities, warn on limitations | `localagentcli/models/detector.py` |
 
 ### Exit Criteria
 - `/models install hf <repo>` downloads and registers a model
-- `/models use <name>` loads the model with the correct backend
+- `/set` can switch to an installed local model and load it with the correct backend
 - Local model produces streaming responses to plain text input
 - Hardware warnings display when model is too heavy
 
@@ -159,7 +159,7 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 | Agent controller | Agent mode orchestration | `localagentcli/agents/controller.py` |
 | Agent loop | Understand → plan → execute → observe → update | `localagentcli/agents/loop.py` |
 | Task planner | Plan generation and tracking | `localagentcli/agents/planner.py` |
-| Agent commands | `/agent approve`, `deny`, `stop` | `localagentcli/commands/agent.py` |
+| Agent commands | `/agent approve`, `deny`, and Ctrl+C interrupt handling | `localagentcli/commands/agent.py`, `localagentcli/shell/ui.py` |
 | Basic approval | Inline prompts for tool approval | `localagentcli/safety/approval.py` |
 
 ### Exit Criteria
@@ -167,7 +167,7 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 - Agent generates and displays a plan
 - Tools execute with approval prompts
 - Agent completes multi-step tasks (e.g., "create a Python script and test it")
-- `/agent stop` halts execution
+- Ctrl+C halts the current task and returns to the prompt
 
 ### Dependencies
 - Phase 4 (chat mode, mode switching, context management)
@@ -194,7 +194,7 @@ Phase 5: Agent System ──→ Phase 6: Safety ──→ Phase 7: Packaging
 
 ### Exit Criteria
 - Write operations require approval in balanced mode
-- `/agent approve` enables autonomy (except high-risk)
+- `/agent approve` enables persistent autonomy (except high-risk)
 - Paths outside workspace are rejected
 - File backups are created before modifications
 - Undo restores files to previous state

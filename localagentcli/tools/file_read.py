@@ -54,7 +54,7 @@ class FileReadTool(Tool):
                     duration=self.started_at() - started,
                 )
 
-            text = data.decode("utf-8")
+            text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
             lines = text.splitlines(keepends=True)
             start_line = max(offset, 0)
             end_line = len(lines) if limit is None else start_line + max(limit, 0)

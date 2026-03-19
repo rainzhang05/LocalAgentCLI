@@ -137,3 +137,46 @@ class TestAgentController:
         assert any(isinstance(event, PlanUpdated) for event in followup_events)
         assert isinstance(followup_events[-1], TaskComplete)
         assert not (tmp_path / "output.txt").exists()
+
+    def test_high_risk_read_still_prompts_in_autonomous_mode(self, tmp_path: Path):
+        (tmp_path / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
+        model = FakeAgentModel(
+            [
+                GenerationResult(text='{"steps":[{"description":"Inspect the env file"}]}'),
+                GenerationResult(
+                    text="",
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "file_read",
+                                "arguments": '{"path":".env"}',
+                            },
+                        }
+                    ],
+                ),
+                GenerationResult(text="Read the file after explicit approval."),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+        )
+        controller.set_autonomous()
+
+        events = list(controller.handle_task("Inspect the env file"))
+
+        request = events[-1]
+        assert isinstance(request, ToolCallRequested)
+        assert request.requires_approval is True
+        assert request.risk_level == "high"
+
+        followup_events = list(controller.approve_action())
+
+        assert any(
+            isinstance(event, ToolCallResult) and event.result.status == "success"
+            for event in followup_events
+        )
+        assert isinstance(followup_events[-1], TaskComplete)

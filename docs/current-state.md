@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, approval autonomy persists via config, double-`Ctrl+C` exits from the idle shell, stale local model registry formats are repaired on load, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, approval autonomy persists via config, double-`Ctrl+C` exits from the idle shell, stale local model registry formats are repaired on load even on non-macOS CI, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -70,9 +70,9 @@ After implementing a component:
 | `[x]` | Model registry (`registry.json`) | 2026-03-18 — ModelEntry dataclass, JSON persistence with filelock |
 | `[x]` | Model installer (HF download) | 2026-03-18 — huggingface_hub.snapshot_download |
 | `[x]` | Model installer (URL download) | 2026-03-18 — httpx streaming with resume support |
-| `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-18 — auto-detection pipeline |
+| `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-19 — auto-detection pipeline with unsupported-backend-aware repair for stale registry entries |
 | `[x]` | Backend base class (ABC) | 2026-03-17 — already existed from Phase 2 |
-| `[x]` | MLX backend | 2026-03-18 — macOS Apple Silicon, lazy mlx-lm import |
+| `[x]` | MLX backend | 2026-03-19 — macOS Apple Silicon, lazy mlx-lm import, sampler-based generation compatibility |
 | `[x]` | GGUF backend | 2026-03-18 — all platforms, lazy llama-cpp-python import |
 | `[x]` | Safetensors backend | 2026-03-18 — all platforms, lazy torch/transformers import |
 | `[x]` | Hardware detection and warnings | 2026-03-18 — CPU/RAM/GPU detection, >80% warning |
@@ -151,7 +151,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-18 — 665 tests total across unit, component, integration, and CLI coverage |
+| `[x]` | Unit tests | 2026-03-19 — 683 tests total across unit, component, integration, and CLI coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

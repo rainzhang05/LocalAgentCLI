@@ -76,7 +76,7 @@ Remote providers:
 Local models:
 
 - `/set` to choose the active local model or provider model interactively
-- `/models` for the interactive Hugging Face picker (backend → family → exact model)
+- `/models` for the interactive Hugging Face picker (backend → family → live Hub-discovered model)
 - `/models install hf <repo>`
 - `/models install url <url>`
 - `/models list`

@@ -409,6 +409,7 @@ def _make_fast_tqdm_class():
 
     class FastTQDM(tqdm_base):  # type: ignore[misc, valid-type]
         def __init__(self, *args, **kwargs):
+            _strip_hf_tqdm_kwargs(kwargs)
             kwargs.setdefault("mininterval", 0.0)
             kwargs.setdefault("miniters", 1)
             kwargs.setdefault("smoothing", 0.0)
@@ -423,6 +424,7 @@ def _make_rich_hf_tqdm_class(progress, task_id: int, filename: str):
 
     class RichHFTQDM(tqdm_base):  # type: ignore[misc, valid-type]
         def __init__(self, *args, **kwargs):
+            _strip_hf_tqdm_kwargs(kwargs)
             kwargs.setdefault("mininterval", 0.0)
             kwargs.setdefault("miniters", 1)
             kwargs.setdefault("leave", False)
@@ -513,3 +515,8 @@ def _load_tqdm_base():
                 return None
 
         return TQDMStub
+
+
+def _strip_hf_tqdm_kwargs(kwargs: dict[str, object]) -> None:
+    """Remove hub-specific kwargs unsupported by some tqdm backends."""
+    kwargs.pop("name", None)

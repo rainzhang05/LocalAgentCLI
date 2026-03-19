@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from rich.console import Console
-from rich.prompt import Confirm, Prompt
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderEntry, ProviderRegistry
 from localagentcli.session.manager import SessionManager
-from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
+from localagentcli.shell.prompt import (
+    SelectionOption,
+    confirm_choice,
+    prompt_secret,
+    prompt_text,
+    select_option,
+    supports_interactive_prompt,
+)
 
 # Default URLs per provider type
 _TYPE_DEFAULTS: dict[str, dict[str, str]] = {
@@ -32,15 +38,13 @@ class ProvidersParentHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.error("/providers requires a subcommand: list, add, remove, use, test")
 
-    def help_text(self) -> str:
-        return (
-            "Manage remote providers.\n"
-            "Subcommands:\n"
-            "  /providers list             List configured providers\n"
-            "  /providers add              Add a new provider (wizard)\n"
-            "  /providers remove <name>    Remove a provider\n"
-            "  /providers test [name]      Test provider connectivity\n"
-            "Use /set to choose the active provider model."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Provider",
+            summary="Manage remote providers.",
+            usage="/providers <list|add|remove|use|test>",
+            argument_hint="<subcommand>",
+            details="Use /set to choose the active provider model.",
         )
 
 
@@ -53,7 +57,10 @@ class ProvidersListHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         entries = self._registry.list_providers()
         if not entries:
-            return CommandResult.ok("No providers configured. Use /providers add to set one up.")
+            return CommandResult.ok(
+                "No providers configured. Use /providers add to set one up.",
+                presentation="status",
+            )
 
         active = self._registry.get_active_name()
         lines = ["Configured providers:", ""]
@@ -66,8 +73,12 @@ class ProvidersListHandler(CommandHandler):
             lines.append(f"\n  * = active provider ({active})")
         return CommandResult.ok("\n".join(lines))
 
-    def help_text(self) -> str:
-        return "List all configured remote providers.\nUsage: /providers list"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Provider",
+            summary="List configured remote providers.",
+            usage="/providers list",
+        )
 
 
 class ProvidersAddHandler(CommandHandler):
@@ -84,76 +95,90 @@ class ProvidersAddHandler(CommandHandler):
         self._console = console
 
     def execute(self, args: list[str]) -> CommandResult:
-        self._console.print()
-        self._console.print("[bold]Add Provider[/bold]")
-        self._console.print()
+        ptype_selection = select_option(
+            "Choose a provider type",
+            [
+                SelectionOption(value="openai", label="openai"),
+                SelectionOption(value="anthropic", label="anthropic"),
+                SelectionOption(value="rest", label="rest"),
+            ],
+            default="openai",
+        )
+        if ptype_selection is None:
+            return CommandResult.ok("Provider setup cancelled.", presentation="warning")
+        ptype = ptype_selection.value
+        defaults = _TYPE_DEFAULTS.get(ptype, _TYPE_DEFAULTS["rest"])
 
+        name = prompt_text("Provider name", default=ptype)
+        if name is None:
+            return CommandResult.ok("Provider setup cancelled.", presentation="warning")
+
+        if self._registry.get(name) is not None:
+            return CommandResult.error(
+                f"Provider '{name}' already exists. "
+                "Use /providers remove first, or choose a different name."
+            )
+
+        base_url = prompt_text("Base URL", default=defaults["base_url"])
+        if base_url is None:
+            return CommandResult.ok("Provider setup cancelled.", presentation="warning")
+
+        api_key = prompt_secret("API key")
+        if api_key is None:
+            return CommandResult.ok("Provider setup cancelled.", presentation="warning")
+        if not api_key:
+            return CommandResult.error("API key is required.")
+
+        entry = ProviderEntry(
+            name=name,
+            type=ptype,
+            base_url=base_url,
+        )
+        self._registry.add(entry, api_key)
+
+        body: str | None = None
+        test_now = confirm_choice("Test connection now?", default=True)
+        if test_now is None:
+            return CommandResult.ok(
+                f"Provider '{name}' added.",
+                presentation="success",
+                body="Connection test skipped.",
+            )
+        if test_now:
+            body = self._test_provider(name)
+
+        return CommandResult.ok(
+            f"Provider '{name}' added.",
+            presentation="success",
+            body=body,
+        )
+
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Provider",
+            summary="Add a new remote provider with an interactive wizard.",
+            usage="/providers add",
+        )
+
+    def _test_provider(self, name: str) -> str:
+        """Run the optional provider connectivity test and summarize the result."""
+        provider = None
         try:
-            ptype = Prompt.ask(
-                "Provider type",
-                choices=["openai", "anthropic", "rest"],
-                default="openai",
-                console=self._console,
-            )
-            defaults = _TYPE_DEFAULTS.get(ptype, _TYPE_DEFAULTS["rest"])
+            provider = self._registry.create_provider(name)
+            result = provider.test_connection()
+        except Exception as exc:
+            return f"Connection test failed: {exc}"
+        finally:
+            try:
+                if provider is not None:
+                    provider.close()
+            except Exception:
+                pass
 
-            name = Prompt.ask(
-                "Provider name",
-                default=ptype,
-                console=self._console,
-            )
-
-            # Check if name already exists
-            if self._registry.get(name) is not None:
-                return CommandResult.error(
-                    f"Provider '{name}' already exists. "
-                    "Use /providers remove first, or choose a different name."
-                )
-
-            base_url = Prompt.ask(
-                "Base URL",
-                default=defaults["base_url"],
-                console=self._console,
-            )
-
-            api_key = Prompt.ask("API key", console=self._console)
-            if not api_key:
-                return CommandResult.error("API key is required.")
-
-            entry = ProviderEntry(
-                name=name,
-                type=ptype,
-                base_url=base_url,
-            )
-            self._registry.add(entry, api_key)
-
-            # Optionally test connection
-            test_now = Confirm.ask(
-                "Test connection now?",
-                default=True,
-                console=self._console,
-            )
-            if test_now:
-                try:
-                    provider = self._registry.create_provider(name)
-                    result = provider.test_connection()
-                    if result.success:
-                        self._registry.update_status(name, "tested")
-                        self._console.print(
-                            f"[green]✓ {result.message} ({result.latency_ms:.0f}ms)[/green]"
-                        )
-                    else:
-                        self._console.print(f"[yellow]⚠ {result.message}[/yellow]")
-                except Exception as e:
-                    self._console.print(f"[yellow]⚠ Test failed: {e}[/yellow]")
-
-            self._console.print()
-            return CommandResult.ok(f"Provider '{name}' added successfully.")
-        except (KeyboardInterrupt, EOFError):
-            return CommandResult.ok("Provider setup cancelled.")
-
-    def help_text(self) -> str:
-        return "Add a new remote provider (interactive wizard).\nUsage: /providers add"
+        if result.success:
+            self._registry.update_status(name, "tested")
+            return f"Connection test passed: {result.message} ({result.latency_ms:.0f}ms)"
+        return f"Connection test failed: {result.message}"
 
 
 class ProvidersRemoveHandler(CommandHandler):
@@ -170,26 +195,36 @@ class ProvidersRemoveHandler(CommandHandler):
                 )
             if not self._registry.list_providers():
                 return CommandResult.ok(
-                    "No providers configured. Use /providers add to set one up."
+                    "No providers configured. Use /providers add to set one up.",
+                    presentation="status",
                 )
             selection = _select_provider_option(
                 self._registry,
                 "Choose a provider to remove",
             )
             if selection is None:
-                return CommandResult.ok("Provider removal cancelled.")
+                return CommandResult.ok("Provider removal cancelled.", presentation="warning")
             args = [selection.value]
         name = args[0]
+        if supports_interactive_prompt():
+            confirmed = confirm_choice(f"Remove provider '{name}'?", default=False)
+            if confirmed is None or not confirmed:
+                return CommandResult.ok("Provider removal cancelled.", presentation="warning")
         try:
             self._registry.remove(name)
-            return CommandResult.ok(f"Provider '{name}' removed.")
+            return CommandResult.ok(f"Provider '{name}' removed.", presentation="success")
         except KeyError:
             return CommandResult.error(
                 f"Provider '{name}' not found.\nUse /providers list to see configured providers."
             )
 
-    def help_text(self) -> str:
-        return "Remove a configured provider.\nUsage: /providers remove <name>"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Provider",
+            summary="Remove a configured provider.",
+            usage="/providers remove <name>",
+            argument_hint="[name]",
+        )
 
 
 class ProvidersUseHandler(CommandHandler):
@@ -205,7 +240,8 @@ class ProvidersUseHandler(CommandHandler):
                 return CommandResult.error("Provider name required.\nUsage: /providers use <name>")
             if not self._registry.list_providers():
                 return CommandResult.ok(
-                    "No providers configured. Use /providers add to set one up."
+                    "No providers configured. Use /providers add to set one up.",
+                    presentation="status",
                 )
             selection = _select_provider_option(
                 self._registry,
@@ -213,7 +249,7 @@ class ProvidersUseHandler(CommandHandler):
                 default=self._session_manager.current.provider,
             )
             if selection is None:
-                return CommandResult.ok("Provider selection cancelled.")
+                return CommandResult.ok("Provider selection cancelled.", presentation="warning")
             args = [selection.value]
         name = args[0]
         entry = self._registry.get(name)
@@ -239,16 +275,22 @@ class ProvidersUseHandler(CommandHandler):
             session.model = models[0].id or models[0].name
         session.touch()
         if session.model:
-            return CommandResult.ok(f"Active provider set to '{name}' (model: {session.model}).")
+            return CommandResult.ok(
+                f"Active provider set to '{name}' (model: {session.model}).",
+                presentation="success",
+            )
         return CommandResult.ok(
-            f"Active provider set to '{name}'. Use /set to choose a provider model."
+            f"Active provider set to '{name}'. Use /set to choose a provider model.",
+            presentation="success",
         )
 
-    def help_text(self) -> str:
-        return (
-            "Set the active provider for this session.\n"
-            "Usage: /providers use <name>\n"
-            "Prefer /set for interactive target selection."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Provider",
+            summary="Set the active provider for this session.",
+            usage="/providers use <name>",
+            argument_hint="[name]",
+            details="Prefer /set for interactive target selection.",
         )
 
 
@@ -274,7 +316,8 @@ class ProvidersTestHandler(CommandHandler):
             else:
                 if not self._registry.list_providers():
                     return CommandResult.ok(
-                        "No providers configured. Use /providers add to set one up."
+                        "No providers configured. Use /providers add to set one up.",
+                        presentation="status",
                     )
                 default_name = (
                     self._session_manager.current.provider or self._registry.get_active_name()
@@ -285,7 +328,7 @@ class ProvidersTestHandler(CommandHandler):
                     default=default_name,
                 )
                 if selection is None:
-                    return CommandResult.ok("Provider test cancelled.")
+                    return CommandResult.ok("Provider test cancelled.", presentation="warning")
                 name = selection.value
 
         entry = self._registry.get(name)
@@ -301,15 +344,18 @@ class ProvidersTestHandler(CommandHandler):
         if result.success:
             self._registry.update_status(name, "tested")
             return CommandResult.ok(
-                f"✓ Provider '{name}': {result.message} ({result.latency_ms:.0f}ms)"
+                f"Provider '{name}': {result.message} ({result.latency_ms:.0f}ms)",
+                presentation="success",
             )
         return CommandResult.error(f"Provider '{name}': {result.message}")
 
-    def help_text(self) -> str:
-        return (
-            "Test connectivity to a provider.\n"
-            "Usage: /providers test [name]\n"
-            "Without a name, tests the active provider."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Provider",
+            summary="Test connectivity to a provider.",
+            usage="/providers test [name]",
+            argument_hint="[name]",
+            details="Without a name, tests the active provider.",
         )
 
 

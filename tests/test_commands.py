@@ -90,8 +90,8 @@ class TestHelpCommand:
         router = _make_router(config, session_manager)
         result = router.dispatch("help session")
         assert result.success
-        assert "session save" in result.message
-        assert "session load" in result.message
+        assert "Manage saved sessions" in result.message
+        assert "Usage: /session <new|save|load|list|clear>" in result.message
 
     def test_help_shows_provider_group(self, config, session_manager, tmp_path):
         router = _make_router(config, session_manager, tmp_path)
@@ -184,15 +184,50 @@ class TestConfigCommand:
         result = router.dispatch("config general.default_mode invalid")
         assert not result.success
 
+    @patch("localagentcli.commands.config_cmd.prompt_text", return_value="/tmp/project")
+    @patch("localagentcli.commands.config_cmd.select_option")
+    @patch("localagentcli.commands.config_cmd.supports_interactive_prompt", return_value=True)
+    def test_interactive_editor_uses_prompt_text_for_free_form_values(
+        self,
+        _mock_interactive,
+        mock_select,
+        mock_prompt_text,
+        config,
+        session_manager,
+    ):
+        router = _make_router(config, session_manager)
+        mock_select.return_value = SelectionOption(
+            value="general.workspace",
+            label="general.workspace",
+            description='Current: "."',
+        )
+
+        result = router.dispatch("config")
+
+        assert result.success
+        assert config.get("general.workspace") == "/tmp/project"
+        mock_prompt_text.assert_called_once()
+
 
 class TestSetupCommand:
     """Tests for /setup."""
 
-    @patch("localagentcli.commands.setup_cmd.Prompt.ask")
+    @patch("localagentcli.commands.setup_cmd.select_option")
+    @patch("localagentcli.commands.setup_cmd.prompt_text")
     @patch("localagentcli.commands.setup_cmd.supports_interactive_prompt", return_value=True)
-    def test_setup_sets_config(self, _mock_interactive, mock_ask, config, session_manager):
-        # Return workspace, mode, logging level
-        mock_ask.side_effect = ["/tmp/workspace", "chat", "verbose"]
+    def test_setup_sets_config(
+        self,
+        _mock_interactive,
+        mock_prompt_text,
+        mock_select_option,
+        config,
+        session_manager,
+    ):
+        mock_prompt_text.return_value = "/tmp/workspace"
+        mock_select_option.side_effect = [
+            SelectionOption(value="chat", label="chat"),
+            SelectionOption(value="verbose", label="verbose"),
+        ]
 
         router = _make_router(config, session_manager)
         result = router.dispatch("setup")
@@ -202,22 +237,40 @@ class TestSetupCommand:
         assert config.get("general.workspace") == "/tmp/workspace"
         assert config.get("general.logging_level") == "verbose"
 
+    @patch("localagentcli.commands.setup_cmd.prompt_text")
     @patch("localagentcli.commands.setup_cmd.supports_interactive_prompt", return_value=False)
-    @patch("localagentcli.commands.setup_cmd.Prompt.ask")
     def test_setup_uses_defaults_without_tty(
-        self, mock_ask, _mock_interactive, config, session_manager
+        self, _mock_interactive, mock_prompt_text, config, session_manager
     ):
         router = _make_router(config, session_manager)
         result = router.dispatch("setup")
 
         assert result.success
-        mock_ask.assert_not_called()
+        mock_prompt_text.assert_not_called()
         assert config.get("general.workspace") == "."
         assert config.get("general.default_mode") == "agent"
         assert config.get("general.logging_level") == "normal"
 
 
 class TestHFTokenCommand:
+    @patch("localagentcli.commands.hf_token.prompt_secret", return_value="interactive-token")
+    @patch("localagentcli.commands.hf_token.supports_interactive_prompt", return_value=True)
+    def test_hf_token_command_uses_secret_prompt(
+        self,
+        _mock_interactive,
+        mock_prompt_secret,
+        config,
+        session_manager,
+        tmp_path,
+    ):
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("hf-token")
+
+        assert result.success
+        assert os.environ["HF_TOKEN"] == "interactive-token"
+        mock_prompt_secret.assert_called_once_with("Hugging Face token")
+
     def test_hf_token_command_remains_visible_after_set(self, config, session_manager, tmp_path):
         router = _make_router(config, session_manager, tmp_path)
 

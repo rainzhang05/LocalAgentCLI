@@ -43,7 +43,8 @@ The input prompt where the user types:
 - Single `>` character followed by a space
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
-- Tab completion for `/` commands (e.g., typing `/mo` + Tab → `/mode` or `/models`)
+- Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it.
+- Tab still triggers command completion for users who prefer the traditional terminal workflow.
 
 ### Streaming Output
 
@@ -123,13 +124,28 @@ Tool calls, approvals, and system events are displayed inline between user input
 | Ctrl+C | Interrupt current operation |
 | Ctrl+D | Exit (same as `/exit`) |
 
-### Command Tab Completion
+### Command Menu and Completion
 
-When the user types `/` and presses Tab:
-1. List all available top-level commands
-2. If a partial command is typed (e.g., `/mo`), filter to matching commands
-3. If a command is complete and has subcommands (e.g., `/models`), list subcommands
-4. If only one match, auto-complete it
+When the user types `/`:
+1. Show all available commands in a menu directly under the prompt
+2. Filter the list live as more characters are typed (e.g., `/mo` narrows to `/mode` and `/models`)
+3. If a command prefix includes subcommands (e.g., `/models `), show the matching subcommands
+4. Up/Down arrows move through the visible options without leaving the input line
+5. Enter accepts the highlighted command; Tab also works as an alternate completion key
+
+### Interactive Model Picker
+
+Typing `/models` with no subcommand opens a layered picker backed by the same prompt-toolkit menu system:
+1. Choose the local runtime family (`PyTorch / Safetensors`, `MLX` when supported, or `GGUF`)
+2. Choose a curated model family (for example `GPT-OSS`, `Qwen`, or `Gemma`)
+3. Choose the exact Hugging Face repo from the curated list
+4. Start the download immediately and set the installed model as the active local model for the current session
+
+The picker must be keyboard-first:
+- Up/Down arrows navigate options
+- Typing filters the current layer
+- Enter accepts the current choice
+- Back/Cancel options are always available inside the picker
 
 ### Input History
 

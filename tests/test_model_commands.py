@@ -19,6 +19,7 @@ from localagentcli.commands.models import (
     _parse_name_version,
 )
 from localagentcli.models.detector import HardwareDetector
+from localagentcli.models.hf_catalog import HubModelChoice
 from localagentcli.models.installer import InstallResult, ModelInstaller
 from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.session.manager import SessionManager
@@ -121,9 +122,24 @@ class TestModelsParent:
             side_effect=[
                 MagicMock(value="gguf"),
                 MagicMock(value="qwen"),
-                MagicMock(value="qwen3-8b-gguf"),
+                MagicMock(value="qwen-qwen3-8b-gguf"),
             ]
         )
+        catalog = MagicMock()
+        catalog.list_families.return_value = [
+            MagicMock(key="qwen", label="Qwen", description="Qwen family", aliases=("qwen",))
+        ]
+        catalog.list_models.return_value = [
+            HubModelChoice(
+                backend="gguf",
+                family="qwen",
+                repo="Qwen/Qwen3-8B-GGUF",
+                label="Qwen3 8B GGUF [Qwen]",
+                install_name="qwen-qwen3-8b-gguf",
+                summary="1,000 downloads • Qwen/Qwen3-8B-GGUF",
+                aliases=("Qwen/Qwen3-8B-GGUF", "qwen"),
+            )
+        ]
         with patch.object(hw_detector, "can_run_model", return_value=(True, [])):
             handler = ModelsParentHandler(
                 installer,
@@ -131,14 +147,15 @@ class TestModelsParent:
                 session_manager,
                 console,
                 selector=selector,
+                catalog=catalog,
             )
             result = handler.execute([])
 
         assert result.success is True
-        assert "Installed 'Qwen3 8B (GGUF)'" in result.message
+        assert "Installed 'Qwen3 8B GGUF [Qwen]'" in result.message
         installer.install_from_hf.assert_called_once_with(
             "Qwen/Qwen3-8B-GGUF",
-            name="qwen3-8b-gguf",
+            name="qwen-qwen3-8b-gguf",
         )
         assert session_manager.current.model == "qwen3-8b-gguf@v1"
         assert session_manager.current.provider == ""

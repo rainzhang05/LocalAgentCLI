@@ -12,6 +12,8 @@ from localagentcli.models.registry import ModelEntry
 from localagentcli.shell.prompt import (
     COMMAND_MENU_HEIGHT,
     CommandCompleter,
+    _has_command_matches,
+    _refresh_command_completion,
     create_prompt_session,
     get_prompt_history_strings,
 )
@@ -70,6 +72,35 @@ class TestCommandCompleter:
         completion = next(iter(completer.get_completions(doc, None)))
 
         assert completion.display_meta_text == "Stub: ok"
+
+    def test_command_match_helper_tracks_shorter_prefixes(self):
+        router = CommandRouter()
+        from tests.test_command_router import StubHandler
+
+        router.register("help", StubHandler())
+        router.register("exit", StubHandler())
+
+        assert _has_command_matches(router, "/he") is True
+        assert _has_command_matches(router, "/h") is True
+        assert _has_command_matches(router, "/hex") is False
+
+    def test_refresh_command_completion_cancels_only_without_matches(self):
+        router = CommandRouter()
+        from tests.test_command_router import StubHandler
+
+        router.register("help", StubHandler())
+        buffer = MagicMock()
+        buffer.document.text_before_cursor = "/he"
+
+        _refresh_command_completion(buffer, router)
+
+        buffer.start_completion.assert_called_once()
+        buffer.cancel_completion.assert_not_called()
+
+        buffer.start_completion.reset_mock()
+        buffer.document.text_before_cursor = "/hex"
+        _refresh_command_completion(buffer, router)
+        buffer.cancel_completion.assert_called_once()
 
 
 class TestCreatePromptSession:
@@ -318,14 +349,32 @@ class TestShellUIRun:
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
         ui._prompt_session.prompt.side_effect = [KeyboardInterrupt(), KeyboardInterrupt()]
-
-        with patch("localagentcli.shell.ui.time.monotonic", side_effect=[1.0, 2.0]):
-            ui.run()
+        ui.run()
 
         assert ui._prompt_session.prompt.call_count == 2
         calls = [call.args[0] for call in ui._console.print.call_args_list if call.args]
         assert any("Press Ctrl+C again" in str(call) for call in calls)
         assert any("Goodbye" in str(call) for call in calls)
+
+    @patch("localagentcli.shell.ui.Confirm.ask")
+    def test_double_keyboard_interrupt_exits_without_save_prompt(
+        self, mock_confirm, config, storage
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._prompt_session = MagicMock()
+        ui._prompt_session.prompt.side_effect = [KeyboardInterrupt(), KeyboardInterrupt()]
+        from datetime import datetime
+
+        from localagentcli.session.state import Message
+
+        ui._session_manager.current.history.append(
+            Message(role="user", content="changed", timestamp=datetime.now())
+        )
+
+        ui.run()
+
+        mock_confirm.assert_not_called()
 
     def test_eof_exits(self, config, storage):
         ui = ShellUI(config=config, storage=storage)

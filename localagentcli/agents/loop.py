@@ -19,7 +19,7 @@ from localagentcli.agents.events import (
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
-from localagentcli.safety.approval import ApprovalManager
+from localagentcli.safety.layer import SafetyLayer
 from localagentcli.tools.base import ToolResult
 from localagentcli.tools.registry import ToolRegistry
 
@@ -40,13 +40,13 @@ class AgentLoop:
         model: ModelAbstractionLayer,
         tools: ToolRegistry,
         planner: TaskPlanner,
-        approval: ApprovalManager,
+        safety: SafetyLayer,
         max_consecutive_errors: int = 5,
     ):
         self._model = model
         self._tools = tools
         self._planner = planner
-        self._approval = approval
+        self._safety = safety
         self._max_consecutive_errors = max_consecutive_errors
         self._stop_requested = False
 
@@ -210,11 +210,33 @@ class AgentLoop:
                 )
             else:
                 resolved_tool_name = tool.name
-                requires_approval = self._approval.needs_approval(tool)
+                decision = self._safety.check_and_approve(tool, arguments)
+                requires_approval = decision.requires_approval
+                if decision.blocked:
+                    tool_result = ToolResult.error_result(
+                        f"Blocked tool '{resolved_tool_name}'",
+                        decision.reason or "The requested action violated a safety rule.",
+                    )
+                    yield ToolCallResult(tool_name=resolved_tool_name, result=tool_result)
+                    messages.append(
+                        ModelMessage(
+                            role="tool",
+                            content=self._tool_payload(resolved_tool_name, tool_result),
+                            metadata={
+                                "tool_call_id": call_id,
+                                "tool_name": resolved_tool_name,
+                            },
+                        )
+                    )
+                    had_error = True
+                    continue
+
                 request = ToolCallRequested(
                     tool_name=resolved_tool_name,
                     arguments=arguments,
                     requires_approval=requires_approval,
+                    risk_level=decision.risk_level.value,
+                    warnings=decision.warnings,
                 )
                 if requires_approval:
                     approved = bool((yield request))
@@ -222,7 +244,9 @@ class AgentLoop:
                     yield request
 
                 if approved:
+                    self._safety.pre_action(tool, arguments)
                     tool_result = tool.execute(**arguments)
+                    self._safety.post_action(tool, arguments, tool_result)
                 else:
                     tool_result = ToolResult.denied(
                         f"User denied tool '{tool_name}'",

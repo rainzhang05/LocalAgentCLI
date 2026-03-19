@@ -28,6 +28,21 @@ class TestSessionManagerNewSession:
         session_manager.new_session()
         assert session_manager.current.id != old_id
 
+    def test_new_session_uses_resolved_default_target(self, storage, config):
+        config.set("provider.active_provider", "")
+        config.set("model.active_model", "missing@v1")
+        manager = SessionManager(
+            storage.sessions_dir,
+            config,
+            default_target_resolver=lambda provider, model: ("", "fallback@v1"),
+        )
+
+        session = manager.new_session()
+
+        assert session.model == "fallback@v1"
+        assert session.provider == ""
+        assert config.get("model.active_model") == "fallback@v1"
+
 
 class TestSessionManagerSaveLoad:
     """Tests for saving and loading sessions."""

@@ -203,13 +203,15 @@ class AnthropicProvider(RemoteProvider):
                 return models
         except Exception:
             logger.debug("Failed to list models from %s", self._name)
-        return [
-            RemoteModelInfo(
-                id=self._default_model,
-                name=self._default_model,
-                capabilities=self._capabilities_for_model(self._default_model),
-            )
-        ]
+        if self._default_model:
+            return [
+                RemoteModelInfo(
+                    id=self._default_model,
+                    name=self._default_model,
+                    capabilities=self._capabilities_for_model(self._default_model),
+                )
+            ]
+        return []
 
     def supports_tools(self) -> bool:
         return bool(self._capabilities_for_model(self.active_model).get("tool_use", False))

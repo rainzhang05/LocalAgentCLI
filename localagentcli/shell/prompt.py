@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -12,6 +13,28 @@ from prompt_toolkit.history import InMemoryHistory
 from localagentcli.commands.router import CommandRouter
 
 MAX_INPUT_HISTORY = 1000
+
+
+class LinePromptSession:
+    """Minimal prompt session used when no interactive terminal is available."""
+
+    def __init__(self, history: InMemoryHistory):
+        self.history = history
+
+    def prompt(self, message: str = "") -> str:
+        if message:
+            print(message, end="", flush=True)
+
+        line = sys.stdin.readline()
+        if line == "":
+            raise EOFError
+
+        text = line.rstrip("\r\n")
+        if text == "\x03":
+            raise KeyboardInterrupt
+        if text:
+            self.history.append_string(text)
+        return text
 
 
 class CommandCompleter(Completer):
@@ -39,7 +62,7 @@ class CommandCompleter(Completer):
 def create_prompt_session(
     router: CommandRouter,
     history_source: Path | Sequence[str] | None = None,
-) -> PromptSession:
+) -> PromptSession | LinePromptSession:
     """Create a configured PromptSession with session-backed history."""
     history = InMemoryHistory()
 
@@ -49,16 +72,36 @@ def create_prompt_session(
         for item in list(history_source)[-MAX_INPUT_HISTORY:]:
             history.append_string(item)
 
-    return PromptSession(
-        history=history,
-        completer=CommandCompleter(router),
-        complete_while_typing=False,
-    )
+    if not _supports_interactive_prompt():
+        return LinePromptSession(history)
+
+    try:
+        return PromptSession(
+            history=history,
+            completer=CommandCompleter(router),
+            complete_while_typing=False,
+        )
+    except Exception:
+        return LinePromptSession(history)
 
 
-def get_prompt_history_strings(prompt_session: PromptSession) -> list[str]:
+def get_prompt_history_strings(prompt_session: PromptSession | LinePromptSession) -> list[str]:
     """Return the current prompt history as a bounded list of strings."""
     history = getattr(prompt_session, "history", None)
     if history is None or not hasattr(history, "get_strings"):
         return []
     return list(history.get_strings())[-MAX_INPUT_HISTORY:]
+
+
+def _supports_interactive_prompt() -> bool:
+    """Return whether stdin/stdout look like an interactive terminal pair."""
+    stdin = getattr(sys, "stdin", None)
+    stdout = getattr(sys, "stdout", None)
+    return bool(
+        stdin is not None
+        and stdout is not None
+        and hasattr(stdin, "isatty")
+        and hasattr(stdout, "isatty")
+        and stdin.isatty()
+        and stdout.isatty()
+    )

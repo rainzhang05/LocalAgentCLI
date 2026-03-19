@@ -16,7 +16,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 ## Design Rules
 
 1. **Consistent syntax**: All commands follow the pattern `/command [subcommand] [arguments]`. No positional ambiguity.
-2. **Hierarchical structure**: Related commands are grouped under a parent (e.g., `/models list`, `/models install`). The parent alone (e.g., `/models`) prints its subcommand help.
+2. **Hierarchical structure**: Related commands are grouped under a parent (e.g., `/models list`, `/models install`). Parent commands usually print subcommand help, but interactive parents are allowed when the command is explicitly acting as a wizard or picker.
 3. **Human-readable output**: All command responses use clear, formatted text. No raw data dumps.
 4. **Predictable errors**: Invalid commands return a structured error with the invalid input, a brief explanation, and a suggestion (e.g., "Did you mean `/models list`?").
 
@@ -80,6 +80,15 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 ### Model Commands
 
+#### `/models`
+- **Syntax**: `/models`
+- **Behavior**: Opens an interactive Hugging Face picker for popular local models. The flow is layered:
+  1. Choose the runtime/backend family (`PyTorch / Safetensors`, `MLX` when supported, or `GGUF`)
+  2. Choose a curated model family (`GPT-OSS`, `Qwen`, `Gemma`, etc.)
+  3. Choose the exact model repo
+  4. Download the model immediately and set it as the active local model for the current session
+- **Navigation**: Up/Down arrows move through options, typing filters the current layer, and Enter accepts the highlighted choice.
+
 #### `/models list`
 - **Syntax**: `/models list`
 - **Behavior**: Lists all installed local models with their name, format, size, and capabilities.
@@ -87,12 +96,12 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/models search <query>`
 - **Syntax**: `/models search <query>`
-- **Behavior**: Searches Hugging Face for models matching the query. Returns a list of matching repositories with model name, size, format, and download count.
-- **Output**: Formatted table with results.
+- **Behavior**: Searches installed local models by name, format, or registry metadata.
+- **Output**: Formatted list of installed matches.
 
 #### `/models install hf <repo>`
 - **Syntax**: `/models install hf <repo>`
-- **Behavior**: Downloads a model from a Hugging Face repository. Automatically detects the model format (MLX, GGUF, safetensors), assigns the appropriate backend, validates the model structure, extracts metadata, and registers it in the model registry.
+- **Behavior**: Downloads a model from an explicit Hugging Face repository path. Automatically detects the model format (MLX, GGUF, safetensors), assigns the appropriate backend, validates the model structure, extracts metadata, and registers it in the model registry.
 - **Progress**: Displays a download progress bar with speed and ETA.
 
 #### `/models install url <url>`

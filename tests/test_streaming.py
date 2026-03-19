@@ -6,8 +6,20 @@ from unittest.mock import MagicMock
 
 from rich.panel import Panel
 
+from localagentcli.agents.events import (
+    PlanGenerated,
+    PlanUpdated,
+    ReasoningOutput,
+    StepStarted,
+    TaskComplete,
+    TaskFailed,
+    ToolCallRequested,
+    ToolCallResult,
+)
+from localagentcli.agents.planner import PlanStep, TaskPlan
 from localagentcli.models.backends.base import StreamChunk
 from localagentcli.shell.streaming import StreamRenderer
+from localagentcli.tools.base import ToolResult
 
 
 class TestStreamRendererRenderChunk:
@@ -109,3 +121,96 @@ class TestStreamRendererActivity:
         renderer = StreamRenderer(console)
         renderer.render_activity("Context compacted")
         console.print.assert_called_once_with("[blue]ℹ Context compacted[/blue]")
+
+
+class TestStreamRendererAgentEvents:
+    def test_plan_generated_renders_panel(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        plan = TaskPlan(task="task", steps=[PlanStep(index=1, description="Inspect files")])
+
+        renderer.render_agent_event(PlanGenerated(plan=plan))
+
+        panel_arg = console.print.call_args.args[0]
+        assert isinstance(panel_arg, Panel)
+        assert panel_arg.title == "Plan"
+
+    def test_plan_updated_renders_activity_and_plan(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        plan = TaskPlan(task="task", steps=[PlanStep(index=1, description="Inspect files")])
+
+        renderer.render_agent_event(PlanUpdated(plan=plan, changes="Replanned"))
+
+        first_call = console.print.call_args_list[0].args[0]
+        second_call = console.print.call_args_list[1].args[0]
+        assert "Replanned" in first_call
+        assert isinstance(second_call, Panel)
+
+    def test_step_started_renders_activity(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_agent_event(StepStarted(step=PlanStep(index=2, description="Run tests")))
+
+        assert "Starting step 2" in console.print.call_args.args[0]
+
+    def test_tool_request_renders_warnings(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        event = ToolCallRequested(
+            tool_name="shell_execute",
+            arguments={"command": "rm -rf ."},
+            requires_approval=True,
+            risk_level="high",
+            warnings=["Dangerous command"],
+        )
+
+        renderer.render_agent_event(event)
+
+        assert "HIGH RISK" in console.print.call_args_list[0].args[0]
+        assert "Dangerous command" in console.print.call_args_list[1].args[0]
+
+    def test_tool_result_renders_failure(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        result = ToolResult.error("Tool failed", "failed")
+
+        renderer.render_agent_event(ToolCallResult(tool_name="tool", result=result))
+
+        assert "Tool failed" in console.print.call_args.args[0]
+
+    def test_reasoning_output_renders_panel(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_agent_event(ReasoningOutput(text="Because it helps"))
+
+        panel_arg = console.print.call_args.args[0]
+        assert isinstance(panel_arg, Panel)
+        assert panel_arg.title == "Reasoning"
+
+    def test_task_complete_renders_activity_and_summary(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        plan = TaskPlan(task="task")
+
+        renderer.render_agent_event(TaskComplete(summary="Finished", plan=plan))
+
+        assert "Task complete." in console.print.call_args_list[0].args[0]
+        assert console.print.call_args_list[1].args[0] == "Finished"
+
+    def test_task_failed_renders_error(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        plan = TaskPlan(task="task")
+
+        renderer.render_agent_event(TaskFailed(reason="bad news", plan=plan))
+
+        assert "bad news" in console.print.call_args.args[0]
+
+    def test_tool_summary_limits_output(self):
+        renderer = StreamRenderer(MagicMock())
+        summary = renderer._tool_summary({"a": 1, "b": 2, "c": 3, "d": 4})
+
+        assert summary == "a=1, b=2, c=3"

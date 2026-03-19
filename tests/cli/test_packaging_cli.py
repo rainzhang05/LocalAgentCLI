@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import site
 import subprocess
 import sys
 import textwrap
@@ -46,6 +47,11 @@ def _cli_env(home: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
+    python_paths = [path for path in sys.path if path]
+    python_paths.extend(
+        path for path in [site.getusersitepackages(), *site.getsitepackages()] if path
+    )
+    env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(python_paths))
     return env
 
 

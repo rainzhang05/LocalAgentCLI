@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import platform
 import shutil
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from rich.console import Console
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
 from localagentcli.models.detector import HardwareDetector
+from localagentcli.models.hf_catalog import (
+    HubModelChoice,
+    HuggingFaceCatalog,
+)
 from localagentcli.models.installer import ModelInstaller, _fmt_size
 from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.session.manager import SessionManager
@@ -21,194 +24,6 @@ ModelSelector = Callable[[str, Sequence[SelectionOption]], SelectionOption | Non
 
 _BACK_SENTINEL = "__back__"
 _CANCEL_SENTINEL = "__cancel__"
-
-
-@dataclass(frozen=True)
-class FeaturedModel:
-    """Curated Hugging Face model option shown by the interactive /models picker."""
-
-    backend: str
-    family: str
-    label: str
-    repo: str
-    install_name: str
-    size_hint: str
-    summary: str
-
-
-_FEATURED_HF_MODELS: tuple[FeaturedModel, ...] = (
-    FeaturedModel(
-        backend="gguf",
-        family="gpt-oss",
-        label="GPT-OSS 20B (GGUF)",
-        repo="unsloth/gpt-oss-20b-GGUF",
-        install_name="gpt-oss-20b-gguf",
-        size_hint="20B",
-        summary="Quantized GPT-OSS build for llama.cpp-compatible runtimes.",
-    ),
-    FeaturedModel(
-        backend="gguf",
-        family="gpt-oss",
-        label="GPT-OSS 120B (GGUF)",
-        repo="unsloth/gpt-oss-120b-GGUF",
-        install_name="gpt-oss-120b-gguf",
-        size_hint="120B",
-        summary="Large GPT-OSS GGUF build for high-memory machines.",
-    ),
-    FeaturedModel(
-        backend="gguf",
-        family="qwen",
-        label="Qwen3 8B (GGUF)",
-        repo="Qwen/Qwen3-8B-GGUF",
-        install_name="qwen3-8b-gguf",
-        size_hint="8B",
-        summary="Balanced general-purpose GGUF build with broad hardware support.",
-    ),
-    FeaturedModel(
-        backend="gguf",
-        family="qwen",
-        label="Qwen3 14B (GGUF)",
-        repo="Qwen/Qwen3-14B-GGUF",
-        install_name="qwen3-14b-gguf",
-        size_hint="14B",
-        summary="Stronger reasoning and coding quality in GGUF format.",
-    ),
-    FeaturedModel(
-        backend="gguf",
-        family="qwen",
-        label="Qwen3 32B (GGUF)",
-        repo="Qwen/Qwen3-32B-GGUF",
-        install_name="qwen3-32b-gguf",
-        size_hint="32B",
-        summary="Large GGUF Qwen option for higher-end local setups.",
-    ),
-    FeaturedModel(
-        backend="gguf",
-        family="gemma",
-        label="Gemma 3 12B Instruct (GGUF)",
-        repo="google/gemma-3-12b-it-qat-q4_0-gguf",
-        install_name="gemma-3-12b-it-gguf",
-        size_hint="12B",
-        summary="Google Gemma 3 quantized GGUF instruct model.",
-    ),
-    FeaturedModel(
-        backend="gguf",
-        family="gemma",
-        label="Gemma 3 27B Instruct (GGUF)",
-        repo="google/gemma-3-27b-it-qat-q4_0-gguf",
-        install_name="gemma-3-27b-it-gguf",
-        size_hint="27B",
-        summary="Larger Gemma 3 GGUF option for stronger local reasoning.",
-    ),
-    FeaturedModel(
-        backend="mlx",
-        family="gpt-oss",
-        label="GPT-OSS 20B (MLX 8-bit)",
-        repo="lmstudio-community/gpt-oss-20b-MLX-8bit",
-        install_name="gpt-oss-20b-mlx-8bit",
-        size_hint="20B",
-        summary="Apple Silicon tuned MLX build with 8-bit weights.",
-    ),
-    FeaturedModel(
-        backend="mlx",
-        family="gpt-oss",
-        label="GPT-OSS 20B (MLX Q8)",
-        repo="mlx-community/gpt-oss-20b-MXFP4-Q8",
-        install_name="gpt-oss-20b-mlx-q8",
-        size_hint="20B",
-        summary="Alternative MLX GPT-OSS build from mlx-community.",
-    ),
-    FeaturedModel(
-        backend="mlx",
-        family="qwen",
-        label="Qwen3 8B (MLX 4-bit)",
-        repo="mlx-community/Qwen3-8B-4bit",
-        install_name="qwen3-8b-mlx-4bit",
-        size_hint="8B",
-        summary="Compact Apple Silicon-friendly Qwen3 MLX build.",
-    ),
-    FeaturedModel(
-        backend="mlx",
-        family="qwen",
-        label="Qwen3 14B (MLX 4-bit)",
-        repo="mlx-community/Qwen3-14B-4bit",
-        install_name="qwen3-14b-mlx-4bit",
-        size_hint="14B",
-        summary="Higher quality MLX Qwen3 model for Macs with more memory.",
-    ),
-    FeaturedModel(
-        backend="mlx",
-        family="gemma",
-        label="Gemma 3 4B Instruct (MLX 4-bit)",
-        repo="mlx-community/gemma-3-4b-it-4bit",
-        install_name="gemma-3-4b-it-mlx-4bit",
-        size_hint="4B",
-        summary="Fast-entry MLX Gemma build for Apple Silicon laptops.",
-    ),
-    FeaturedModel(
-        backend="mlx",
-        family="gemma",
-        label="Gemma 3 12B Instruct (MLX 4-bit)",
-        repo="mlx-community/gemma-3-12b-it-4bit",
-        install_name="gemma-3-12b-it-mlx-4bit",
-        size_hint="12B",
-        summary="Bigger MLX Gemma 3 option with stronger reasoning quality.",
-    ),
-    FeaturedModel(
-        backend="safetensors",
-        family="gpt-oss",
-        label="GPT-OSS 20B (PyTorch)",
-        repo="openai/gpt-oss-20b",
-        install_name="gpt-oss-20b",
-        size_hint="20B",
-        summary="Official Hugging Face repo with standard PyTorch weights.",
-    ),
-    FeaturedModel(
-        backend="safetensors",
-        family="gpt-oss",
-        label="GPT-OSS 120B (PyTorch)",
-        repo="openai/gpt-oss-120b",
-        install_name="gpt-oss-120b",
-        size_hint="120B",
-        summary="Largest official GPT-OSS weights; expect very high RAM/VRAM use.",
-    ),
-    FeaturedModel(
-        backend="safetensors",
-        family="qwen",
-        label="Qwen3 8B (PyTorch)",
-        repo="Qwen/Qwen3-8B",
-        install_name="qwen3-8b",
-        size_hint="8B",
-        summary="Standard Transformers-compatible Qwen3 weights.",
-    ),
-    FeaturedModel(
-        backend="safetensors",
-        family="qwen",
-        label="Qwen3 14B (PyTorch)",
-        repo="Qwen/Qwen3-14B",
-        install_name="qwen3-14b",
-        size_hint="14B",
-        summary="Larger Qwen3 PyTorch model for better reasoning and coding.",
-    ),
-    FeaturedModel(
-        backend="safetensors",
-        family="gemma",
-        label="Gemma 3 4B Instruct (PyTorch)",
-        repo="google/gemma-3-4b-it",
-        install_name="gemma-3-4b-it",
-        size_hint="4B",
-        summary="Lightweight Gemma 3 instruct model in standard PyTorch format.",
-    ),
-    FeaturedModel(
-        backend="safetensors",
-        family="gemma",
-        label="Gemma 3 12B Instruct (PyTorch)",
-        repo="google/gemma-3-12b-it",
-        install_name="gemma-3-12b-it",
-        size_hint="12B",
-        summary="Stronger Gemma 3 instruct model with standard weights.",
-    ),
-)
 
 _BACKEND_LABELS = {
     "gguf": "GGUF",
@@ -220,12 +35,6 @@ _BACKEND_DESCRIPTIONS = {
     "gguf": "Quantized llama.cpp-compatible models that run well across macOS, Linux, and Windows.",
     "mlx": "Apple Silicon optimized models for MLX. Best on modern Macs.",
     "safetensors": "Standard PyTorch / Transformers model repositories from Hugging Face.",
-}
-
-_FAMILY_LABELS = {
-    "gpt-oss": "GPT-OSS",
-    "qwen": "Qwen",
-    "gemma": "Gemma",
 }
 
 
@@ -247,12 +56,14 @@ class ModelsParentHandler(CommandHandler):
         session_manager: SessionManager,
         console: Console,
         selector: ModelSelector | None = None,
+        catalog: HuggingFaceCatalog | None = None,
     ):
         self._installer = installer
         self._hw_detector = hardware_detector
         self._session_manager = session_manager
         self._console = console
         self._selector = selector or select_option
+        self._catalog = catalog or HuggingFaceCatalog()
 
     def execute(self, args: list[str]) -> CommandResult:
         if args:
@@ -295,7 +106,7 @@ class ModelsParentHandler(CommandHandler):
     def help_text(self) -> str:
         return (
             "Manage local models.\n"
-            "/models opens an interactive Hugging Face picker with curated popular models.\n"
+            "/models opens an interactive Hugging Face picker with live Hub-backed families.\n"
             "Subcommands:\n"
             "  /models list                    List installed models\n"
             "  /models search <query>          Search installed models\n"
@@ -306,7 +117,7 @@ class ModelsParentHandler(CommandHandler):
             "Use /set to switch the active local or remote model."
         )
 
-    def _pick_featured_model(self) -> FeaturedModel | None:
+    def _pick_featured_model(self) -> HubModelChoice | None:
         backend = self._select_backend()
         if backend is None:
             return None
@@ -326,7 +137,7 @@ class ModelsParentHandler(CommandHandler):
                 return None
             if selection == _BACK_SENTINEL:
                 continue
-            if isinstance(selection, FeaturedModel):
+            if isinstance(selection, HubModelChoice):
                 return selection
             return None
 
@@ -338,17 +149,13 @@ class ModelsParentHandler(CommandHandler):
         return _resolve_flow_choice(choice)
 
     def _select_family(self, backend: str) -> str | None:
-        models = _models_for_backend(backend)
-        families = _ordered_unique(model.family for model in models)
+        families = self._catalog.list_families(backend)
         options = [
             SelectionOption(
-                value=family,
-                label=_FAMILY_LABELS.get(family, family.title()),
-                description=(
-                    f"{len([m for m in models if m.family == family])} curated "
-                    f"{_BACKEND_LABELS[backend]} options"
-                ),
-                aliases=(family.replace("-", ""),),
+                value=family.key,
+                label=family.label,
+                description=family.description,
+                aliases=family.aliases,
             )
             for family in families
         ]
@@ -359,20 +166,30 @@ class ModelsParentHandler(CommandHandler):
         )
         return _resolve_flow_choice(choice)
 
-    def _select_model(self, backend: str, family: str) -> FeaturedModel | str | None:
-        models = [model for model in _models_for_backend(backend) if model.family == family]
+    def _select_model(self, backend: str, family: str) -> HubModelChoice | str | None:
+        try:
+            models = self._catalog.list_models(backend, family)
+        except Exception as exc:
+            self._console.print(f"[red]Failed to load Hugging Face models: {exc}[/red]")
+            return _BACK_SENTINEL
+        if not models:
+            self._console.print(
+                "[yellow]No Hugging Face models found for that family. Choose another one.[/yellow]"
+            )
+            return _BACK_SENTINEL
+
         options = [
             SelectionOption(
                 value=model.install_name,
                 label=model.label,
-                description=f"{model.size_hint} • {model.summary}",
-                aliases=(model.family, model.repo, model.install_name),
+                description=model.summary,
+                aliases=model.aliases,
             )
             for model in models
         ]
         options.extend(_flow_navigation_options(include_back=True))
         choice = self._selector(
-            f"Choose a {_FAMILY_LABELS.get(family, family.title())} model",
+            f"Choose a {family.replace('-', ' ').title()} model",
             options,
         )
         resolved = _resolve_flow_choice(choice)
@@ -771,23 +588,6 @@ def _flow_navigation_options(*, include_back: bool) -> list[SelectionOption]:
         )
     )
     return options
-
-
-def _models_for_backend(backend: str) -> list[FeaturedModel]:
-    """Return curated models for a specific backend, preserving the catalog order."""
-    return [model for model in _FEATURED_HF_MODELS if model.backend == backend]
-
-
-def _ordered_unique(values: Iterable[str]) -> list[str]:
-    """Return the first occurrence of each value in order."""
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def _resolve_flow_choice(choice: SelectionOption | None) -> str | None:

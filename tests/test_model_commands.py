@@ -181,8 +181,8 @@ class TestModelsParent:
 
     def test_help_text(self):
         handler = ModelsParentHandler(MagicMock(), MagicMock(), MagicMock(), MagicMock())
-        assert "list" in handler.help_text()
-        assert "install" in handler.help_text()
+        assert "Hugging Face model picker" in handler.help_text()
+        assert "Usage: /models" in handler.help_text()
 
 
 # ---------------------------------------------------------------------------

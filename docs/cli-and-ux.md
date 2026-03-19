@@ -44,6 +44,7 @@ The input prompt where the user types:
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
 - Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it.
+- The slash-command menu respects command visibility. For example, `/hf-token` disappears from menus and `/help` once a Hugging Face token is already configured.
 - The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.
 
@@ -66,6 +67,7 @@ two sub-arrays...█
 - Code blocks are syntax-highlighted using the detected language
 - Primary output (assistant text and important activity messages) stays high-contrast
 - Secondary output (reasoning, raw tool-call details, provider notifications, low-priority errors) is separated from the primary stream and rendered dimmed
+- Local/backend warnings captured from stdout or stderr are promoted into primary notifications so they do not get mixed into the assistant answer body
 
 ### Secondary Details Panel
 

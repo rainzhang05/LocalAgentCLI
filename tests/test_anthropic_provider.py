@@ -80,6 +80,24 @@ class TestAnthropicGenerate:
             result = provider.generate([ModelMessage(role="user", content="Hi")])
         assert result.finish_reason == "error"
 
+    def test_generate_tool_use_response(self):
+        provider = _make_provider()
+        data = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "file_read",
+                    "input": {"path": "notes.txt"},
+                }
+            ],
+            "usage": {},
+            "stop_reason": "tool_use",
+        }
+        with patch.object(provider._client, "post", return_value=_mock_response(data)):
+            result = provider.generate([ModelMessage(role="user", content="Read notes")])
+        assert result.tool_calls[0]["function"]["name"] == "file_read"
+
 
 # ---------------------------------------------------------------------------
 # stream_generate() tests
@@ -286,6 +304,62 @@ class TestAnthropicFormatMessages:
         _, api_msgs = AnthropicProvider._format_messages(msgs)
         roles = [m["role"] for m in api_msgs]
         assert roles == ["user", "assistant", "user"]
+
+    def test_formats_tool_use_and_tool_results(self):
+        msgs = [
+            ModelMessage(
+                role="assistant",
+                content="",
+                metadata={
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "file_write",
+                                "arguments": '{"path":"notes.txt"}',
+                            },
+                        }
+                    ]
+                },
+            ),
+            ModelMessage(
+                role="tool",
+                content='{"status":"success"}',
+                metadata={"tool_call_id": "call_1"},
+            ),
+            ModelMessage(
+                role="tool",
+                content='{"status":"success"}',
+                metadata={"tool_call_id": "call_2"},
+            ),
+        ]
+
+        _, api_msgs = AnthropicProvider._format_messages(msgs)
+
+        assert api_msgs[0]["content"][0]["type"] == "tool_use"
+        assert api_msgs[1]["role"] == "user"
+        assert len(api_msgs[1]["content"]) == 2
+
+
+class TestAnthropicBuildRequestBody:
+    def test_includes_tools(self):
+        provider = _make_provider()
+        body = provider._build_request_body(
+            [ModelMessage(role="user", content="Hi")],
+            tools=[
+                {
+                    "name": "file_read",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_choice="auto",
+        )
+
+        assert body["tools"][0]["name"] == "file_read"
+        assert body["tools"][0]["input_schema"] == {"type": "object", "properties": {}}
+        assert body["tool_choice"] == "auto"
 
 
 # ---------------------------------------------------------------------------

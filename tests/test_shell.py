@@ -6,14 +6,19 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from rich.text import Text
+
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.models.registry import ModelEntry
 from localagentcli.shell.prompt import (
     COMMAND_MENU_HEIGHT,
     CommandCompleter,
+    SelectionOption,
     _has_command_matches,
+    _has_selection_matches,
     _refresh_command_completion,
+    _refresh_selection_completion,
     create_prompt_session,
     get_prompt_history_strings,
 )
@@ -102,6 +107,43 @@ class TestCommandCompleter:
         _refresh_command_completion(buffer, router)
         buffer.cancel_completion.assert_called_once()
 
+    def test_selection_match_helper_tracks_shorter_prefixes(self):
+        options = [
+            SelectionOption(
+                value="openai",
+                label="OpenAI",
+                aliases=("remote",),
+            ),
+            SelectionOption(
+                value="anthropic",
+                label="Anthropic",
+                aliases=("claude",),
+            ),
+        ]
+
+        assert _has_selection_matches(options, "op") is True
+        assert _has_selection_matches(options, "o") is True
+        assert _has_selection_matches(options, "") is True
+        assert _has_selection_matches(options, "zzz") is False
+
+    def test_refresh_selection_completion_cancels_only_without_matches(self):
+        options = [
+            SelectionOption(value="openai", label="OpenAI"),
+            SelectionOption(value="anthropic", label="Anthropic"),
+        ]
+        buffer = MagicMock()
+        buffer.document.text_before_cursor = "open"
+
+        _refresh_selection_completion(buffer, options)
+
+        buffer.start_completion.assert_called_once()
+        buffer.cancel_completion.assert_not_called()
+
+        buffer.start_completion.reset_mock()
+        buffer.document.text_before_cursor = "zzz"
+        _refresh_selection_completion(buffer, options)
+        buffer.cancel_completion.assert_called_once()
+
 
 class TestCreatePromptSession:
     """Tests for prompt session creation."""
@@ -158,6 +200,31 @@ class TestShellUIInit:
     def test_first_run_flag(self, config, storage):
         ui = ShellUI(config=config, storage=storage, first_run=True)
         assert ui._first_run is True
+
+    def test_sync_workspace_instruction_detects_agents_file(
+        self,
+        config,
+        storage,
+        tmp_path: Path,
+    ):
+        repo_root = tmp_path / "repo"
+        workspace = repo_root / "src"
+        workspace.mkdir(parents=True)
+        (repo_root / ".git").mkdir()
+        agents_path = repo_root / "AGENTS.md"
+        agents_path.write_text("Use repository defaults.", encoding="utf-8")
+
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.workspace = str(workspace)
+
+        ui._sync_workspace_instruction()
+
+        assert ui._session_manager.current.metadata["workspace_instruction"] == (
+            "Use repository defaults."
+        )
+        assert ui._session_manager.current.metadata["workspace_instruction_path"] == str(
+            agents_path
+        )
 
     def test_registers_all_commands(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -222,6 +289,16 @@ class TestShellUIStatusHeader:
         ui._session_manager.current.model = "gpt-4.1"
 
         assert ui._active_target_label() == "openai (gpt-4.1)"
+
+    def test_display_welcome_uses_unified_text_style(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+
+        ui._display_welcome()
+
+        title = ui._console.print.call_args_list[1][0][0]
+        assert isinstance(title, Text)
+        assert title.plain == "LocalAgent CLI v0.1.0"
 
     def test_context_limit_uses_registered_model_metadata(self, config, storage, tmp_path: Path):
         ui = ShellUI(config=config, storage=storage)

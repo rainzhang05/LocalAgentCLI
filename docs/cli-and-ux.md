@@ -44,6 +44,7 @@ The input prompt where the user types:
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
 - Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it.
+- The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.
 
 ### Streaming Output
@@ -134,6 +135,7 @@ When the user types `/`:
 5. Commands that need an installed model, configured provider, or saved session may open a second picker after execution so users do not need to type long identifiers manually
 6. Up/Down arrows move through the visible options without leaving the input line
 7. Enter accepts the highlighted command; Tab also works as an alternate completion key
+8. Deleting characters does not collapse the menu if matches still exist; menus only close when the current input no longer matches any available option
 
 ### Interactive Model Picker
 

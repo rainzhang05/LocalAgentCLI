@@ -255,7 +255,7 @@ These flows must be tested end-to-end and must pass before any release:
 4. **Interruption Handling**
    - Ctrl+C during model generation stops generation cleanly
    - Ctrl+C during agent execution stops the current task
-   - A second Ctrl+C within 2 seconds from the idle prompt exits the shell
+   - A second consecutive Ctrl+C from the idle prompt exits the shell
    - Partial output is displayed and not corrupted
    - The shell returns to the input prompt
 

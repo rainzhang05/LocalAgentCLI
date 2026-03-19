@@ -80,7 +80,12 @@ class TestModelDetectorGGUF:
 
 
 class TestModelDetectorMLX:
-    def test_detect_mlx_with_weights_dir(self, detector: ModelDetector, tmp_path: Path):
+    @patch("localagentcli.models.detector.platform")
+    def test_detect_mlx_with_weights_dir(
+        self, mock_platform, detector: ModelDetector, tmp_path: Path
+    ):
+        mock_platform.system.return_value = "Darwin"
+        mock_platform.machine.return_value = "arm64"
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         (model_dir / "model.safetensors").write_bytes(b"\x00" * 100)
@@ -91,7 +96,12 @@ class TestModelDetectorMLX:
         assert result.format == "mlx"
         assert result.backend == "mlx"
 
-    def test_detect_mlx_with_quant_config(self, detector: ModelDetector, tmp_path: Path):
+    @patch("localagentcli.models.detector.platform")
+    def test_detect_mlx_with_quant_config(
+        self, mock_platform, detector: ModelDetector, tmp_path: Path
+    ):
+        mock_platform.system.return_value = "Darwin"
+        mock_platform.machine.return_value = "arm64"
         model_dir = tmp_path / "model"
         model_dir.mkdir()
         (model_dir / "model.safetensors").write_bytes(b"\x00" * 100)

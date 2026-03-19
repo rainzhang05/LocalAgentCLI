@@ -13,15 +13,22 @@ from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.models.registry import ModelEntry
 from localagentcli.shell.prompt import (
+    ACTION_PROMPT_TOOLBAR,
     COMMAND_MENU_HEIGHT,
+    SECRET_PROMPT_TOOLBAR,
+    TEXT_PROMPT_TOOLBAR,
     CommandCompleter,
     SelectionOption,
     _has_command_matches,
     _has_selection_matches,
     _refresh_command_completion,
     _refresh_selection_completion,
+    confirm_choice,
     create_prompt_session,
     get_prompt_history_strings,
+    prompt_action,
+    prompt_secret,
+    prompt_text,
 )
 from localagentcli.shell.ui import ShellUI
 
@@ -178,6 +185,17 @@ class TestCreatePromptSession:
         assert kwargs["reserve_space_for_menu"] == COMMAND_MENU_HEIGHT
         assert kwargs["key_bindings"] is not None
 
+    @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_wires_dynamic_toolbar_provider(self, mock_prompt_session, _mock_supports):
+        router = CommandRouter()
+
+        create_prompt_session(router, ["/help"], toolbar_provider=lambda: "toolbar")
+
+        toolbar = mock_prompt_session.call_args.kwargs["bottom_toolbar"]
+        assert callable(toolbar)
+        assert toolbar() == "toolbar"
+
     @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=False)
     @patch("localagentcli.shell.prompt.sys.stdin.readline", return_value="/status\n")
     def test_falls_back_without_interactive_terminal(self, _mock_readline, _mock_supports):
@@ -188,6 +206,102 @@ class TestCreatePromptSession:
 
         assert value == "/status"
         assert get_prompt_history_strings(session) == ["/help", "/status"]
+
+
+class TestPromptHelpers:
+    """Tests for the shared prompt helper contract."""
+
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_prompt_text_uses_toolbar_and_default(
+        self,
+        mock_prompt_session,
+        _mock_supports,
+    ):
+        session = MagicMock()
+        session.prompt.return_value = "workspace"
+        mock_prompt_session.return_value = session
+
+        value = prompt_text("Workspace directory", default=".")
+
+        assert value == "workspace"
+        assert mock_prompt_session.call_args.kwargs["bottom_toolbar"] == TEXT_PROMPT_TOOLBAR
+        session.prompt.assert_called_once_with(
+            "Workspace directory: ",
+            default=".",
+            is_password=False,
+        )
+
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_prompt_secret_hides_input(
+        self,
+        mock_prompt_session,
+        _mock_supports,
+    ):
+        session = MagicMock()
+        session.prompt.return_value = "secret"
+        mock_prompt_session.return_value = session
+
+        value = prompt_secret("API key")
+
+        assert value == "secret"
+        assert mock_prompt_session.call_args.kwargs["bottom_toolbar"] == SECRET_PROMPT_TOOLBAR
+        session.prompt.assert_called_once_with(
+            "API key: ",
+            default="",
+            is_password=True,
+        )
+
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=False)
+    @patch("localagentcli.shell.prompt.sys.stdin.readline", return_value="\n")
+    def test_prompt_text_falls_back_and_uses_default(self, _mock_readline, _mock_supports):
+        value = prompt_text("Workspace directory", default=".")
+
+        assert value == "."
+
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_prompt_text_returns_none_when_cancelled(
+        self,
+        mock_prompt_session,
+        _mock_supports,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = KeyboardInterrupt
+        mock_prompt_session.return_value = session
+
+        assert prompt_text("Workspace directory", default=".") is None
+
+    @patch("localagentcli.shell.prompt.select_option")
+    def test_prompt_action_uses_action_toolbar(self, mock_select):
+        mock_select.return_value = SelectionOption(value="approve", label="Approve")
+
+        value = prompt_action(
+            "Choose action",
+            [SelectionOption(value="approve", label="Approve")],
+            default="approve",
+        )
+
+        assert value is not None
+        mock_select.assert_called_once_with(
+            "Choose action",
+            [SelectionOption(value="approve", label="Approve")],
+            default="approve",
+            bottom_toolbar=ACTION_PROMPT_TOOLBAR,
+        )
+
+    @patch("localagentcli.shell.prompt.prompt_action")
+    def test_confirm_choice_maps_yes_no_and_cancel(self, mock_prompt_action):
+        mock_prompt_action.side_effect = [
+            SelectionOption(value="yes", label="Yes"),
+            SelectionOption(value="no", label="No"),
+            None,
+        ]
+
+        assert confirm_choice("Continue?") is True
+        assert confirm_choice("Continue?") is False
+        assert confirm_choice("Continue?") is None
 
 
 class TestShellUIInit:
@@ -280,22 +394,46 @@ class TestShellUIRenderResult:
     def test_render_error(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
+        ui._stream_renderer = MagicMock()
         result = CommandResult.error("Something failed")
         ui._render_command_result(result)
-        call_args = ui._console.print.call_args[0][0]
-        assert "Something failed" in call_args
+        ui._stream_renderer.render_error.assert_called_once_with("Something failed")
 
-
-class TestShellUIStatusHeader:
-    """Tests for status header display."""
-
-    def test_displays_mode_and_model(self, config, storage):
+    def test_render_success_presentation_uses_stream_renderer(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
-        ui._display_status_header()
-        call_args = ui._console.print.call_args[0][0]
-        assert "mode: agent" in call_args
-        assert "(none)" in call_args  # no model set
+        ui._stream_renderer = MagicMock()
+
+        ui._render_command_result(CommandResult.ok("Saved.", presentation="success"))
+
+        ui._stream_renderer.render_success.assert_called_once_with("Saved.")
+
+    def test_render_body_prints_after_presented_message(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._stream_renderer = MagicMock()
+
+        ui._render_command_result(
+            CommandResult.ok(
+                "Configured.",
+                presentation="status",
+                body="Details follow.",
+            )
+        )
+
+        ui._stream_renderer.render_status.assert_called_once_with("Configured.")
+        ui._console.print.assert_called_once_with("Details follow.")
+
+
+class TestShellUIStatusToolbar:
+    """Tests for prompt-time status rendering."""
+
+    def test_prompt_toolbar_shows_mode_target_and_workspace(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        toolbar = ui._prompt_toolbar_text()
+        assert "mode: agent" in toolbar
+        assert "target: (none)" in toolbar
+        assert "workspace:" in toolbar
 
     def test_active_target_label_for_provider(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -343,7 +481,7 @@ class TestShellUIHandleExit:
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("Goodbye" in c for c in calls)
 
-    @patch("localagentcli.shell.ui.Confirm.ask", return_value=False)
+    @patch("localagentcli.shell.ui.confirm_choice", return_value=False)
     def test_exit_modified_session_decline_save(self, mock_confirm, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
@@ -357,7 +495,7 @@ class TestShellUIHandleExit:
         ui._handle_exit()
         mock_confirm.assert_called_once()
 
-    @patch("localagentcli.shell.ui.Confirm.ask", return_value=True)
+    @patch("localagentcli.shell.ui.confirm_choice", return_value=True)
     def test_exit_modified_session_accept_save(self, mock_confirm, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
@@ -450,7 +588,7 @@ class TestShellUIRun:
         assert any("Press Ctrl+C again" in str(call) for call in calls)
         assert any("Goodbye" in str(call) for call in calls)
 
-    @patch("localagentcli.shell.ui.Confirm.ask")
+    @patch("localagentcli.shell.ui.confirm_choice")
     def test_double_keyboard_interrupt_exits_without_save_prompt(
         self, mock_confirm, config, storage
     ):
@@ -531,17 +669,20 @@ class TestShellUIModelResolution:
                 "localagentcli.shell.ui.check_backend_dependencies",
                 return_value=(False, ["llama_cpp"]),
             ),
-            patch("localagentcli.shell.ui.Confirm.ask", return_value=True) as mock_confirm,
+            patch("localagentcli.shell.ui.confirm_choice", return_value=True) as mock_confirm,
             patch(
                 "localagentcli.shell.ui.install_backend_dependencies",
                 return_value=(True, "installed"),
             ) as mock_install,
         ):
+            ui._stream_renderer = MagicMock()
             result = ui._ensure_backend_dependencies("gguf")
 
         assert result is True
         mock_confirm.assert_called_once()
         mock_install.assert_called_once_with("gguf")
+        ui._stream_renderer.render_status.assert_called_once()
+        ui._stream_renderer.render_success.assert_called_once()
 
     def test_ensure_backend_dependencies_handles_cancelled_prompt(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -553,14 +694,17 @@ class TestShellUIModelResolution:
                 return_value=(False, ["llama_cpp"]),
             ),
             patch(
-                "localagentcli.shell.ui.Confirm.ask",
-                side_effect=KeyboardInterrupt,
+                "localagentcli.shell.ui.confirm_choice",
+                return_value=None,
             ),
         ):
+            ui._stream_renderer = MagicMock()
             result = ui._ensure_backend_dependencies("gguf")
 
         assert result is False
-        assert "loading cancelled" in ui._console.print.call_args.args[0]
+        ui._stream_renderer.render_warning.assert_called_once_with(
+            "GGUF backend loading cancelled."
+        )
 
     def test_generation_options_include_selected_provider_model(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -608,8 +752,6 @@ class TestShellUIModelResolution:
 class TestShellUIHelpers:
     def test_prompt_for_tool_approval_flushes_details_before_prompt(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
-        ui._console = MagicMock()
-        ui._console.input.return_value = ""
         ui._stream_renderer = MagicMock()
         event = ToolCallRequested(
             tool_name="patch_apply",
@@ -617,7 +759,11 @@ class TestShellUIHelpers:
             requires_approval=True,
         )
 
-        result = ui._prompt_for_tool_approval(event)
+        with patch(
+            "localagentcli.shell.ui.prompt_action",
+            return_value=SelectionOption(value="approve", label="Approve"),
+        ):
+            result = ui._prompt_for_tool_approval(event)
 
         assert result == "approve"
         assert ui._stream_renderer.method_calls[:2] == [
@@ -627,8 +773,6 @@ class TestShellUIHelpers:
 
     def test_prompt_for_tool_approval_preview_flow_for_patch_apply(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
-        ui._console = MagicMock()
-        ui._console.input.side_effect = ["v", ""]
         ui._stream_renderer = MagicMock()
         event = ToolCallRequested(
             tool_name="patch_apply",
@@ -636,7 +780,14 @@ class TestShellUIHelpers:
             requires_approval=True,
         )
 
-        result = ui._prompt_for_tool_approval(event)
+        with patch(
+            "localagentcli.shell.ui.prompt_action",
+            side_effect=[
+                SelectionOption(value="details", label="View details"),
+                SelectionOption(value="approve", label="Approve"),
+            ],
+        ):
+            result = ui._prompt_for_tool_approval(event)
 
         assert result == "approve"
         preview_call = ui._stream_renderer.render_preview.call_args
@@ -646,8 +797,6 @@ class TestShellUIHelpers:
 
     def test_prompt_for_tool_approval_preview_flow_for_file_write(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
-        ui._console = MagicMock()
-        ui._console.input.side_effect = ["v", ""]
         ui._stream_renderer = MagicMock()
         event = ToolCallRequested(
             tool_name="file_write",
@@ -655,7 +804,14 @@ class TestShellUIHelpers:
             requires_approval=True,
         )
 
-        result = ui._prompt_for_tool_approval(event)
+        with patch(
+            "localagentcli.shell.ui.prompt_action",
+            side_effect=[
+                SelectionOption(value="details", label="View details"),
+                SelectionOption(value="approve", label="Approve"),
+            ],
+        ):
+            result = ui._prompt_for_tool_approval(event)
 
         assert result == "approve"
         preview_call = ui._stream_renderer.render_preview.call_args
@@ -712,7 +868,7 @@ class TestShellUIHelpers:
         ui._agent_controller = controller
         ui._stream_renderer = MagicMock()
 
-        with patch("localagentcli.shell.ui.Confirm.ask", return_value=False):
+        with patch("localagentcli.shell.ui.confirm_choice", return_value=False):
             result = ui._stop_agent_task_with_confirmation()
 
         assert result is False
@@ -725,7 +881,7 @@ class TestShellUIHelpers:
         ui._agent_controller = controller
         ui._stream_renderer = MagicMock()
 
-        with patch("localagentcli.shell.ui.Confirm.ask", return_value=True):
+        with patch("localagentcli.shell.ui.confirm_choice", return_value=True):
             result = ui._stop_agent_task_with_confirmation()
 
         assert result is True

@@ -4,6 +4,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Literal
+
+CommandPresentation = Literal["plain", "status", "success", "warning", "error"]
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """Operator-facing metadata for one slash command."""
+
+    group: str
+    summary: str
+    usage: str
+    argument_hint: str = ""
+    details: str = ""
+    examples: tuple[str, ...] = ()
 
 
 @dataclass
@@ -13,14 +28,39 @@ class CommandResult:
     success: bool
     message: str
     data: dict | None = None
+    presentation: CommandPresentation = "plain"
+    body: str | None = None
 
     @classmethod
-    def ok(cls, message: str, data: dict | None = None) -> CommandResult:
-        return cls(success=True, message=message, data=data)
+    def ok(
+        cls,
+        message: str,
+        data: dict | None = None,
+        *,
+        presentation: CommandPresentation = "plain",
+        body: str | None = None,
+    ) -> CommandResult:
+        return cls(
+            success=True,
+            message=message,
+            data=data,
+            presentation=presentation,
+            body=body,
+        )
 
     @classmethod
-    def error(cls, message: str) -> CommandResult:
-        return cls(success=False, message=message)
+    def error(
+        cls,
+        message: str,
+        *,
+        body: str | None = None,
+    ) -> CommandResult:
+        return cls(
+            success=False,
+            message=message,
+            presentation="error",
+            body=body,
+        )
 
 
 class CommandHandler(ABC):
@@ -32,9 +72,19 @@ class CommandHandler(ABC):
         ...
 
     @abstractmethod
+    def describe(self) -> CommandSpec:
+        """Return metadata for help, completion, and command framing."""
+
     def help_text(self) -> str:
-        """Return help text for this command."""
-        ...
+        """Render one consistent help block from the command metadata."""
+        spec = self.describe()
+        lines = [spec.summary, f"Usage: {spec.usage}"]
+        if spec.details:
+            lines.extend(["", spec.details])
+        if spec.examples:
+            lines.extend(["", "Examples:"])
+            lines.extend(f"  {example}" for example in spec.examples)
+        return "\n".join(lines)
 
 
 class CommandRouter:

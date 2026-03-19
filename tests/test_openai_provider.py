@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from localagentcli.models.backends.base import ModelMessage
-from localagentcli.providers.openai import OpenAIProvider
+from localagentcli.providers.openai import OpenAIProvider, _OpenAIToolCallAccumulator
 
 
 def _make_provider(**kwargs: object) -> OpenAIProvider:
@@ -136,7 +136,8 @@ class TestOpenAIStreamGenerate:
         with patch.object(provider._client, "stream", return_value=mock_resp):
             chunks = list(provider.stream_generate([ModelMessage(role="user", content="Hi")]))
         assert chunks[-1].is_done is True
-        assert "429" in chunks[-1].text
+        assert "429" in chunks[0].text
+        assert chunks[0].kind == "error"
 
     def test_stream_timeout(self):
         provider = _make_provider()
@@ -145,7 +146,8 @@ class TestOpenAIStreamGenerate:
         ):
             chunks = list(provider.stream_generate([ModelMessage(role="user", content="Hi")]))
         assert chunks[-1].is_done is True
-        assert "Connection error" in chunks[-1].text
+        assert "Connection error" in chunks[0].text
+        assert chunks[0].kind == "error"
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +229,11 @@ class TestOpenAICapabilities:
         caps = _make_provider().capabilities()
         assert caps == {"tool_use": True, "reasoning": False, "streaming": True}
 
+    def test_reasoning_depends_on_active_model(self):
+        provider = _make_provider(default_model="gpt-5")
+
+        assert provider.supports_reasoning() is True
+
 
 # ---------------------------------------------------------------------------
 # _format_messages() tests
@@ -305,26 +312,53 @@ class TestOpenAIBuildRequestBody:
 class TestOpenAIParseSSE:
     def test_parse_text_chunk(self):
         line = 'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}'
-        chunk = OpenAIProvider._parse_sse_line(line)
-        assert chunk is not None
-        assert chunk.text == "Hi"
+        chunks = OpenAIProvider._parse_sse_line(line, _OpenAIToolCallAccumulator())
+        assert chunks[0].text == "Hi"
 
     def test_parse_done(self):
-        chunk = OpenAIProvider._parse_sse_line("data: [DONE]")
-        assert chunk is not None
-        assert chunk.is_done is True
+        chunks = OpenAIProvider._parse_sse_line("data: [DONE]", _OpenAIToolCallAccumulator())
+        assert chunks[-1].is_done is True
 
     def test_parse_empty_line(self):
-        assert OpenAIProvider._parse_sse_line("") is None
+        assert OpenAIProvider._parse_sse_line("", _OpenAIToolCallAccumulator()) == []
 
     def test_parse_non_data_line(self):
-        assert OpenAIProvider._parse_sse_line("event: message") is None
+        assert OpenAIProvider._parse_sse_line("event: message", _OpenAIToolCallAccumulator()) == []
 
     def test_parse_invalid_json(self):
-        assert OpenAIProvider._parse_sse_line("data: {invalid}") is None
+        assert (
+            OpenAIProvider._parse_sse_line(
+                "data: {invalid}",
+                _OpenAIToolCallAccumulator(),
+            )
+            == []
+        )
 
     def test_parse_finish_reason(self):
         line = 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}'
-        chunk = OpenAIProvider._parse_sse_line(line)
-        assert chunk is not None
-        assert chunk.is_done is True
+        chunks = OpenAIProvider._parse_sse_line(line, _OpenAIToolCallAccumulator())
+        assert chunks[-1].is_done is True
+        assert chunks[-1].payload == {"finish_reason": "stop"}
+
+    def test_parse_tool_call_delta(self):
+        accumulator = _OpenAIToolCallAccumulator()
+        chunks = OpenAIProvider._parse_sse_line(
+            (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"id":"call_1","function":{"name":"file_read",'
+                '"arguments":"{\\"path\\":"}}]},"finish_reason":null}]}'
+            ),
+            accumulator,
+        )
+
+        assert chunks[0].kind == "notification"
+        completed = OpenAIProvider._parse_sse_line(
+            (
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"arguments":"\\"notes.txt\\"}"}}]},'
+                '"finish_reason":"tool_calls"}]}'
+            ),
+            accumulator,
+        )
+        assert completed[0].kind == "tool_call"
+        assert completed[0].tool_call_data["function"]["name"] == "file_read"

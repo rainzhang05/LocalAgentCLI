@@ -9,6 +9,24 @@ description = "A production-grade, local-first AI CLI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "rainzhang05"}]
+keywords = ["ai", "agent", "cli", "llm", "local models"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 
 dependencies = [
     "prompt-toolkit>=3.0",
@@ -49,8 +67,15 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.5",
+    "twine>=5.1",
     "types-toml>=0.10",
 ]
+
+[project.urls]
+Homepage = "https://github.com/rainzhang05/LocalAgentCLI"
+Repository = "https://github.com/rainzhang05/LocalAgentCLI"
+Issues = "https://github.com/rainzhang05/LocalAgentCLI/issues"
+Changelog = "https://github.com/rainzhang05/LocalAgentCLI/blob/main/CHANGELOG.md"
 
 [project.scripts]
 localagent = "localagentcli.__main__:main"

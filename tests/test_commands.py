@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -217,14 +218,24 @@ class TestSetupCommand:
 
 
 class TestHFTokenCommand:
-    def test_hf_token_command_hides_after_set(self, config, session_manager, tmp_path):
+    def test_hf_token_command_remains_visible_after_set(self, config, session_manager, tmp_path):
         router = _make_router(config, session_manager, tmp_path)
 
         result = router.dispatch("hf-token test-token")
 
         assert result.success
         assert "saved" in result.message.lower()
-        assert "hf-token" not in router.get_visible_commands()
+        assert "hf-token" in router.get_visible_commands()
+
+    def test_hf_token_command_can_replace_existing_token(self, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+
+        first = router.dispatch("hf-token first-token")
+        second = router.dispatch("hf-token second-token")
+
+        assert first.success
+        assert second.success
+        assert os.environ["HF_TOKEN"] == "second-token"
 
 
 class TestSessionCommands:

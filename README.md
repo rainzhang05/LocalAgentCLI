@@ -58,6 +58,7 @@ Common commands:
 /setup
 /mode chat
 /mode agent
+/set
 /models
 /providers list
 /session save my-work
@@ -70,16 +71,15 @@ Remote providers:
 
 - `/providers add`
 - `/providers list`
-- `/providers use <name>`
 - `/providers test <name>`
 
 Local models:
 
+- `/set` to choose the active local model or provider model interactively
 - `/models` for the interactive Hugging Face picker (backend → family → exact model)
 - `/models install hf <repo>`
 - `/models install url <url>`
 - `/models list`
-- `/models use <name[@version]>`
 - `/models inspect <name[@version]>`
 
 ## Development

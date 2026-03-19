@@ -34,9 +34,14 @@ class TestSessionLifecycleIntegration:
         session.history.append(Message(role="user", content="persist me", timestamp=datetime.now()))
 
         workspace = str(tmp_path / "workspace")
-        with patch(
-            "localagentcli.commands.setup_cmd.Prompt.ask",
-            side_effect=[workspace, "chat", "debug"],
+        with (
+            patch(
+                "localagentcli.commands.setup_cmd.Prompt.ask",
+                side_effect=[workspace, "chat", "debug"],
+            ),
+            patch(
+                "localagentcli.commands.setup_cmd.supports_interactive_prompt", return_value=True
+            ),
         ):
             result = ui._router.dispatch("setup")
 

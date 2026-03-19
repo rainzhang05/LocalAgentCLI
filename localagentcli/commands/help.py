@@ -7,8 +7,9 @@ from localagentcli.commands.router import CommandHandler, CommandResult, Command
 # Command groupings for organized help display
 COMMAND_GROUPS = [
     ("System", ["help", "setup", "status", "config", "exit"]),
+    ("Target", ["set"]),
     ("Mode", ["mode chat", "mode agent"]),
-    ("Agent", ["agent approve", "agent deny", "agent stop"]),
+    ("Agent", ["agent approve", "agent deny"]),
     ("Session", ["session new", "session save", "session load", "session list", "session clear"]),
     (
         "Model",
@@ -17,7 +18,6 @@ COMMAND_GROUPS = [
             "models search",
             "models install",
             "models remove",
-            "models use",
             "models inspect",
         ],
     ),
@@ -27,7 +27,6 @@ COMMAND_GROUPS = [
             "providers list",
             "providers add",
             "providers remove",
-            "providers use",
             "providers test",
         ],
     ),
@@ -50,13 +49,17 @@ class HelpHandler(CommandHandler):
         lines = ["Available commands:", ""]
 
         for group_name, command_names in COMMAND_GROUPS:
-            lines.append(f"  {group_name}:")
+            group_lines: list[str] = []
             for name in command_names:
                 if name in commands:
                     handler = commands[name]
                     # Get first line of help text as summary
                     summary = handler.help_text().split("\n")[0]
-                    lines.append(f"    /{name:<20s} {summary}")
+                    group_lines.append(f"    /{name:<20s} {summary}")
+            if not group_lines:
+                continue
+            lines.append(f"  {group_name}:")
+            lines.extend(group_lines)
             lines.append("")
 
         lines.append("Type /help <command> for detailed help on a specific command.")

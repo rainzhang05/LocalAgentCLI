@@ -302,8 +302,8 @@ class ModelsParentHandler(CommandHandler):
             "  /models install hf <repo>       Install from HuggingFace\n"
             "  /models install url <url>       Install from URL\n"
             "  /models remove <name[@version]> Remove a model\n"
-            "  /models use <name[@version]>    Set active model\n"
-            "  /models inspect <name[@version]> Show model details"
+            "  /models inspect <name[@version]> Show model details\n"
+            "Use /set to switch the active local or remote model."
         )
 
     def _pick_featured_model(self) -> FeaturedModel | None:
@@ -480,9 +480,19 @@ class ModelsRemoveHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error(
-                "Model name required.\nUsage: /models remove <name[@version]>"
+            if not supports_interactive_prompt():
+                return CommandResult.error(
+                    "Model name required.\nUsage: /models remove <name[@version]>"
+                )
+            if not self._registry.list_models():
+                return CommandResult.ok("No models installed. Use /models install to add one.")
+            selection = _select_installed_model_option(
+                self._registry,
+                "Choose a model to remove",
             )
+            if selection is None:
+                return CommandResult.ok("Model removal cancelled.")
+            args = [selection.value]
 
         name, version = _parse_name_version(args[0])
 
@@ -543,7 +553,20 @@ class ModelsUseHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error("Model name required.\nUsage: /models use <name[@version]>")
+            if not supports_interactive_prompt():
+                return CommandResult.error(
+                    "Model name required.\nUsage: /models use <name[@version]>"
+                )
+            if not self._registry.list_models():
+                return CommandResult.ok("No models installed. Use /models install to add one.")
+            selection = _select_installed_model_option(
+                self._registry,
+                "Choose a local model",
+                default=self._session_manager.current.model,
+            )
+            if selection is None:
+                return CommandResult.ok("Model selection cancelled.")
+            args = [selection.value]
 
         name, version = _parse_name_version(args[0])
         entry = self._registry.get_model(name, version)
@@ -562,9 +585,10 @@ class ModelsUseHandler(CommandHandler):
 
     def help_text(self) -> str:
         return (
-            "Set the active model for this session.\n"
+            "Set the active local model for this session.\n"
             "Usage: /models use <name>        Use latest version\n"
-            "       /models use <name@v1>     Use specific version"
+            "       /models use <name@v1>     Use specific version\n"
+            "Prefer /set for interactive target selection."
         )
 
 
@@ -576,9 +600,20 @@ class ModelsInspectHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error(
-                "Model name required.\nUsage: /models inspect <name[@version]>"
+            if not supports_interactive_prompt():
+                return CommandResult.error(
+                    "Model name required.\nUsage: /models inspect <name[@version]>"
+                )
+            if not self._registry.list_models():
+                return CommandResult.ok("No models installed. Use /models install to add one.")
+            selection = _select_installed_model_option(
+                self._registry,
+                "Choose a model to inspect",
+                default="",
             )
+            if selection is None:
+                return CommandResult.ok("Model inspection cancelled.")
+            args = [selection.value]
 
         name, version = _parse_name_version(args[0])
         entry = self._registry.get_model(name, version)
@@ -635,6 +670,7 @@ def register(
     router.register(
         "models use",
         ModelsUseHandler(registry, hardware_detector, session_manager, console),
+        visible_in_menu=False,
     )
     router.register("models inspect", ModelsInspectHandler(registry))
 
@@ -658,10 +694,41 @@ def _activate_model_entry(
     session = session_manager.current
     session.model = f"{entry.name}@{entry.version}"
     session.provider = ""
+    session.touch()
 
     return CommandResult.ok(
         f"Active model set to '{entry.name}' ({entry.version}, {entry.format})."
     )
+
+
+def build_model_selection_options(registry: ModelRegistry) -> list[SelectionOption]:
+    """Build interactive selection options for installed model entries."""
+    options: list[SelectionOption] = []
+    for entry in registry.list_models():
+        label = f"{entry.name}@{entry.version}"
+        repo = str(entry.metadata.get("repo", ""))
+        options.append(
+            SelectionOption(
+                value=label,
+                label=label,
+                description=f"{entry.format} • {_fmt_size(entry.size_bytes)}",
+                aliases=(entry.name, entry.version, repo),
+            )
+        )
+    return options
+
+
+def _select_installed_model_option(
+    registry: ModelRegistry,
+    message: str,
+    *,
+    default: str | None = None,
+) -> SelectionOption | None:
+    """Prompt for one installed model entry."""
+    options = build_model_selection_options(registry)
+    if not options:
+        return None
+    return select_option(message, options, default=default)
 
 
 def _backend_options() -> list[SelectionOption]:

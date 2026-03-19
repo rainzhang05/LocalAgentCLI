@@ -26,6 +26,7 @@ from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import (
     ModelBackend,
     backend_label,
+    backend_requirement_names,
     check_backend_dependencies,
     install_backend_dependencies,
 )
@@ -309,12 +310,12 @@ class ShellUI:
         if backend_name == "mlx" and sys.platform != "darwin":
             return True
 
-        installed, missing = check_backend_dependencies(backend_name)
+        installed, _missing = check_backend_dependencies(backend_name)
         if installed:
             return True
 
         label = backend_label(backend_name)
-        dependency_list = ", ".join(missing)
+        dependency_list = ", ".join(backend_requirement_names(backend_name))
         try:
             should_install = Confirm.ask(
                 f"The {label} backend requires {dependency_list}. Install it now?",

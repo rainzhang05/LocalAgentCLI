@@ -174,12 +174,45 @@ class OpenAIProvider(RemoteProvider):
             body["temperature"] = kwargs["temperature"]
         if "max_tokens" in kwargs:
             body["max_tokens"] = kwargs["max_tokens"]
+        tool_definitions = kwargs.get("tools")
+        if isinstance(tool_definitions, list) and tool_definitions:
+            body["tools"] = [
+                {
+                    "type": "function",
+                    "function": definition,
+                }
+                for definition in tool_definitions
+                if isinstance(definition, dict)
+            ]
+        if "tool_choice" in kwargs:
+            body["tool_choice"] = kwargs["tool_choice"]
         return body
 
     @staticmethod
     def _format_messages(messages: list[ModelMessage]) -> list[dict]:
         """Convert ModelMessage list to OpenAI message format."""
-        return [{"role": m.role, "content": m.content} for m in messages]
+        formatted: list[dict] = []
+        for message in messages:
+            if message.role == "assistant" and message.metadata.get("tool_calls"):
+                formatted.append(
+                    {
+                        "role": "assistant",
+                        "content": message.content or None,
+                        "tool_calls": message.metadata["tool_calls"],
+                    }
+                )
+                continue
+            if message.role == "tool":
+                formatted.append(
+                    {
+                        "role": "tool",
+                        "content": message.content,
+                        "tool_call_id": message.metadata.get("tool_call_id", ""),
+                    }
+                )
+                continue
+            formatted.append({"role": message.role, "content": message.content})
+        return formatted
 
     @staticmethod
     def _parse_sse_line(line: str) -> StreamChunk | None:

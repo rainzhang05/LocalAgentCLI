@@ -54,6 +54,10 @@ class GenericRESTProvider(RemoteProvider):
             "response_mapping", DEFAULT_RESPONSE_MAPPING
         )
         self._endpoint: str = self._options.get("endpoint", "/chat/completions")
+        self._models_endpoint: str = self._options.get("models_endpoint", "/models")
+        self._models_field: str = self._options.get("models_field", "data")
+        self._model_id_field: str = self._options.get("model_id_field", "id")
+        self._model_name_field: str = self._options.get("model_name_field", "id")
 
         timeout = self._options.get("timeout", 30)
         headers: dict[str, str] = {"Authorization": f"Bearer {self._api_key}"}
@@ -136,7 +140,43 @@ class GenericRESTProvider(RemoteProvider):
             )
 
     def list_models(self) -> list[RemoteModelInfo]:
-        """Return the default model (no auto-discovery)."""
+        """Try to discover models from a configured endpoint, then fall back."""
+        try:
+            response = self._client.get(self._models_endpoint)
+            response.raise_for_status()
+            payload = response.json()
+            raw_models = payload
+            if not isinstance(raw_models, list):
+                extracted = extract_field(payload, self._models_field)
+                raw_models = extracted if isinstance(extracted, list) else []
+
+            models: list[RemoteModelInfo] = []
+            for raw_model in raw_models:
+                if isinstance(raw_model, str):
+                    model_id = raw_model
+                    model_name = raw_model
+                elif isinstance(raw_model, dict):
+                    model_id = str(extract_field(raw_model, self._model_id_field) or "").strip()
+                    model_name = str(
+                        extract_field(raw_model, self._model_name_field) or model_id
+                    ).strip()
+                else:
+                    continue
+
+                if not model_id:
+                    continue
+                models.append(
+                    RemoteModelInfo(
+                        id=model_id,
+                        name=model_name or model_id,
+                        capabilities=self.capabilities(),
+                    )
+                )
+            if models:
+                return models
+        except Exception:
+            logger.debug("Failed to list models from %s", self._name)
+
         return [
             RemoteModelInfo(
                 id=self._default_model,

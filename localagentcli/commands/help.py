@@ -8,6 +8,7 @@ from localagentcli.commands.router import CommandHandler, CommandResult, Command
 COMMAND_GROUPS = [
     ("System", ["help", "setup", "status", "config", "exit"]),
     ("Mode", ["mode chat", "mode agent"]),
+    ("Agent", ["agent approve", "agent deny", "agent stop"]),
     ("Session", ["session new", "session save", "session load", "session list", "session clear"]),
     (
         "Model",

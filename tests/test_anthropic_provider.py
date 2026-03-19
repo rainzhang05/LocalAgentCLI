@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from localagentcli.models.backends.base import ModelMessage
-from localagentcli.providers.anthropic import ANTHROPIC_MODELS, AnthropicProvider
+from localagentcli.providers.anthropic import AnthropicProvider
 
 
 def _make_provider(**kwargs: object) -> AnthropicProvider:
@@ -207,25 +207,23 @@ class TestAnthropicStreamGenerate:
 class TestAnthropicTestConnection:
     def test_success(self):
         provider = _make_provider()
-        data = {
-            "content": [{"type": "text", "text": "H"}],
-            "stop_reason": "max_tokens",
-        }
-        with patch.object(provider._client, "post", return_value=_mock_response(data)):
+        data = {"data": [{"id": "claude-sonnet-4-5"}]}
+        with patch.object(provider._client, "get", return_value=_mock_response(data)):
             result = provider.test_connection()
         assert result.success is True
+        assert "1 models" in result.message
         assert result.latency_ms > 0
 
     def test_auth_failure(self):
         provider = _make_provider()
-        with patch.object(provider._client, "post", return_value=_mock_response({}, 401)):
+        with patch.object(provider._client, "get", return_value=_mock_response({}, 401)):
             result = provider.test_connection()
         assert result.success is False
         assert "Authentication" in result.message
 
     def test_connection_error(self):
         provider = _make_provider()
-        with patch.object(provider._client, "post", side_effect=httpx.ConnectError("refused")):
+        with patch.object(provider._client, "get", side_effect=httpx.ConnectError("refused")):
             result = provider.test_connection()
         assert result.success is False
 
@@ -236,18 +234,26 @@ class TestAnthropicTestConnection:
 
 
 class TestAnthropicListModels:
-    def test_returns_static_list(self):
+    def test_returns_api_list(self):
         provider = _make_provider()
-        models = provider.list_models()
-        assert len(models) == len(ANTHROPIC_MODELS)
-        ids = {m.id for m in models}
-        assert "claude-sonnet-4-20250514" in ids
+        data = {
+            "data": [
+                {"id": "claude-sonnet-4-5", "display_name": "Claude Sonnet 4.5"},
+                {"id": "claude-opus-4-6", "display_name": "Claude Opus 4.6"},
+            ]
+        }
+        with patch.object(provider._client, "get", return_value=_mock_response(data)):
+            models = provider.list_models()
+        assert len(models) == 2
+        assert models[0].id == "claude-sonnet-4-5"
+        assert models[0].name == "Claude Sonnet 4.5"
 
-    def test_returns_copy(self):
+    def test_falls_back_to_default_model_on_error(self):
         provider = _make_provider()
-        m1 = provider.list_models()
-        m2 = provider.list_models()
-        assert m1 is not m2
+        with patch.object(provider._client, "get", side_effect=Exception("fail")):
+            models = provider.list_models()
+        assert len(models) == 1
+        assert models[0].id == provider.default_model
 
 
 # ---------------------------------------------------------------------------

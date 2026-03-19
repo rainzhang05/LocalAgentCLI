@@ -12,6 +12,7 @@ from localagentcli.commands.providers import (
     build_remote_model_selection_options,
 )
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.config.manager import ConfigManager
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.registry import ProviderRegistry
@@ -29,20 +30,27 @@ class SetHandler(CommandHandler):
         model_registry: ModelRegistry,
         provider_registry: ProviderRegistry,
         hardware_detector: HardwareDetector,
+        config: ConfigManager,
         session_manager: SessionManager,
         console: Console,
         selector: Selector | None = None,
+        *,
+        persist_default: bool = False,
     ):
         self._model_registry = model_registry
         self._provider_registry = provider_registry
         self._hardware_detector = hardware_detector
+        self._config = config
         self._session_manager = session_manager
         self._console = console
         self._selector = selector or _prompt_selector
+        self._persist_default = persist_default
 
     def execute(self, args: list[str]) -> CommandResult:
         if args:
-            return CommandResult.error("/set does not accept arguments.\nUsage: /set")
+            return CommandResult.error(
+                f"{self._usage()} does not accept arguments.\nUsage: {self._usage()}"
+            )
         if not supports_interactive_prompt():
             return CommandResult.ok(
                 "Interactive target picker requires a terminal TTY.\n\n" + self.help_text()
@@ -58,13 +66,17 @@ class SetHandler(CommandHandler):
         return CommandResult.error(f"Unknown target type '{target_type}'.")
 
     def help_text(self) -> str:
+        action = "Choose the active local model or remote provider model."
+        if self._persist_default:
+            action = "Choose the default CLI target for new sessions."
         return (
-            "Choose the active local model or remote provider model.\n"
-            "Usage: /set\n"
+            f"{action}\n"
+            f"Usage: {self._usage()}\n"
             "Flow:\n"
             "  1. Choose Local models or Providers\n"
             "  2. For providers, choose the provider then the remote model\n"
-            "  3. For local models, choose one installed model"
+            "  3. For local models, choose one installed model\n"
+            "See also: /set default"
         )
 
     def _choose_target_type(self) -> str | None:
@@ -93,12 +105,7 @@ class SetHandler(CommandHandler):
         if not options:
             return CommandResult.ok("No models installed. Use /models install to add one.")
 
-        default = (
-            self._session_manager.current.model
-            if not self._session_manager.current.provider
-            else None
-        )
-        selection = self._selector("Choose a local model", options, default)
+        selection = self._selector("Choose a local model", options, None)
         if selection is None:
             return CommandResult.ok("Target selection cancelled.")
 
@@ -108,12 +115,13 @@ class SetHandler(CommandHandler):
             return CommandResult.error(
                 f"Model '{selection.value}' not found.\nUse /models list to see installed models."
             )
-        return _activate_model_entry(
-            entry,
-            self._hardware_detector,
-            self._session_manager,
-            self._console,
+        result = _activate_model_entry(
+            entry, self._hardware_detector, self._session_manager, self._console
         )
+        if self._persist_default:
+            self._persist_target("", selection.value)
+            return CommandResult.ok(f"Default model set to '{selection.value}'.")
+        return result
 
     def _choose_provider_model(self) -> CommandResult:
         provider_options = build_provider_selection_options(self._provider_registry)
@@ -141,23 +149,23 @@ class SetHandler(CommandHandler):
             return CommandResult.error(f"Failed to connect to provider '{entry.name}': {exc}")
 
         try:
-            model_options = build_remote_model_selection_options(provider, entry.default_model)
+            model_options = build_remote_model_selection_options(provider)
         except Exception as exc:
             return CommandResult.error(f"Failed to list models from provider '{entry.name}': {exc}")
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
         if not model_options:
             return CommandResult.error(
                 f"No models available from provider '{entry.name}'. Check /providers test."
             )
 
-        default_model = (
-            self._session_manager.current.model
-            if self._session_manager.current.provider == entry.name
-            else entry.default_model
-        )
         model_selection = self._selector(
             "Choose a provider model",
             model_options,
-            default_model,
+            None,
         )
         if model_selection is None:
             return CommandResult.ok("Target selection cancelled.")
@@ -166,9 +174,26 @@ class SetHandler(CommandHandler):
         session.provider = entry.name
         session.model = model_selection.value
         session.touch()
-        return CommandResult.ok(
-            f"Active provider set to '{entry.name}' (model: {model_selection.value})."
+        if self._persist_default:
+            self._persist_target(entry.name, model_selection.value)
+        message = (
+            f"{self._target_label()} provider set to '{entry.name}' "
+            f"(model: {model_selection.value})."
         )
+        return CommandResult.ok(message)
+
+    def _persist_target(self, provider_name: str, model_name: str) -> None:
+        """Persist the selected target as the CLI default."""
+        self._config.set("provider.active_provider", provider_name)
+        self._config.set("model.active_model", model_name)
+
+    def _target_label(self) -> str:
+        """Return a user-facing label for the handler scope."""
+        return "Default" if self._persist_default else "Active"
+
+    def _usage(self) -> str:
+        """Return the correct usage string for this handler."""
+        return "/set default" if self._persist_default else "/set"
 
 
 def register(
@@ -176,6 +201,7 @@ def register(
     model_registry: ModelRegistry,
     provider_registry: ProviderRegistry,
     hardware_detector: HardwareDetector,
+    config: ConfigManager,
     session_manager: SessionManager,
     console: Console,
 ) -> None:
@@ -186,8 +212,21 @@ def register(
             model_registry,
             provider_registry,
             hardware_detector,
+            config,
             session_manager,
             console,
+        ),
+    )
+    router.register(
+        "set default",
+        SetHandler(
+            model_registry,
+            provider_registry,
+            hardware_detector,
+            config,
+            session_manager,
+            console,
+            persist_default=True,
         ),
     )
 

@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, nested selection menus now keep matching options visible while typing and backspacing, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/models` now offers live Hugging Face family/model discovery across many model families, repository-root `AGENTS.md` files are auto-detected and injected as default system instructions, Hugging Face and direct URL downloads now refresh their progress output continuously, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, nested selection menus now keep matching options visible while typing and backspacing, `/set` now unifies local/provider target selection, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/models` now offers live Hugging Face family/model discovery across many model families, repository-root `AGENTS.md` files are auto-detected and injected as default system instructions, normalized model output now preserves primary vs secondary event streams across chat and agent flows, agent mode now has triage-based direct-answer and single-step fast paths, providers now use model-aware capability checks with retry/close hardening, Hugging Face and direct URL downloads now refresh their progress output continuously, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, local backends now expose cancellation hooks with active safetensors interruption, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -48,9 +48,9 @@ After implementing a component:
 |---|---|---|
 | `[x]` | Provider base class (ABC) | 2026-03-18 |
 | `[x]` | Provider registry | 2026-03-18 |
-| `[x]` | OpenAI-compatible provider | 2026-03-19 — model list now comes from the provider `GET /models` response with default-model fallback |
-| `[x]` | Anthropic provider | 2026-03-19 — model list and connection test now use the live `GET /v1/models` API with default-model fallback |
-| `[x]` | Generic REST provider | 2026-03-19 — configurable model discovery endpoint/fields now back provider model selection, with default-model fallback |
+| `[x]` | OpenAI-compatible provider | 2026-03-19 — model list now comes from the provider `GET /models` response with default-model fallback, streamed tool-call deltas are accumulated, and capability checks are resolved per selected model id |
+| `[x]` | Anthropic provider | 2026-03-19 — model list and connection test now use the live `GET /v1/models` API with default-model fallback, and mixed text/thinking/tool blocks are preserved in order for non-streaming and streaming paths |
+| `[x]` | Generic REST provider | 2026-03-19 — configurable model discovery endpoint/fields now back provider model selection, with default-model fallback plus optional mapped reasoning/tool-call fields |
 | `[x]` | API key manager (keychain + encrypted) | 2026-03-18 |
 | `[x]` | `/providers add` command | 2026-03-18 |
 | `[x]` | `/providers list` command | 2026-03-18 |
@@ -58,8 +58,8 @@ After implementing a component:
 | `[x]` | `/providers use` command | 2026-03-18 — retained as a hidden compatibility alias behind `/set` |
 | `[x]` | `/set` target-selection command | 2026-03-18 — unified picker for local models and provider models |
 | `[x]` | `/providers test` command | 2026-03-18 |
-| `[x]` | SSE streaming support | 2026-03-18 |
-| `[x]` | Model abstraction layer | 2026-03-18 |
+| `[x]` | SSE streaming support | 2026-03-19 — normalized chunk pipeline now preserves final text, reasoning, tool calls, notifications, errors, and done events consistently across providers |
+| `[x]` | Model abstraction layer | 2026-03-19 — `generate()` now collects the same normalized stream pipeline used by `stream_generate()` |
 
 ---
 
@@ -68,13 +68,13 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Model registry (`registry.json`) | 2026-03-18 — ModelEntry dataclass, JSON persistence with filelock |
-| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, plus faster fallback progress refresh |
+| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, plus faster fallback progress refresh and conservative capability inference during registration |
 | `[x]` | Model installer (URL download) | 2026-03-19 — httpx streaming with resume support and continuously refreshed progress output |
 | `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-19 — auto-detection pipeline with unsupported-backend-aware repair for stale registry entries |
 | `[x]` | Backend base class (ABC) | 2026-03-17 — already existed from Phase 2 |
-| `[x]` | MLX backend | 2026-03-19 — macOS Apple Silicon, lazy mlx-lm import, sampler-based generation compatibility |
-| `[x]` | GGUF backend | 2026-03-18 — all platforms, lazy llama-cpp-python import |
-| `[x]` | Safetensors backend | 2026-03-18 — all platforms, lazy torch/transformers import |
+| `[x]` | MLX backend | 2026-03-19 — macOS Apple Silicon, lazy mlx-lm import, sampler-based generation compatibility, and best-effort cancellation hook |
+| `[x]` | GGUF backend | 2026-03-19 — all platforms, lazy llama-cpp-python import, and best-effort cancellation hook |
+| `[x]` | Safetensors backend | 2026-03-19 — all platforms, lazy torch/transformers import, plus threaded-stream cancellation via stopping criteria |
 | `[x]` | Hardware detection and warnings | 2026-03-18 — CPU/RAM/GPU detection, >80% warning |
 | `[x]` | `/models list` command | 2026-03-18 |
 | `[x]` | `/models search` command | 2026-03-18 |
@@ -91,8 +91,8 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Chat controller | 2026-03-18 — `localagentcli/agents/chat.py` routes chat turns through the model abstraction layer |
-| `[x]` | Streaming output renderer | 2026-03-18 — reasoning/activity-aware renderer in `localagentcli/shell/streaming.py` |
-| `[x]` | Reasoning panel display | 2026-03-18 — buffered reasoning rendered in a distinct panel above assistant output |
+| `[x]` | Streaming output renderer | 2026-03-19 — normalized primary/secondary renderer now dims reasoning/tool-call/provider details in a capped `Details` panel while keeping primary assistant output high-contrast |
+| `[x]` | Reasoning panel display | 2026-03-19 — generalized into the secondary `Details` panel so reasoning and other low-priority model events share one normalized display path |
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-18 |
@@ -119,13 +119,13 @@ After implementing a component:
 | `[x]` | `git_status` tool | 2026-03-18 |
 | `[x]` | `git_diff` tool | 2026-03-18 |
 | `[x]` | `git_commit` tool | 2026-03-18 |
-| `[x]` | Agent controller | 2026-03-18 — session-integrated task orchestration with persistence, compaction, approvals, and tool-result history |
-| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-18 — iterative per-step execution with tool calling, replanning, and completion/failure events |
-| `[x]` | Task planner | 2026-03-18 — model-driven JSON plans with heuristic fallback and replan support |
+| `[x]` | Agent controller | 2026-03-19 — session-integrated task orchestration now includes triage-based direct-answer fast path, single-step synthesis, controller reuse, remote capability validation by selected model id, and interruption-aware cancellation |
+| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-19 — iterative per-step execution now accepts synthesized plans, enforces inactivity timeout, and replans around repeated failures before terminating |
+| `[x]` | Task planner | 2026-03-19 — model-driven JSON plans with heuristic fallback and replan support, now generating only the minimum number of steps needed instead of a fixed 2-6 step shape |
 | `[x]` | Agent events system | 2026-03-18 — structured plan, step, reasoning, tool, completion, and failure events rendered by the shell |
 | `[x]` | `/agent approve` command | 2026-03-18 — resumes pending tool actions and now persists autonomous approvals for the current and future sessions |
 | `[x]` | `/agent deny` command | 2026-03-18 — rejects the pending tool action and resumes the agent loop |
-| `[x]` | Ctrl+C agent stop path | 2026-03-19 — stops the active agent task from the shell and exits the idle shell after a consecutive double press without prompting to save |
+| `[x]` | Ctrl+C agent stop path | 2026-03-19 — stops the active agent task from the shell, cancels active generation when supported, and exits the idle shell after a consecutive double press without prompting to save |
 
 ---
 
@@ -151,7 +151,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 701 tests total across unit, component, integration, and CLI coverage |
+| `[x]` | Unit tests | 2026-03-19 — 712 tests total across unit, component, integration, and CLI coverage, including normalized chunk handling, provider hardening, task triage, shell rendering, and backend cancellation |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -180,13 +180,13 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `docs/architecture.md` | Complete |
 | `[x]` | `docs/commands.md` | Complete |
-| `[x]` | `docs/model-system.md` | Complete |
-| `[x]` | `docs/remote-providers.md` | Complete |
-| `[x]` | `docs/agent-system.md` | Complete |
+| `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, and backend cancellation behavior documented |
+| `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, and normalized error/output semantics documented |
+| `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, and updated safeguard behavior documented |
 | `[x]` | `docs/tool-system.md` | Complete |
 | `[x]` | `docs/safety-and-permissions.md` | Complete |
 | `[x]` | `docs/session-and-config.md` | Complete |
-| `[x]` | `docs/cli-and-ux.md` | Complete |
+| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, and normalized streaming UX documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |

@@ -9,7 +9,7 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterable, Iterator, Literal
 
 BACKEND_DEPENDENCIES: dict[str, list[str]] = {
     "mlx": ["mlx", "mlx_lm"],
@@ -41,11 +41,59 @@ class StreamChunk:
     """A single chunk of streaming model output."""
 
     text: str = ""
+    kind: Literal["final_text", "reasoning", "tool_call", "notification", "error", "done"] = (
+        "final_text"
+    )
+    importance: Literal["primary", "secondary"] = "primary"
+    transient: bool = False
+    payload: dict | None = None
     is_reasoning: bool = False
     is_tool_call: bool = False
     tool_call_data: dict | None = None
     is_done: bool = False
     usage: dict | None = None
+
+    def __post_init__(self) -> None:
+        """Keep legacy boolean flags aligned with the normalized chunk kind."""
+        if self.is_reasoning:
+            self.kind = "reasoning"
+        elif self.is_tool_call:
+            self.kind = "tool_call"
+        elif self.is_done:
+            self.kind = "done"
+
+        if self.kind == "reasoning":
+            self.is_reasoning = True
+            if self.importance == "primary":
+                self.importance = "secondary"
+        elif self.kind == "tool_call":
+            self.is_tool_call = True
+            if self.importance == "primary":
+                self.importance = "secondary"
+            if self.tool_call_data is None and isinstance(self.payload, dict):
+                self.tool_call_data = self.payload
+        elif self.kind == "done":
+            self.is_done = True
+        elif self.kind in {"notification", "error"} and self.importance == "primary":
+            self.importance = "secondary"
+
+        if self.payload is None and self.tool_call_data is not None:
+            self.payload = self.tool_call_data
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the chunk for session metadata and tests."""
+        return {
+            "text": self.text,
+            "kind": self.kind,
+            "importance": self.importance,
+            "transient": self.transient,
+            "payload": self.payload,
+            "is_reasoning": self.is_reasoning,
+            "is_tool_call": self.is_tool_call,
+            "tool_call_data": self.tool_call_data,
+            "is_done": self.is_done,
+            "usage": self.usage,
+        }
 
 
 @dataclass
@@ -57,6 +105,7 @@ class GenerationResult:
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     finish_reason: str = ""
+    chunks: list[StreamChunk] = field(default_factory=list)
 
 
 @dataclass
@@ -84,6 +133,10 @@ class ModelBackend(ABC):
     def unload(self) -> None:
         """Unload the model and free memory."""
         ...
+
+    def cancel(self) -> None:
+        """Cancel an in-flight generation if the backend supports it."""
+        return None
 
     @abstractmethod
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
@@ -121,6 +174,55 @@ class ModelBackend(ABC):
     def capabilities(self) -> dict:
         """Return a dict of all capability flags."""
         ...
+
+
+def collect_generation_result(chunks: Iterable[StreamChunk]) -> GenerationResult:
+    """Collect normalized stream chunks into a GenerationResult."""
+    ordered_chunks: list[StreamChunk] = []
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls: list[dict] = []
+    usage: dict = {}
+    finish_reason = ""
+    error_messages: list[str] = []
+
+    for chunk in chunks:
+        ordered_chunks.append(chunk)
+
+        if chunk.kind == "final_text" and chunk.text:
+            text_parts.append(chunk.text)
+            continue
+        if chunk.kind == "reasoning" and chunk.text:
+            reasoning_parts.append(chunk.text)
+            continue
+        if chunk.kind == "tool_call":
+            payload = chunk.tool_call_data or chunk.payload
+            if isinstance(payload, dict):
+                tool_calls.append(payload)
+            continue
+        if chunk.kind == "error" and chunk.text:
+            error_messages.append(chunk.text)
+            continue
+        if chunk.kind == "done":
+            if isinstance(chunk.usage, dict):
+                usage.update(chunk.usage)
+            payload = chunk.payload or {}
+            if isinstance(payload, dict):
+                finish_reason = str(payload.get("finish_reason", finish_reason) or finish_reason)
+
+    if error_messages and "error" not in usage:
+        usage["error"] = "\n".join(error_messages)
+    if usage.get("error") and not finish_reason:
+        finish_reason = "error"
+
+    return GenerationResult(
+        text="".join(text_parts),
+        reasoning="".join(reasoning_parts),
+        tool_calls=tool_calls,
+        usage=usage,
+        finish_reason=finish_reason,
+        chunks=ordered_chunks,
+    )
 
 
 def backend_label(backend: str) -> str:

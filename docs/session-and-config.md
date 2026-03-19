@@ -32,10 +32,10 @@ workspace = "."                 # Default workspace path (current directory)
 logging_level = "normal"        # "normal" | "verbose" | "debug"
 
 [model]
-active_model = ""               # Name of the active local model (empty = none)
+active_model = ""               # CLI-wide default target identifier
 
 [provider]
-active_provider = ""            # Name of the active remote provider (empty = none)
+active_provider = ""            # CLI-wide default provider for remote targets
 
 [safety]
 approval_mode = "balanced"      # "balanced" | "autonomous"
@@ -57,7 +57,6 @@ inactivity = 600                # Seconds of agent inactivity before pause
 # [providers.openai]
 # type = "openai"
 # base_url = "https://api.openai.com/v1"
-# default_model = "gpt-4o"
 ```
 
 ### Configurable Fields
@@ -67,8 +66,8 @@ inactivity = 600                # Seconds of agent inactivity before pause
 | `general.default_mode` | string | `"agent"` | Mode at startup |
 | `general.workspace` | string | `"."` | Default workspace path |
 | `general.logging_level` | string | `"normal"` | Log verbosity |
-| `model.active_model` | string | `""` | Active local model name |
-| `provider.active_provider` | string | `""` | Active remote provider name |
+| `model.active_model` | string | `""` | CLI-wide default target identifier. For local targets this is `<name>@<version>`; for remote targets this is the selected remote model id. |
+| `provider.active_provider` | string | `""` | CLI-wide default remote provider name. Empty means the default target is local or unset. |
 | `safety.approval_mode` | string | `"balanced"` | Approval mode (`balanced` or `autonomous`) |
 | `generation.temperature` | float | `0.7` | Sampling temperature |
 | `generation.max_tokens` | int | `4096` | Maximum tokens to generate |
@@ -115,6 +114,13 @@ When a value is set via `/config`, the system validates:
 4. For enum-like fields (mode, logging_level), the value is one of the allowed options
 
 Invalid values are rejected with a clear error message.
+
+### Interactive `/config` Editing
+
+- In an interactive shell, `/config` opens a picker of valid config keys instead of only printing the file contents
+- Enum-like keys use choice menus so only legitimate values can be selected
+- Free-form keys still route through the same schema validation before they are saved
+- In non-interactive environments, `/config` without arguments continues to print the current configuration
 
 ---
 
@@ -182,6 +188,8 @@ class Message:
 
 - Command: `/session new`
 - Creates a fresh session with default values
+- Applies the CLI-wide default target selected via `/set default`
+- If that stored target is no longer valid, the shell falls back to another available installed model or configured provider model when possible
 - Clears history, tasks, and config overrides
 - Does not affect global config
 

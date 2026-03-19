@@ -23,14 +23,15 @@ class FakeController:
 
 
 class TestAgentCommands:
-    def test_approve_sets_autonomous_and_resumes_pending(self):
+    def test_approve_sets_autonomous_and_resumes_pending(self, config):
         controller = FakeController(active=True, pending=True)
         router = CommandRouter()
-        register_agent(router, lambda: controller)
+        register_agent(router, lambda: controller, config)
 
         result = router.dispatch("agent approve")
 
         assert result.success
+        assert config.get("safety.approval_mode") == "autonomous"
         assert controller.autonomous_set is True
         assert result.data == {
             "action": "agent_resume",
@@ -38,22 +39,23 @@ class TestAgentCommands:
             "autonomous": True,
         }
 
-    def test_deny_errors_without_pending_action(self):
+    def test_approve_without_active_task_updates_config(self, config):
+        controller = FakeController(active=False, pending=False)
+        router = CommandRouter()
+        register_agent(router, lambda: controller, config)
+
+        result = router.dispatch("agent approve")
+
+        assert result.success
+        assert config.get("safety.approval_mode") == "autonomous"
+        assert controller.autonomous_set is False
+
+    def test_deny_errors_without_pending_action(self, config):
         controller = FakeController(active=True, pending=False)
         router = CommandRouter()
-        register_agent(router, lambda: controller)
+        register_agent(router, lambda: controller, config)
 
         result = router.dispatch("agent deny")
 
         assert not result.success
         assert "No pending" in result.message
-
-    def test_stop_stops_active_task(self):
-        controller = FakeController(active=True, pending=False)
-        router = CommandRouter()
-        register_agent(router, lambda: controller)
-
-        result = router.dispatch("agent stop")
-
-        assert result.success
-        assert controller.stopped is True

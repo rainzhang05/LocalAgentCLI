@@ -90,14 +90,80 @@ class TestParseNameVersion:
 
 
 class TestModelsParent:
-    def test_no_subcommand_error(self):
-        handler = ModelsParentHandler()
+    @patch("localagentcli.commands.models.supports_interactive_prompt", return_value=False)
+    def test_noninteractive_falls_back_to_help(
+        self,
+        _mock_supports,
+        hw_detector: HardwareDetector,
+        session_manager: SessionManager,
+        console: Console,
+    ):
+        handler = ModelsParentHandler(MagicMock(), hw_detector, session_manager, console)
         result = handler.execute([])
-        assert result.success is False
-        assert "subcommand" in result.message.lower()
+        assert result.success is True
+        assert "Interactive model picker requires a terminal TTY" in result.message
+
+    @patch("localagentcli.commands.models.supports_interactive_prompt", return_value=True)
+    def test_picker_installs_and_activates_selected_model(
+        self,
+        _mock_supports,
+        hw_detector: HardwareDetector,
+        session_manager: SessionManager,
+        console: Console,
+    ):
+        installer = MagicMock(spec=ModelInstaller)
+        installer.install_from_hf.return_value = InstallResult(
+            success=True,
+            message="Installed successfully",
+            model_entry=_make_entry(name="qwen3-8b-gguf", path="/models/qwen3-8b-gguf/v1"),
+        )
+        selector = MagicMock(
+            side_effect=[
+                MagicMock(value="gguf"),
+                MagicMock(value="qwen"),
+                MagicMock(value="qwen3-8b-gguf"),
+            ]
+        )
+        with patch.object(hw_detector, "can_run_model", return_value=(True, [])):
+            handler = ModelsParentHandler(
+                installer,
+                hw_detector,
+                session_manager,
+                console,
+                selector=selector,
+            )
+            result = handler.execute([])
+
+        assert result.success is True
+        assert "Installed 'Qwen3 8B (GGUF)'" in result.message
+        installer.install_from_hf.assert_called_once_with(
+            "Qwen/Qwen3-8B-GGUF",
+            name="qwen3-8b-gguf",
+        )
+        assert session_manager.current.model == "qwen3-8b-gguf@v1"
+        assert session_manager.current.provider == ""
+
+    @patch("localagentcli.commands.models.supports_interactive_prompt", return_value=True)
+    def test_picker_cancelled(
+        self,
+        _mock_supports,
+        hw_detector: HardwareDetector,
+        session_manager: SessionManager,
+        console: Console,
+    ):
+        handler = ModelsParentHandler(
+            MagicMock(),
+            hw_detector,
+            session_manager,
+            console,
+            selector=MagicMock(return_value=None),
+        )
+        result = handler.execute([])
+        assert result.success is True
+        assert "cancelled" in result.message.lower()
 
     def test_help_text(self):
-        handler = ModelsParentHandler()
+        handler = ModelsParentHandler(MagicMock(), MagicMock(), MagicMock(), MagicMock())
         assert "list" in handler.help_text()
         assert "install" in handler.help_text()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -48,12 +49,14 @@ class TestCommandCompleter:
 
         router.register("help", StubHandler())
         router.register("exit", StubHandler())
+        router.register("session", StubHandler(), visible_in_menu=False)
 
         completer = CommandCompleter(router)
         doc = MagicMock()
         doc.text_before_cursor = "/"
         completions = list(completer.get_completions(doc, None))
         assert len(completions) == 2
+        assert {completion.text for completion in completions} == {"/help", "/exit"}
 
     def test_includes_command_help_as_completion_metadata(self):
         router = CommandRouter()
@@ -140,6 +143,7 @@ class TestShellUIInit:
         assert "providers remove" in commands
         assert "providers use" in commands
         assert "providers test" in commands
+        assert "set" in commands
         assert "mode chat" in commands
         assert "mode agent" in commands
 
@@ -309,6 +313,20 @@ class TestShellUIRun:
         ui.run()
         assert ui._prompt_session.prompt.call_count == 2
 
+    def test_double_keyboard_interrupt_exits(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._prompt_session = MagicMock()
+        ui._prompt_session.prompt.side_effect = [KeyboardInterrupt(), KeyboardInterrupt()]
+
+        with patch("localagentcli.shell.ui.time.monotonic", side_effect=[1.0, 2.0]):
+            ui.run()
+
+        assert ui._prompt_session.prompt.call_count == 2
+        calls = [call.args[0] for call in ui._console.print.call_args_list if call.args]
+        assert any("Press Ctrl+C again" in str(call) for call in calls)
+        assert any("Goodbye" in str(call) for call in calls)
+
     def test_eof_exits(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
@@ -399,6 +417,44 @@ class TestShellUIModelResolution:
 
         assert result is False
         assert "loading cancelled" in ui._console.print.call_args.args[0]
+
+    def test_generation_options_include_selected_provider_model(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.provider = "openai"
+        ui._session_manager.current.model = "gpt-5.4-nano"
+
+        options = ui._generation_options()
+
+        assert options["model"] == "gpt-5.4-nano"
+
+    def test_refresh_model_entry_repairs_stale_registry_format(
+        self,
+        config,
+        storage,
+        tmp_path: Path,
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"\x00" * 100)
+        (model_dir / "config.json").write_text(
+            json.dumps({"model_type": "gemma3", "quantization": {"group_size": 64, "bits": 4}})
+        )
+        ui._model_registry.register(
+            ModelEntry(
+                name="demo",
+                version="v1",
+                format="safetensors",
+                path=str(model_dir),
+                metadata={"backend": "safetensors"},
+            )
+        )
+
+        entry = ui._refresh_model_entry("demo", "v1")
+
+        assert entry is not None
+        assert entry.format == "mlx"
+        assert entry.metadata["backend"] == "mlx"
 
 
 class TestShellUIHelpers:

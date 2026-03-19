@@ -288,11 +288,7 @@ class ModelInstaller:
             format=result.format,
             path=str(model_dir),
             size_bytes=size_bytes,
-            capabilities={
-                "tool_use": False,
-                "reasoning": False,
-                "streaming": True,
-            },
+            capabilities=self._infer_capabilities(name, result.metadata, source_info),
             metadata=metadata,
         )
 
@@ -306,6 +302,37 @@ class ModelInstaller:
             f"{result.format} format, {_fmt_size(size_bytes)}[/green]"
         )
         return InstallResult(success=True, model_entry=entry, message="Installed successfully")
+
+    def _infer_capabilities(
+        self,
+        name: str,
+        metadata: dict,
+        source_info: dict,
+    ) -> dict:
+        """Infer conservative capabilities for a newly installed local model."""
+        fingerprints = [
+            name,
+            str(metadata.get("model_type", "")),
+            str(metadata.get("backend", "")),
+            str(source_info.get("repo", "")),
+            str(source_info.get("url", "")),
+        ]
+        fingerprint = " ".join(part.lower() for part in fingerprints if part)
+        reasoning = any(
+            re.search(pattern, fingerprint)
+            for pattern in (
+                r"reason",
+                r"thinking",
+                r"deepseek[-_/]r1",
+                r"\bqwq\b",
+                r"\br1\b",
+            )
+        )
+        return {
+            "tool_use": False,
+            "reasoning": reasoning,
+            "streaming": True,
+        }
 
     def _calculate_size(self, directory: Path) -> int:
         """Calculate total size of all files in a directory."""

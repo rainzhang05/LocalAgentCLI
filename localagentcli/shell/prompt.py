@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
@@ -165,6 +166,7 @@ def select_option(
         validate_while_typing=False,
         bottom_toolbar="Type to filter. ↑/↓ choose. Enter selects. Ctrl+C cancels.",
     )
+    _wire_live_selection_menu(session, options)
 
     def _pre_run() -> None:
         buffer = session.default_buffer
@@ -272,9 +274,31 @@ def _build_prompt_key_bindings(*, always_navigate_completion: bool = False) -> K
 
 def _wire_live_command_menu(session: PromptSession, router: CommandRouter) -> None:
     """Keep the slash-command menu open while the user types or deletes characters."""
+    _wire_live_completion_menu(
+        session,
+        lambda buffer: _refresh_command_completion(buffer, router),
+    )
+
+
+def _wire_live_selection_menu(
+    session: PromptSession,
+    options: Sequence[SelectionOption],
+) -> None:
+    """Keep selection menus open while the user types or deletes characters."""
+    _wire_live_completion_menu(
+        session,
+        lambda buffer: _refresh_selection_completion(buffer, options),
+    )
+
+
+def _wire_live_completion_menu(
+    session: PromptSession,
+    refresher: Callable[[object], None],
+) -> None:
+    """Refresh the completion menu on every text edit."""
 
     def _refresh(_event) -> None:
-        _refresh_command_completion(session.default_buffer, router)
+        refresher(session.default_buffer)
 
     session.default_buffer.on_text_changed += _refresh
 
@@ -286,6 +310,21 @@ def _refresh_command_completion(buffer, router: CommandRouter) -> None:
         buffer.cancel_completion()
         return
     if not _has_command_matches(router, text):
+        buffer.cancel_completion()
+        return
+    buffer.start_completion(
+        select_first=False,
+        complete_event=CompleteEvent(completion_requested=True),
+    )
+
+
+def _refresh_selection_completion(
+    buffer,
+    options: Sequence[SelectionOption],
+) -> None:
+    """Refresh selection completion so nested pickers track edits and backspaces."""
+    text = buffer.document.text_before_cursor
+    if not _has_selection_matches(options, text):
         buffer.cancel_completion()
         return
     buffer.start_completion(
@@ -310,6 +349,16 @@ def _has_command_matches(router: CommandRouter, text: str) -> bool:
         f"/{command_name}".lower().startswith(lowered)
         for command_name in router.get_visible_commands()
     )
+
+
+def _has_selection_matches(
+    options: Sequence[SelectionOption],
+    text: str,
+) -> bool:
+    query = text.strip().lower()
+    if not query:
+        return bool(options)
+    return any(_matches_selection(option, query) for option in options)
 
 
 def _supports_interactive_prompt() -> bool:

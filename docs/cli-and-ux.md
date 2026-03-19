@@ -127,11 +127,13 @@ Tool calls, approvals, and system events are displayed inline between user input
 ### Command Menu and Completion
 
 When the user types `/`:
-1. Show all available commands in a menu directly under the prompt
+1. Show all executable root commands in a menu directly under the prompt
 2. Filter the list live as more characters are typed (e.g., `/mo` narrows to `/mode` and `/models`)
-3. If a command prefix includes subcommands (e.g., `/models `), show the matching subcommands
-4. Up/Down arrows move through the visible options without leaving the input line
-5. Enter accepts the highlighted command; Tab also works as an alternate completion key
+3. Parent command groups that are not executable on their own (for example `/agent`, `/providers`, `/mode`, and `/session`) are hidden from the top-level menu
+4. If a command prefix includes subcommands (e.g., `/models `), show the matching subcommands
+5. Commands that need an installed model, configured provider, or saved session may open a second picker after execution so users do not need to type long identifiers manually
+6. Up/Down arrows move through the visible options without leaving the input line
+7. Enter accepts the highlighted command; Tab also works as an alternate completion key
 
 ### Interactive Model Picker
 
@@ -201,19 +203,18 @@ class StreamRenderer:
 
 | State | Behavior |
 |---|---|
-| Idle (waiting for input) | Ignored (standard terminal behavior) |
-| Model generating (chat mode) | Stop generation immediately. Display partial output. Return to prompt. |
-| Agent executing (agent mode) | Pause agent loop. Display current state. Prompt: "Continue / Stop / Modify?" |
+| Idle (waiting for input) | First press shows an exit hint. A second press within 2 seconds exits the shell. |
+| Model generating (chat mode) | Stop generation immediately, keep any partial output already shown, and return to the prompt. |
+| Agent executing (agent mode) | Stop the current task and return to the prompt. |
 | Tool executing | Kill the tool subprocess. Return timeout/cancelled result to agent. |
-| Approval prompt displayed | Cancel the prompt. Treat as deny. |
+| Approval prompt displayed | Stop the current task and return to the prompt. |
 
 ### Graceful Shutdown
 
-Ctrl+C during generation does not crash the application. It:
-1. Sends a cancellation signal to the model/provider
-2. Captures any partial output already received
-3. Displays the partial output (marked as interrupted)
-4. Returns to the input prompt
+Ctrl+C during generation or agent execution does not crash the application. It:
+1. Interrupts the active operation
+2. Keeps any partial output already rendered
+3. Returns to the input prompt, or exits if the user double-presses Ctrl+C while already idle
 
 ---
 

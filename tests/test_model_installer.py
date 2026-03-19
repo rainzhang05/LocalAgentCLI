@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -146,6 +147,47 @@ class TestInstallFromHF:
 
         assert result.success is False
         assert "detection failed" in result.message.lower()
+
+    def test_download_hf_uses_live_file_progress_when_dry_run_supported(
+        self,
+        installer: ModelInstaller,
+        models_dir: Path,
+    ):
+        snapshot_calls: list[dict] = []
+        file_calls: list[dict] = []
+        target_dir = models_dir / "repo" / "v1"
+
+        def fake_snapshot_download(**kwargs):
+            snapshot_calls.append(kwargs)
+            assert kwargs.get("dry_run") is True
+            return [
+                SimpleNamespace(
+                    filename="weights/model-00001.safetensors",
+                    size=12,
+                    is_cached=False,
+                ),
+                SimpleNamespace(filename="README.md", size=4, is_cached=True),
+            ]
+
+        def fake_hf_hub_download(**kwargs):
+            file_calls.append(kwargs)
+            target = Path(kwargs["local_dir"]) / kwargs["filename"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"x" * 4)
+            return str(target)
+
+        with patch(
+            "localagentcli.models.installer._load_huggingface_downloaders",
+            return_value=(fake_hf_hub_download, fake_snapshot_download),
+        ):
+            installer._download_hf("repo/model", target_dir)
+
+        assert len(snapshot_calls) == 1
+        assert [call["filename"] for call in file_calls] == [
+            "weights/model-00001.safetensors",
+            "README.md",
+        ]
+        assert (target_dir / "weights" / "model-00001.safetensors").exists()
 
 
 # ---------------------------------------------------------------------------

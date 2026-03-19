@@ -1,4 +1,4 @@
-"""/hf-token command handler."""
+"""`/hf-token` command handler."""
 
 from __future__ import annotations
 
@@ -18,13 +18,6 @@ HF_TOKEN_ENV_NAMES = (
 )
 
 
-def has_hf_token(key_manager: KeyManager) -> bool:
-    """Return whether a Hugging Face token is already available."""
-    if any(os.environ.get(name) for name in HF_TOKEN_ENV_NAMES):
-        return True
-    return key_manager.has_key(HF_TOKEN_KEY_NAME)
-
-
 def restore_hf_token_environment(key_manager: KeyManager) -> str | None:
     """Populate HF token environment variables from secure storage when available."""
     token = None
@@ -37,18 +30,15 @@ def restore_hf_token_environment(key_manager: KeyManager) -> str | None:
         token = key_manager.retrieve_key(HF_TOKEN_KEY_NAME)
     if not token:
         return None
-    os.environ["HF_TOKEN"] = token
-    os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)
-    os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", token)
+    _set_hf_token_environment(token)
     return token
 
 
 class HFTokenHandler(CommandHandler):
     """Store the Hugging Face access token used by model discovery and downloads."""
 
-    def __init__(self, key_manager: KeyManager, router: CommandRouter):
+    def __init__(self, key_manager: KeyManager):
         self._key_manager = key_manager
-        self._router = router
 
     def execute(self, args: list[str]) -> CommandResult:
         token = " ".join(args).strip()
@@ -63,21 +53,22 @@ class HFTokenHandler(CommandHandler):
             return CommandResult.error("A Hugging Face token is required.")
 
         self._key_manager.store_key(HF_TOKEN_KEY_NAME, token)
-        restore_hf_token_environment(self._key_manager)
-        self._router.set_visibility("hf-token", False)
+        _set_hf_token_environment(token)
         return CommandResult.ok("HF token saved.")
 
     def help_text(self) -> str:
         return (
-            "Store the Hugging Face token used for model discovery and downloads.\n"
+            "Store or replace the Hugging Face token used for model discovery and downloads.\n"
             "Usage: /hf-token [token]"
         )
 
 
 def register(router: CommandRouter, key_manager: KeyManager) -> None:
     """Register the /hf-token command."""
-    router.register(
-        "hf-token",
-        HFTokenHandler(key_manager, router),
-        visible_in_menu=not has_hf_token(key_manager),
-    )
+    router.register("hf-token", HFTokenHandler(key_manager))
+
+
+def _set_hf_token_environment(token: str) -> None:
+    """Apply one token value consistently across supported HF env vars."""
+    for name in HF_TOKEN_ENV_NAMES:
+        os.environ[name] = token

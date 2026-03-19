@@ -75,6 +75,17 @@ class TestCreatePromptSession:
         session = create_prompt_session(router, ["/status", "hello"])
         assert get_prompt_history_strings(session) == ["/status", "hello"]
 
+    @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=False)
+    @patch("localagentcli.shell.prompt.sys.stdin.readline", return_value="/status\n")
+    def test_falls_back_without_interactive_terminal(self, _mock_readline, _mock_supports):
+        router = CommandRouter()
+
+        session = create_prompt_session(router, ["/help"])
+        value = session.prompt("> ")
+
+        assert value == "/status"
+        assert get_prompt_history_strings(session) == ["/help", "/status"]
+
 
 class TestShellUIInit:
     """Tests for ShellUI construction."""

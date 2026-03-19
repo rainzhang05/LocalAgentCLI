@@ -114,8 +114,10 @@ class TestCommandRouter:
         router = CommandRouter()
         router.register("help", StubHandler())
         router.register("session save", StubHandler())
+        router.register("session", StubHandler(), visible_in_menu=False)
         completions = router.get_completions()
         assert "/help" in completions
         assert "/session save" in completions
+        assert "/session" not in completions
         # Should be sorted
         assert completions == sorted(completions)

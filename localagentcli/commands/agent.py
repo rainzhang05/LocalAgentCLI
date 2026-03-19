@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from localagentcli.agents.controller import AgentController
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.config.manager import ConfigManager
 
 
@@ -15,12 +15,16 @@ class AgentParentHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.error("/agent requires a subcommand: approve, deny")
 
-    def help_text(self) -> str:
-        return (
-            "Control the active agent task.\n"
-            "Subcommands:\n"
-            "  /agent approve            Set approvals to autonomous for this and future sessions\n"
-            "  /agent deny               Deny the pending tool call"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Agent",
+            summary="Control the active agent task and approval state.",
+            usage="/agent <approve|deny>",
+            argument_hint="<subcommand>",
+            details=(
+                "Use /agent approve to enable autonomous approvals, or /agent deny "
+                "to reject the pending tool call."
+            ),
         )
 
 
@@ -40,7 +44,8 @@ class AgentApproveHandler(CommandHandler):
         controller = self._controller_getter()
         if controller is None or not controller.has_active_task:
             return CommandResult.ok(
-                "Approval mode set to autonomous for the current and future sessions."
+                "Approval mode set to autonomous for the current and future sessions.",
+                presentation="success",
             )
 
         controller.set_autonomous()
@@ -49,14 +54,19 @@ class AgentApproveHandler(CommandHandler):
                 "Approved pending action. Autonomous approvals enabled for the current and "
                 "future sessions.",
                 data={"action": "agent_resume", "decision": "approve", "autonomous": True},
+                presentation="success",
             )
-        return CommandResult.ok("Autonomous approvals enabled for the current and future sessions.")
+        return CommandResult.ok(
+            "Autonomous approvals enabled for the current and future sessions.",
+            presentation="success",
+        )
 
-    def help_text(self) -> str:
-        return (
-            "Set approval mode to autonomous for the current and future sessions.\n"
-            "Usage: /agent approve\n"
-            "Use /config safety.approval_mode balanced to switch back."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Agent",
+            summary="Enable autonomous approvals for this shell and future sessions.",
+            usage="/agent approve",
+            details="Use /config safety.approval_mode balanced to switch back.",
         )
 
 
@@ -73,10 +83,15 @@ class AgentDenyHandler(CommandHandler):
         return CommandResult.ok(
             "Denied pending agent action.",
             data={"action": "agent_resume", "decision": "deny"},
+            presentation="warning",
         )
 
-    def help_text(self) -> str:
-        return "Deny the pending agent action.\nUsage: /agent deny"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Agent",
+            summary="Deny the pending agent action.",
+            usage="/agent deny",
+        )
 
 
 def register(

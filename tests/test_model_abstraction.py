@@ -25,6 +25,10 @@ class TestStreamChunk:
     def test_defaults(self):
         chunk = StreamChunk()
         assert chunk.text == ""
+        assert chunk.kind == "final_text"
+        assert chunk.importance == "primary"
+        assert chunk.transient is False
+        assert chunk.payload is None
         assert chunk.is_reasoning is False
         assert chunk.is_tool_call is False
         assert chunk.tool_call_data is None
@@ -38,18 +42,21 @@ class TestStreamChunk:
     def test_reasoning_chunk(self):
         chunk = StreamChunk(text="thinking...", is_reasoning=True)
         assert chunk.is_reasoning is True
+        assert chunk.kind == "reasoning"
 
     def test_tool_call_chunk(self):
         data = {"name": "file_read", "arguments": {"path": "/tmp"}}
         chunk = StreamChunk(is_tool_call=True, tool_call_data=data)
         assert chunk.is_tool_call is True
         assert chunk.tool_call_data == data
+        assert chunk.kind == "tool_call"
 
     def test_done_chunk_with_usage(self):
         usage = {"prompt_tokens": 10, "completion_tokens": 20}
         chunk = StreamChunk(is_done=True, usage=usage)
         assert chunk.is_done is True
         assert chunk.usage == usage
+        assert chunk.kind == "done"
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +129,9 @@ class ConcreteBackend(ModelBackend):
         pass
 
     def unload(self) -> None:
+        pass
+
+    def cancel(self) -> None:
         pass
 
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
@@ -211,7 +221,8 @@ class TestModelAbstractionLayer:
         backend = ConcreteBackend()
         layer = ModelAbstractionLayer(backend)
         result = layer.generate([ModelMessage(role="user", content="hi")])
-        assert result.text == "test response"
+        assert result.text == "chunk1"
+        assert len(result.chunks) == 2
 
     def test_stream_generate_delegates(self):
         backend = ConcreteBackend()
@@ -231,3 +242,8 @@ class TestModelAbstractionLayer:
     def test_supports_streaming_delegates(self):
         layer = ModelAbstractionLayer(ConcreteBackend())
         assert layer.supports_streaming() is True
+
+    def test_cancel_delegates(self):
+        backend = ConcreteBackend()
+        layer = ModelAbstractionLayer(backend)
+        assert layer.cancel() is None

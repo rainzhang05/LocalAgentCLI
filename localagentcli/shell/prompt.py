@@ -67,7 +67,7 @@ class CommandCompleter(Completer):
 
         lowered = text.lower()
 
-        for command_name, handler in sorted(self._router.get_commands().items()):
+        for command_name, handler in sorted(self._router.get_visible_commands().items()):
             command = f"/{command_name}"
             if not command.lower().startswith(lowered):
                 continue

@@ -118,7 +118,7 @@ Each backend must:
 ```
 localagentcli/
 ├── __init__.py
-├── __main__.py              # Entry point: `localagent` command
+├── __main__.py              # Entry point: `localagentcli` command (`localagent` alias)
 ├── shell/
 │   ├── __init__.py
 │   ├── ui.py                # ShellUI — input loop, rendering, status header
@@ -204,7 +204,7 @@ localagentcli/
 ## Concurrency Model
 
 - **One task per shell**: Each shell instance runs a single active task at a time. The agent loop, model generation, and tool execution are sequential within a session.
-- **Multiple shells allowed**: Users may run multiple `localagent` instances simultaneously. Each instance operates independently with its own session state.
+- **Multiple shells allowed**: Users may run multiple `localagentcli` instances simultaneously. Each instance operates independently with its own session state.
 - **No shared mutable state**: Instances share only the filesystem (`~/.localagent/`). File-level locking must be used when writing to shared resources (config, registry, logs).
 
 ---
@@ -219,7 +219,7 @@ localagentcli/
 | Safetensors Backend | Full support | Full support | Full support |
 | Keychain storage | macOS Keychain | libsecret / kwallet | Windows Credential Store |
 | File paths | POSIX | POSIX | Handle both `\` and `/` |
-| Entry point | `localagent` | `localagent` | `localagent` / `localagent.exe` |
+| Entry point | `localagentcli` | `localagentcli` | `localagentcli` / `localagentcli.exe` |
 
 Behavior must be identical across all platforms after launch, except for backend availability (MLX is macOS-only). The system must detect the platform at startup and adapt accordingly without user intervention.
 

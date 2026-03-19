@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 
 
 class ExitHandler(CommandHandler):
@@ -12,8 +12,12 @@ class ExitHandler(CommandHandler):
         # Return a special action that ShellUI handles
         return CommandResult.ok("exit", data={"action": "exit"})
 
-    def help_text(self) -> str:
-        return "Exit the shell.\nUsage: /exit"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="System",
+            summary="Exit the shell, optionally saving the current session first.",
+            usage="/exit",
+        )
 
 
 def register(router: CommandRouter) -> None:

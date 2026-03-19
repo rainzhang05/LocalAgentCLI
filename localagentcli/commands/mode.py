@@ -9,8 +9,6 @@ from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.manager import SessionManager
 
-_TOOL_CAPABLE_PROVIDER_TYPES = {"openai", "anthropic"}
-
 
 def _parse_name_version(name: str) -> tuple[str, str | None]:
     """Parse 'name@v1' into (name, version)."""
@@ -86,10 +84,34 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     f"Cannot enter agent mode: provider '{session.provider}' is not configured."
                 )
-            if provider.type not in _TOOL_CAPABLE_PROVIDER_TYPES:
+            runtime = None
+            try:
+                runtime = self._provider_registry.create_provider(session.provider)
+                runtime.set_active_model(session.model or provider.default_model)
+                models = runtime.list_models()
+            except Exception as exc:
+                return CommandResult.error(
+                    f"Cannot enter agent mode: failed to inspect provider "
+                    f"'{session.provider}': {exc}"
+                )
+            finally:
+                try:
+                    if runtime is not None:
+                        runtime.close()
+                except Exception:
+                    pass
+
+            selected_model = session.model or provider.default_model
+            matching = next((item for item in models if item.id == selected_model), None)
+            capabilities = (
+                matching.capabilities
+                if matching is not None
+                else getattr(runtime, "capabilities", lambda: {"tool_use": False})()
+            )
+            if not bool(capabilities.get("tool_use", False)):
                 return CommandResult.error(
                     "Cannot enter agent mode: the active provider "
-                    f"({session.provider}) does not support tool use. "
+                    f"model ({selected_model}) does not support tool use. "
                     "Use /set to switch to a tool-capable provider."
                 )
         elif session.model:

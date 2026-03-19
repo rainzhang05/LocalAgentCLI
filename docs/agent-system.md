@@ -300,7 +300,7 @@ class TaskFailed(AgentEvent):
 - Switches to agent mode
 - **Precondition check**: Calls `model.supports_tools()`. If `False`:
   - Refuses the switch
-  - Displays: `"Cannot enter agent mode: the active model ({model_name}) does not support tool use. Use /models use <name> to switch to a tool-capable model."`
+  - Displays: `"Cannot enter agent mode: the active model ({model_name}) does not support tool use. Use /set to switch to a tool-capable target."`
 - Session history is preserved
 
 ---
@@ -309,7 +309,7 @@ class TaskFailed(AgentEvent):
 
 Even though there is no fixed step limit, the system protects against runaway agents:
 
-1. **User interrupt (Ctrl+C)**: Immediately pauses the agent loop. The user can review state and choose to continue, modify, or stop.
+1. **User interrupt (Ctrl+C)**: Immediately stops the current task and returns control to the prompt.
 2. **Inactivity timeout**: If the agent has not made progress (no tool calls, no new reasoning) for a configurable duration, it is paused with a notification.
 3. **Resource limits**: If a single tool call exceeds resource limits (e.g., shell command timeout), it is killed and the agent is notified.
 4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it pauses and asks the user for guidance.

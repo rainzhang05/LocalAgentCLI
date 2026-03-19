@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from rich.panel import Panel
@@ -178,6 +179,15 @@ class TestStreamRendererRenderError:
         renderer.render_error("Something went wrong")
         console.print.assert_called_once_with("[red]✗ Something went wrong[/red]")
 
+    def test_render_error_falls_back_to_ascii_when_console_encoding_is_limited(self):
+        console = MagicMock()
+        console.file = SimpleNamespace(encoding="cp1252")
+        renderer = StreamRenderer(console)
+
+        renderer.render_error("Something went wrong")
+
+        console.print.assert_called_once_with("[red]x Something went wrong[/red]")
+
 
 class TestStreamRendererActivity:
     def test_render_activity(self):
@@ -185,6 +195,15 @@ class TestStreamRendererActivity:
         renderer = StreamRenderer(console)
         renderer.render_activity("Context compacted")
         console.print.assert_called_once_with("ℹ Context compacted")
+
+    def test_render_success_falls_back_to_ascii_when_console_encoding_is_limited(self):
+        console = MagicMock()
+        console.file = SimpleNamespace(encoding="cp1252")
+        renderer = StreamRenderer(console)
+
+        renderer.render_success("Saved.")
+
+        console.print.assert_called_once_with("[green]OK Saved.[/green]")
 
 
 class TestStreamRendererAgentEvents:

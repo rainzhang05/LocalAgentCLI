@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — direct backend dependency installs, expanded runtime coverage, Windows interrupt CLI coverage, build + twine validation, publish workflow, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-18 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, cross-platform path normalization, build + twine validation, publish workflow, and local `pipx` install verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -25,7 +25,7 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | CLI entry point (`localagent` command) | 2026-03-17 |
+| `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
 | `[x]` | Shell UI (input loop, prompt) | 2026-03-17 |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-17 |
@@ -152,7 +152,7 @@ After implementing a component:
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
 | `[x]` | Unit tests | 2026-03-18 — 657 tests total across unit, component, integration, and CLI coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
-| `[x]` | CLI tests | 2026-03-18 — subprocess coverage for first-run setup, session restore, and Ctrl+C handling in `tests/cli/test_packaging_cli.py`, including Windows process-group interrupt handling |
+| `[x]` | CLI tests | 2026-03-18 — subprocess coverage for first-run setup, session restore, and Ctrl+C handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
 | `[x]` | Safety tests | 2026-03-18 — added boundary, rollback, safety-layer, and high-risk approval coverage |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
@@ -166,7 +166,7 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | `.github/workflows/test.yml` | 2026-03-18 — pytest + coverage on ubuntu/macos/windows × py3.11-3.13, plus package build, `twine check`, and `pipx` smoke verification |
+| `[x]` | `.github/workflows/test.yml` | 2026-03-18 — pytest + coverage on ubuntu/macos/windows × py3.11-3.13, plus package build, `twine check`, and `pipx` smoke verification through the installed venv entrypoint |
 | `[x]` | `.github/workflows/lint.yml` | 2026-03-17 — ruff check + format |
 | `[x]` | `.github/workflows/typecheck.yml` | 2026-03-17 — mypy |
 | `[x]` | `.github/workflows/publish.yml` | 2026-03-18 — build, artifact validation, `pipx` smoke test, and trusted publishing paths for TestPyPI/PyPI |

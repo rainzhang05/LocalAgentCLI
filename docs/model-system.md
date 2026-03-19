@@ -146,6 +146,7 @@ When a model is installed, the system runs an automatic detection pipeline:
 ### Step 4: Metadata Extraction
 - Read `config.json` for parameter count, architecture, quantization
 - Determine capabilities (tool use, reasoning, streaming) from model architecture and metadata
+- Capability inference is conservative: reasoning may be inferred from model family/metadata, but `tool_use` remains `False` unless the runtime can emit structured tool calls
 - Calculate total size on disk
 - Record source and installation timestamp
 
@@ -204,8 +205,8 @@ class ModelAbstractionLayer:
         self._backend = backend
 
     def generate(self, messages: list[Message], **kwargs) -> GenerationResult:
-        """Synchronous generation. Returns the complete response."""
-        return self._backend.generate(messages, **kwargs)
+        """Collect the normalized streaming pipeline into one GenerationResult."""
+        return collect_generation_result(self.stream_generate(messages, **kwargs))
 
     def stream_generate(self, messages: list[Message], **kwargs) -> Iterator[StreamChunk]:
         """Streaming generation. Yields chunks as they are produced."""
@@ -222,14 +223,55 @@ class ModelAbstractionLayer:
     def supports_streaming(self) -> bool:
         """Whether this model supports streaming output. Always True by design."""
         return self._backend.supports_streaming()
+
+    def cancel(self) -> None:
+        """Cancel an in-flight generation when the backend supports it."""
+        self._backend.cancel()
 ```
 
 ### Key Rules
 
 1. **Streaming always enabled**: All output flows through `stream_generate()`. The `generate()` method exists for convenience but internally may collect stream output.
-2. **Normalize all outputs**: Regardless of backend, output is normalized into `StreamChunk` objects with consistent fields: `text`, `is_reasoning`, `is_tool_call`, `is_done`.
+2. **Normalize all outputs**: Regardless of backend, output is normalized into ordered `StreamChunk` events with `kind`, `importance`, `transient`, and optional `payload` metadata.
 3. **Hide backend differences**: Callers never know or care whether the model is local or remote. The same interface applies uniformly.
 4. **Agent mode gate**: If `supports_tools()` returns `False`, the system must refuse to enter agent mode and display a clear message to the user.
+
+### Normalized Output Schema
+
+```python
+@dataclass
+class StreamChunk:
+    text: str = ""
+    kind: Literal[
+        "final_text",
+        "reasoning",
+        "tool_call",
+        "notification",
+        "error",
+        "done",
+    ] = "final_text"
+    importance: Literal["primary", "secondary"] = "primary"
+    transient: bool = False
+    payload: dict | None = None
+    is_reasoning: bool = False   # legacy compatibility
+    is_tool_call: bool = False   # legacy compatibility
+    tool_call_data: dict | None = None
+    is_done: bool = False        # legacy compatibility
+    usage: dict | None = None
+
+@dataclass
+class GenerationResult:
+    text: str
+    reasoning: str = ""
+    tool_calls: list[dict] = field(default_factory=list)
+    usage: dict = field(default_factory=dict)
+    finish_reason: str = ""
+    chunks: list[StreamChunk] = field(default_factory=list)
+```
+
+- `final_text` is the primary assistant response shown in the normal output area.
+- `reasoning`, `tool_call`, `notification`, and `error` are secondary events. They remain available for rendering and session metadata even when they are visually dimmed or capped on screen.
+- `done` terminates the stream and may carry final `usage` or `finish_reason` metadata.
 
 ---
 
@@ -250,6 +292,9 @@ class ModelBackend(ABC):
     @abstractmethod
     def unload(self) -> None:
         """Unload the model and free memory."""
+
+    def cancel(self) -> None:
+        """Cancel an in-flight generation if the backend supports it."""
 
     @abstractmethod
     def generate(self, messages: list[Message], **kwargs) -> GenerationResult:
@@ -288,6 +333,7 @@ class ModelBackend(ABC):
   - Loads model weights into unified memory
   - Handles tokenization using the model's bundled tokenizer
   - Supports streaming via token-by-token generation
+  - Exposes a best-effort `cancel()` hook; MLX runtimes may only stop cleanly between generation chunks
   - Memory management: monitors unified memory pressure, warns when approaching limits
 - **Graceful degradation**: If MLX is not available (non-macOS), the backend refuses to load and suggests alternative backends
 
@@ -302,6 +348,7 @@ class ModelBackend(ABC):
   - Configures thread count based on available CPU cores
   - Uses GPU offloading when CUDA/Metal is available
   - Supports streaming via callback-based token generation
+  - Exposes a best-effort `cancel()` hook; some llama.cpp-backed runtimes may finish the current callback chunk before stopping
   - Memory management: configures context size based on available RAM
 - **Quantization support**: Q4_0, Q4_K_M, Q5_K_M, Q8_0, and other llama.cpp quantization formats
 
@@ -316,6 +363,7 @@ class ModelBackend(ABC):
   - Supports full precision and quantized inference (via bitsandbytes or GPTQ)
   - Uses CUDA if available, falls back to CPU
   - Streaming via `TextIteratorStreamer` from transformers
+  - Supports active cancellation through a stopping-criteria hook around the threaded streamer
   - Memory management: uses `torch.cuda.memory_allocated()` or system RAM monitoring
 
 ### Backend Responsibilities Summary
@@ -324,8 +372,9 @@ class ModelBackend(ABC):
 |---|---|
 | Load model | Read model files, initialize weights, prepare for inference |
 | Handle inference | Process input messages, generate output tokens |
+| Normalize output | Emit normalized `StreamChunk` events so chat mode, agent mode, and providers share one rendering/collection pipeline |
 | Manage memory | Track usage, warn on pressure, support unloading |
-| Expose capabilities | Report tool_use, reasoning, streaming support accurately |
+| Expose capabilities | Report `tool_use`, `reasoning`, and `streaming` accurately and conservatively |
 
 ---
 

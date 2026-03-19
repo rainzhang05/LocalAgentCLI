@@ -235,6 +235,19 @@ class TestModelRegistryUpdate:
         assert v1 is not None
         assert v1.size_bytes == 4_000_000_000  # unchanged
 
+    def test_update_version(self, registry: ModelRegistry):
+        registry.register(_make_entry(version="v1"))
+        registry.register(_make_entry(version="v2", path="/models/codellama-7b/v2"))
+
+        registry.update_version("codellama-7b", "v1", {"format": "mlx"})
+
+        v1 = registry.get_model("codellama-7b", "v1")
+        v2 = registry.get_model("codellama-7b", "v2")
+        assert v1 is not None
+        assert v1.format == "mlx"
+        assert v2 is not None
+        assert v2.format == "gguf"
+
 
 class TestModelRegistrySearch:
     def test_search_by_name(self, registry: ModelRegistry):

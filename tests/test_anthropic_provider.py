@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from localagentcli.models.backends.base import ModelMessage
-from localagentcli.providers.anthropic import AnthropicProvider
+from localagentcli.providers.anthropic import AnthropicProvider, _AnthropicBlockState
 
 
 def _make_provider(**kwargs: object) -> AnthropicProvider:
@@ -173,7 +173,8 @@ class TestAnthropicStreamGenerate:
         with patch.object(provider._client, "stream", return_value=mock_resp):
             chunks = list(provider.stream_generate([ModelMessage(role="user", content="Hi")]))
         assert chunks[-1].is_done is True
-        assert "500" in chunks[-1].text
+        assert "500" in chunks[0].text
+        assert chunks[0].kind == "error"
 
     def test_stream_message_delta_stop(self):
         provider = _make_provider()
@@ -376,33 +377,51 @@ class TestAnthropicBuildRequestBody:
 class TestAnthropicParseSSE:
     def test_text_delta(self):
         data = json.dumps({"delta": {"type": "text_delta", "text": "Hi"}})
-        chunk = AnthropicProvider._parse_sse_event("content_block_delta", data)
-        assert chunk is not None
-        assert chunk.text == "Hi"
-        assert chunk.is_reasoning is False
+        chunks = AnthropicProvider._parse_sse_event("content_block_delta", data, {})
+        assert chunks[0].text == "Hi"
+        assert chunks[0].is_reasoning is False
 
     def test_thinking_delta(self):
         data = json.dumps({"delta": {"type": "thinking_delta", "thinking": "hmm"}})
-        chunk = AnthropicProvider._parse_sse_event("content_block_delta", data)
-        assert chunk is not None
-        assert chunk.text == "hmm"
-        assert chunk.is_reasoning is True
+        chunks = AnthropicProvider._parse_sse_event("content_block_delta", data, {})
+        assert chunks[0].text == "hmm"
+        assert chunks[0].is_reasoning is True
 
     def test_message_stop(self):
-        chunk = AnthropicProvider._parse_sse_event("message_stop", "{}")
-        assert chunk is not None
-        assert chunk.is_done is True
+        chunks = AnthropicProvider._parse_sse_event("message_stop", "{}", {})
+        assert chunks[-1].is_done is True
 
     def test_message_delta_with_stop_reason(self):
         data = json.dumps({"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}})
-        chunk = AnthropicProvider._parse_sse_event("message_delta", data)
-        assert chunk is not None
-        assert chunk.is_done is True
+        chunks = AnthropicProvider._parse_sse_event("message_delta", data, {})
+        assert chunks[-1].is_done is True
 
     def test_unknown_event(self):
-        chunk = AnthropicProvider._parse_sse_event("content_block_start", '{"type":"text"}')
-        assert chunk is None
+        chunks = AnthropicProvider._parse_sse_event("content_block_start", '{"type":"text"}', {})
+        assert chunks == []
 
     def test_invalid_json(self):
-        chunk = AnthropicProvider._parse_sse_event("content_block_delta", "not json")
-        assert chunk is None
+        chunks = AnthropicProvider._parse_sse_event("content_block_delta", "not json", {})
+        assert chunks == []
+
+    def test_tool_use_blocks(self):
+        blocks: dict[int, _AnthropicBlockState] = {}
+        started = AnthropicProvider._parse_sse_event(
+            "content_block_start",
+            '{"index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"file_read"}}',
+            blocks,
+        )
+        assert started[0].kind == "notification"
+
+        AnthropicProvider._parse_sse_event(
+            "content_block_delta",
+            '{"index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"notes.txt\\"}"}}',
+            blocks,
+        )
+        completed = AnthropicProvider._parse_sse_event(
+            "content_block_stop",
+            '{"index":0}',
+            blocks,
+        )
+        assert completed[0].kind == "tool_call"
+        assert completed[0].tool_call_data["function"]["name"] == "file_read"

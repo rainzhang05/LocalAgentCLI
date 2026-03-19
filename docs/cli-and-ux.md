@@ -44,7 +44,7 @@ The input prompt where the user types:
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
 - Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it.
-- The slash-command menu respects command visibility. For example, `/hf-token` disappears from menus and `/help` once a Hugging Face token is already configured.
+- The slash-command menu respects command visibility. Non-executable parent groups stay hidden, while executable commands such as `/hf-token` remain available so users can revisit them later.
 - The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.
 

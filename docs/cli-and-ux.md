@@ -250,7 +250,7 @@ You're all set! Here's how to get started:
 |---|---|
 | `prompt_toolkit` | Input handling, history, tab completion, key bindings |
 | `rich` | Rich text rendering, panels, tables, syntax highlighting, progress bars |
-| `click` | CLI entry point and argument parsing (for the `localagent` command itself) |
+| `click` | CLI entry point and argument parsing (for the `localagentcli` command itself) |
 
 ### ShellUI Class
 

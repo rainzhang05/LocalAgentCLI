@@ -5,7 +5,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from localagentcli.commands.router import CommandResult, CommandRouter
-from localagentcli.shell.prompt import CommandCompleter, create_prompt_session
+from localagentcli.shell.prompt import (
+    CommandCompleter,
+    create_prompt_session,
+    get_prompt_history_strings,
+)
 from localagentcli.shell.ui import ShellUI
 
 
@@ -63,6 +67,11 @@ class TestCreatePromptSession:
         create_prompt_session(router, history_file)
         assert history_file.parent.exists()
 
+    def test_restores_history_strings(self):
+        router = CommandRouter()
+        session = create_prompt_session(router, ["/status", "hello"])
+        assert get_prompt_history_strings(session) == ["/status", "hello"]
+
 
 class TestShellUIInit:
     """Tests for ShellUI construction."""
@@ -91,6 +100,8 @@ class TestShellUIInit:
         assert "providers remove" in commands
         assert "providers use" in commands
         assert "providers test" in commands
+        assert "mode chat" in commands
+        assert "mode agent" in commands
 
 
 class TestShellUIRenderResult:
@@ -201,6 +212,29 @@ class TestShellUIRun:
         ui.run()
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("No model connected" in c for c in calls)
+
+    def test_agent_mode_plain_text_shows_phase_message(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.mode = "agent"
+        ui._resolve_active_model = MagicMock(return_value=MagicMock())
+        ui._stream_renderer = MagicMock()
+
+        with patch("localagentcli.shell.ui.ChatController") as mock_controller_cls:
+            controller = MagicMock()
+            controller.handle_input.return_value = iter([])
+            controller.last_compaction_count = 0
+            mock_controller_cls.return_value = controller
+
+            ui._handle_plain_text("do something")
+
+        activity_text = ui._stream_renderer.render_activity.call_args_list[0][0][0]
+        assert "Phase 5" in activity_text
+
+    def test_rebuild_prompt_session_uses_session_history(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.metadata["input_history"] = ["/status", "hello"]
+        ui._rebuild_prompt_session()
+        assert get_prompt_history_strings(ui._prompt_session) == ["/status", "hello"]
 
     def test_keyboard_interrupt_continues(self, config, storage):
         ui = ShellUI(config=config, storage=storage)

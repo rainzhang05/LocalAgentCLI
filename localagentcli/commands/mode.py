@@ -90,7 +90,7 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     "Cannot enter agent mode: the active provider "
                     f"({session.provider}) does not support tool use. "
-                    "Use /providers use <name> to switch to a tool-capable provider."
+                    "Use /set to switch to a tool-capable provider."
                 )
         elif session.model:
             name, version = _parse_name_version(session.model)
@@ -103,8 +103,7 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     "Cannot enter agent mode: the active model "
                     f"({session.model}) does not support tool use. "
-                    "Use /models use <name> or /providers use <name> to switch "
-                    "to a tool-capable target."
+                    "Use /set to switch to a tool-capable target."
                 )
 
         session.mode = "agent"
@@ -123,7 +122,7 @@ def register(
     stop_agent_callback: Callable[[], bool] | None = None,
 ) -> None:
     """Register all /mode subcommands."""
-    router.register("mode", ModeParentHandler())
+    router.register("mode", ModeParentHandler(), visible_in_menu=False)
     router.register("mode chat", ModeChatHandler(session_manager, stop_agent_callback))
     router.register(
         "mode agent",

@@ -23,6 +23,10 @@ from localagentcli.safety.boundary import WorkspaceBoundary
 from localagentcli.safety.layer import SafetyLayer
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.compactor import ContextCompactor
+from localagentcli.session.instructions import (
+    build_instruction_messages,
+    build_system_instructions,
+)
 from localagentcli.session.state import Message, Session
 from localagentcli.tools.registry import ToolRegistry
 
@@ -148,7 +152,7 @@ class AgentController:
 
         compacted = self._compactor.compact(
             self._session.history,
-            self._session.pinned_instructions,
+            build_system_instructions(self._session),
         )
         self._last_compaction_count = self._compactor.last_compacted_count
         if not self._last_compaction_count:
@@ -252,7 +256,7 @@ class AgentController:
         return self._safety.rollback.undo_all()
 
     def _build_context_messages(self) -> list[ModelMessage]:
-        system_parts = list(self._session.pinned_instructions)
+        system_parts = build_system_instructions(self._session)
         conversation: list[ModelMessage] = []
         for message in self._session.history:
             if message.role == "system":
@@ -270,8 +274,4 @@ class AgentController:
         return conversation
 
     def _messages_for_token_estimation(self) -> list[Message]:
-        pinned_messages = [
-            Message(role="system", content=instruction, timestamp=datetime.now())
-            for instruction in self._session.pinned_instructions
-        ]
-        return [*pinned_messages, *self._session.history]
+        return [*build_instruction_messages(self._session), *self._session.history]

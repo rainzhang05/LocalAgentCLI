@@ -18,6 +18,14 @@ The system must distinguish between MLX-format safetensors and standard PyTorch 
 
 ## Model Sources
 
+### Curated Hugging Face Picker
+- Command: `/models`
+- Opens a layered interactive picker for popular Hugging Face local models
+- First chooses the runtime/backend family (`PyTorch / Safetensors`, `MLX` when supported, or `GGUF`)
+- Then chooses the model family (`GPT-OSS`, `Qwen`, `Gemma`, etc.)
+- Then chooses the exact repository
+- After download completes, the installed model becomes the active local model for the current session
+
 ### Hugging Face
 - Command: `/models install hf <repo>`
 - Downloads from the Hugging Face Hub using the `huggingface_hub` library

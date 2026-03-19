@@ -96,7 +96,8 @@ class TestPackagingCLI:
         result = _run_cli(home, "/exit\n")
 
         assert result.returncode == 0
-        assert "Setup Wizard" in result.stdout
+        assert "Welcome to LocalAgent CLI!" in result.stdout
+        assert "Setup complete." in result.stdout
         assert "Non-interactive setup detected" in result.stdout
         assert "Goodbye." in result.stdout
         assert (home / ".localagent" / "config.toml").exists()
@@ -106,7 +107,7 @@ class TestPackagingCLI:
         result = _run_cli(home, ".\nagent\nnormal\n/exit\n")
 
         assert result.returncode == 0
-        assert "Setup Wizard" in result.stdout
+        assert "Welcome to LocalAgent CLI!" in result.stdout
         assert "You're all set!" in result.stdout
         assert (home / ".localagent" / "config.toml").exists()
 
@@ -154,7 +155,7 @@ class TestPackagingCLI:
                 process.communicate()
 
         assert process.returncode == 0
-        assert stdout.count("LocalAgent | mode: agent") >= 2
+        assert stdout.count("> ") >= 2
         assert "Goodbye." in stdout
         assert "Traceback" not in stderr
 

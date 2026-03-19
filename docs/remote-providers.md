@@ -132,7 +132,7 @@ class RemoteProvider(ABC):
 ## Provider Scope
 
 - **Global config**: The default provider is set in `~/.localagent/config.toml`
-- **Session override**: `/providers use <name>` overrides the provider for the current session only. This override is held in memory and not persisted.
+- **Session override**: `/set` overrides the provider and remote model for the current session only. This override is held in memory and not persisted.
 - **Precedence**: Session override > global config
 
 ---

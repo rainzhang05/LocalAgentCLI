@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from localagentcli.models.registry import ModelEntry
 from localagentcli.session.state import Message
+from localagentcli.shell.prompt import SelectionOption
 from localagentcli.shell.ui import ShellUI
 
 
@@ -36,8 +37,15 @@ class TestSessionLifecycleIntegration:
         workspace = str(tmp_path / "workspace")
         with (
             patch(
-                "localagentcli.commands.setup_cmd.Prompt.ask",
-                side_effect=[workspace, "chat", "debug"],
+                "localagentcli.commands.setup_cmd.prompt_text",
+                return_value=workspace,
+            ),
+            patch(
+                "localagentcli.commands.setup_cmd.select_option",
+                side_effect=[
+                    SelectionOption(value="chat", label="chat"),
+                    SelectionOption(value="debug", label="debug"),
+                ],
             ),
             patch(
                 "localagentcli.commands.setup_cmd.supports_interactive_prompt", return_value=True
@@ -86,9 +94,10 @@ class TestBackendAutoInstallIntegration:
                 "localagentcli.shell.ui.install_backend_dependencies",
                 return_value=(True, "ok"),
             ) as mock_install,
-            patch("localagentcli.shell.ui.Confirm.ask", return_value=True) as mock_confirm,
+            patch("localagentcli.shell.ui.confirm_choice", return_value=True) as mock_confirm,
             patch.object(ui, "_create_backend", return_value=backend) as mock_create_backend,
         ):
+            ui._stream_renderer = MagicMock()
             active_backend = ui._get_active_backend("demo-model@v1")
 
         assert active_backend is backend
@@ -109,9 +118,10 @@ class TestBackendAutoInstallIntegration:
                 "localagentcli.shell.ui.check_backend_dependencies",
                 return_value=(False, ["llama_cpp"]),
             ),
-            patch("localagentcli.shell.ui.Confirm.ask", return_value=False),
+            patch("localagentcli.shell.ui.confirm_choice", return_value=False),
             patch.object(ui, "_create_backend") as mock_create_backend,
         ):
+            ui._stream_renderer = MagicMock()
             active_backend = ui._get_active_backend("demo-model@v1")
 
         assert active_backend is None
@@ -133,12 +143,14 @@ class TestBackendAutoInstallIntegration:
                 "localagentcli.shell.ui.install_backend_dependencies",
                 return_value=(False, "pip failed"),
             ),
-            patch("localagentcli.shell.ui.Confirm.ask", return_value=True),
+            patch("localagentcli.shell.ui.confirm_choice", return_value=True),
             patch.object(ui, "_create_backend") as mock_create_backend,
         ):
+            ui._stream_renderer = MagicMock()
             active_backend = ui._get_active_backend("demo-model@v1")
 
         assert active_backend is None
         mock_create_backend.assert_not_called()
-        printed = "\n".join(str(call.args[0]) for call in ui._console.print.call_args_list)
-        assert "Failed to install GGUF backend dependencies" in printed
+        ui._stream_renderer.render_error.assert_called_once_with(
+            "Failed to install GGUF backend dependencies: pip failed"
+        )

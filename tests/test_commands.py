@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from rich.console import Console
 
 from localagentcli.commands import (
     config_cmd,
     exit_cmd,
+    set_cmd,
     setup_cmd,
 )
 from localagentcli.commands import (
@@ -25,6 +26,8 @@ from localagentcli.commands import (
     status as status_cmd,
 )
 from localagentcli.commands.router import CommandRouter
+from localagentcli.models.detector import HardwareDetector
+from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.state import Message
@@ -46,7 +49,16 @@ def _make_router(config, session_manager, tmp_path=None):
         km = KeyManager(secrets_dir)
         km._keyring_available = False
         registry = ProviderRegistry(config, km)
+        model_registry = ModelRegistry(tmp_path / "registry.json")
         providers_cmd.register(router, registry, km, session_manager, console)
+        set_cmd.register(
+            router,
+            model_registry,
+            registry,
+            HardwareDetector(),
+            session_manager,
+            console,
+        )
     return router
 
 
@@ -80,6 +92,7 @@ class TestHelpCommand:
         assert result.success
         assert "Provider" in result.message
         assert "/providers" in result.message
+        assert "/set" in result.message
 
     def test_help_unknown_command(self, config, session_manager):
         router = _make_router(config, session_manager)
@@ -219,6 +232,25 @@ class TestSessionCommands:
         result = router.dispatch("session load")
         assert not result.success
         assert "required" in result.message
+
+    @patch("localagentcli.commands.session.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.session.select_option")
+    def test_session_load_uses_picker_when_name_missing(
+        self,
+        mock_select,
+        _mock_supports,
+        config,
+        session_manager,
+    ):
+        router = _make_router(config, session_manager)
+        router.dispatch("session save chosen")
+        session_manager.new_session()
+        mock_select.return_value = MagicMock(value="chosen")
+
+        result = router.dispatch("session load")
+
+        assert result.success
+        assert session_manager.current.name == "chosen"
 
     def test_session_clear(self, config, session_manager):
         router = _make_router(config, session_manager)

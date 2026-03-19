@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo — primary `localagentcli` entrypoint, non-interactive prompt fallback for Windows/CI, non-interactive first-run `/setup` fallback for piped `pipx` and CI launches, cross-platform path normalization, live slash-command menu now hides non-executable parent groups and stays visible while editing matching prefixes, nested selection menus now keep matching options visible while typing and backspacing, `/set` now unifies local/provider target selection, `/set default` now persists one CLI-wide startup target across local and remote models, provider model pickers now start empty instead of pre-filling the last model name, chooser-based selection covers installed models/providers/saved sessions, provider model pickers now use live API discovery, `/config` now supports interactive schema-aware editing, `/hf-token` securely stores and can replace the Hugging Face token at any time, `/models` now offers live Hugging Face family/model discovery across many model families, repository-root `AGENTS.md` files are auto-detected and injected as default system instructions, normalized model output now preserves primary vs secondary event streams across chat and agent flows, embedded in-band channel markup from local or provider models is separated from the main response stream, agent mode now has triage-based direct-answer and single-step fast paths, providers now use model-aware capability checks with retry/close hardening, Hugging Face and direct URL downloads now refresh their progress output continuously, Hugging Face downloads now tolerate newer `huggingface_hub` progress kwargs, approval autonomy persists via config, consecutive idle `Ctrl+C` exits the shell without a save prompt, stale local model registry formats are repaired on load even on non-macOS CI, local backends now expose cancellation hooks with active safetensors interruption, MLX generation now avoids the broken `temp` code path, and local `pipx` install remains verified on-device; actual PyPI upload still depends on repository-side trusted-publishing setup and a pushed release tag)
+> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo, plus Phase 1 output-contract polish for the shell — the renderer now owns shared status/success/warning/error formatting, chat and planned-agent reasoning both flow through the dimmed `Details` lane, late secondary detail is flushed once at safe boundaries instead of being lost after the first primary text, approval prompts flush pending detail before asking for input, and planned-task completion now uses a quiet success line plus summary body. The status header still prints in scrollback before each prompt; true persistent-header behavior remains future work.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -91,13 +91,13 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Chat controller | 2026-03-18 — `localagentcli/agents/chat.py` routes chat turns through the model abstraction layer |
-| `[x]` | Streaming output renderer | 2026-03-19 — normalized primary/secondary renderer now dims reasoning/tool-call/provider details in a capped `Details` panel while keeping primary assistant output high-contrast |
-| `[x]` | Reasoning panel display | 2026-03-19 — generalized into the secondary `Details` panel so reasoning and other low-priority model events share one normalized display path |
+| `[x]` | Streaming output renderer | 2026-03-19 — renderer now owns the shared output contract for status, success, warning, error, and secondary-detail lanes; late-arriving secondary detail is flushed once at safe boundaries instead of disappearing after the first primary text |
+| `[x]` | Reasoning panel display | 2026-03-19 — chat, direct-answer, and planned-agent reasoning now all use the same dimmed `Details` lane rather than mixing separate reasoning presentations |
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-18 |
 | `[x]` | `/mode agent` command | 2026-03-18 — mode switching implemented in Phase 4 and now activates the Phase 5 agent workflow |
-| `[x]` | Status header display | 2026-03-18 — header shows mode, active model/provider target, and workspace |
+| `[x]` | Status header display | 2026-03-19 — header shows mode, active model/provider target, and workspace, and still renders as repeated scrollback before each prompt; pinned-header behavior is deferred |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
 | `[x]` | Tab completion for commands | 2026-03-18 — live slash-command menu, typed filtering, arrow-key navigation, and Tab acceptance via prompt-toolkit |
 
@@ -136,7 +136,7 @@ After implementing a component:
 | `[x]` | Safety layer (central gate) | 2026-03-18 — `localagentcli/safety/layer.py` now validates boundaries, classifies risk, applies approval policy, and records rollback history around tool execution |
 | `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
 | `[x]` | Approval manager (autonomous mode) | 2026-03-18 — autonomous mode auto-approves standard actions but still pauses high-risk operations for explicit approval |
-| `[x]` | Approval UX (inline prompts) | 2026-03-18 — inline prompts now surface high-risk labels and outside-workspace warnings from the safety layer |
+| `[x]` | Approval UX (inline prompts) | 2026-03-19 — inline prompts now flush pending renderer detail before blocking for input, keep the existing Enter/deny/preview semantics, and render previews through the same shell output grammar |
 | `[x]` | Workspace boundary enforcement | 2026-03-18 — dedicated `WorkspaceBoundary` enforces root confinement for tool paths and shell working directories |
 | `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
 | `[x]` | High-risk action detection | 2026-03-18 — shell commands and sensitive file paths are classified centrally so high-risk actions always require approval |

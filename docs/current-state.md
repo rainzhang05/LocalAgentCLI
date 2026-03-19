@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 3 complete — local models, backends, installer, model commands)
+> **Last updated**: 2026-03-18 (Phase 4 complete — chat controller, context compaction, reasoning panel, mode switching)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -89,16 +89,16 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | Chat controller | |
-| `[ ]` | Streaming output renderer | |
-| `[ ]` | Reasoning panel display | |
-| `[ ]` | Context compactor (auto-summarization) | |
-| `[ ]` | Pinned instructions | |
-| `[ ]` | `/mode chat` command | |
-| `[ ]` | `/mode agent` command | |
-| `[ ]` | Status header display | |
-| `[ ]` | Input history (up/down arrows) | |
-| `[ ]` | Tab completion for commands | |
+| `[x]` | Chat controller | 2026-03-18 — `localagentcli/agents/chat.py` routes chat turns through the model abstraction layer |
+| `[x]` | Streaming output renderer | 2026-03-18 — reasoning/activity-aware renderer in `localagentcli/shell/streaming.py` |
+| `[x]` | Reasoning panel display | 2026-03-18 — buffered reasoning rendered in a distinct panel above assistant output |
+| `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
+| `[x]` | Pinned instructions | 2026-03-18 — retained on `Session` and preserved by `ChatController` across compaction |
+| `[x]` | `/mode chat` command | 2026-03-18 |
+| `[x]` | `/mode agent` command | 2026-03-18 — capability gate implemented; full task execution remains Phase 5 |
+| `[x]` | Status header display | 2026-03-18 — header shows mode, active model/provider target, and workspace |
+| `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
+| `[x]` | Tab completion for commands | 2026-03-18 — slash command and subcommand completion via prompt toolkit completer |
 
 ---
 

@@ -32,6 +32,17 @@ class StreamRenderer:
         self._secondary_entries: deque[str] = deque(maxlen=8)
         self._rendered_secondary_count = 0
         self._primary_started = False
+        self._symbols = {
+            "error": _safe_symbol(console, "✗", "x"),
+            "status": _safe_symbol(console, "ℹ", "i"),
+            "success": _safe_symbol(console, "✓", "OK"),
+            "warning": _safe_symbol(console, "⟳", "!"),
+            "pending": _safe_symbol(console, "•", "*"),
+            "in_progress": _safe_symbol(console, "→", ">"),
+            "completed": _safe_symbol(console, "✓", "OK"),
+            "failed": _safe_symbol(console, "✗", "x"),
+            "skipped": _safe_symbol(console, "○", "o"),
+        }
 
     def render_stream(self, chunks: Iterator[StreamChunk]) -> str:
         """Render all chunks to the terminal and return the full response text."""
@@ -84,25 +95,25 @@ class StreamRenderer:
         """Render a streaming error."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[red]✗ {error}[/red]")
+        self._console.print(f"[red]{self._symbols['error']} {error}[/red]")
 
     def render_status(self, message: str) -> None:
         """Render a neutral status line."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"ℹ {message}")
+        self._console.print(f"{self._symbols['status']} {message}")
 
     def render_success(self, message: str) -> None:
         """Render a success status line."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[green]✓ {message}[/green]")
+        self._console.print(f"[green]{self._symbols['success']} {message}[/green]")
 
     def render_warning(self, message: str) -> None:
         """Render a warning status line."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[yellow]⟳ {message}[/yellow]")
+        self._console.print(f"[yellow]{self._symbols['warning']} {message}[/yellow]")
 
     def render_activity(self, message: str) -> None:
         """Backward-compatible alias for neutral status messages."""
@@ -132,7 +143,7 @@ class StreamRenderer:
         """Render the inline approval prompt using the shared status grammar."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print("[yellow]⟳ Approval required.[/yellow]")
+        self._console.print(f"[yellow]{self._symbols['warning']} Approval required.[/yellow]")
 
     def render_preview(self, title: str, body: str) -> None:
         """Render a preview block without changing task semantics."""
@@ -154,7 +165,9 @@ class StreamRenderer:
             self.render_status(f"Starting step {event.step.index}: {event.step.description}")
             return
         if isinstance(event, ToolCallRequested):
-            marker = "⟳" if event.requires_approval else "✓"
+            marker = (
+                self._symbols["warning"] if event.requires_approval else self._symbols["success"]
+            )
             color = "yellow" if event.requires_approval else "green"
             suffix = " (HIGH RISK)" if event.risk_level == "high" else ""
             self.flush_pending_details()
@@ -187,15 +200,8 @@ class StreamRenderer:
 
     def _render_plan(self, plan, title: str) -> None:
         lines = []
-        markers = {
-            "pending": "•",
-            "in_progress": "→",
-            "completed": "✓",
-            "failed": "✗",
-            "skipped": "○",
-        }
         for step in plan.steps:
-            marker = markers.get(step.status, "•")
+            marker = self._symbols.get(step.status, self._symbols["pending"])
             line = f"{step.index}. {marker} {step.description}"
             if step.result and step.status in {"completed", "failed"}:
                 line = f"{line}\n   {step.result}"
@@ -236,3 +242,27 @@ class StreamRenderer:
         if isinstance(source, str) and source:
             return f"{source}: {chunk.text}".strip(": ")
         return ""
+
+
+def _safe_symbol(console: Console, preferred: str, fallback: str) -> str:
+    """Choose a glyph that the current console encoding can represent."""
+    encoding = _console_encoding(console)
+    if encoding is None:
+        return preferred
+    try:
+        preferred.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return fallback
+    return preferred
+
+
+def _console_encoding(console: Console) -> str | None:
+    """Best-effort lookup of the console output encoding."""
+    file = getattr(console, "file", None)
+    encoding = getattr(file, "encoding", None)
+    if isinstance(encoding, str) and encoding:
+        return encoding
+    encoding = getattr(console, "encoding", None)
+    if isinstance(encoding, str) and encoding:
+        return encoding
+    return None

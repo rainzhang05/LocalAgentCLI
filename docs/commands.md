@@ -65,8 +65,8 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/hf-token`
 - **Syntax**: `/hf-token [token]`
-- **Behavior**: Stores the Hugging Face token used for private Hub model discovery and downloads. If no token is provided and the shell is interactive, prompts securely for it.
-- **Visibility**: Once a token is already available, the command is hidden from the live slash-command menu and `/help`.
+- **Behavior**: Stores or replaces the Hugging Face token used for private Hub model discovery and downloads. If no token is provided and the shell is interactive, prompts securely for it.
+- **Visibility**: Always available in the live slash-command menu and `/help` so users can change the token later.
 
 #### `/exit`
 - **Syntax**: `/exit`

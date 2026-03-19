@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from rich.prompt import Prompt
-
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.config.defaults import CONFIG_SCHEMA
 from localagentcli.config.manager import ConfigManager
-from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
+from localagentcli.shell.prompt import (
+    SelectionOption,
+    prompt_text,
+    select_option,
+    supports_interactive_prompt,
+)
 
 _CONFIG_CHOICES: dict[str, tuple[str, ...]] = {
     "general.default_mode": ("agent", "chat"),
@@ -39,7 +42,7 @@ class ConfigHandler(CommandHandler):
             default=None,
         )
         if selection is None:
-            return CommandResult.ok("Config edit cancelled.")
+            return CommandResult.ok("Config edit cancelled.", presentation="warning")
         if selection.value == "__show_all__":
             return self._show_all()
         return self._prompt_for_value(selection.value)
@@ -71,7 +74,7 @@ class ConfigHandler(CommandHandler):
         except ValueError as e:
             return CommandResult.error(str(e))
         display_value = _format_value(self._config.get(key))
-        return CommandResult.ok(f"Set {key} = {display_value}")
+        return CommandResult.ok(f"Set {key} = {display_value}", presentation="success")
 
     def _prompt_for_value(self, key: str) -> CommandResult:
         """Prompt for a valid value and persist it."""
@@ -91,28 +94,32 @@ class ConfigHandler(CommandHandler):
                 default=str(current_value) if current_value is not None else None,
             )
             if selection is None:
-                return CommandResult.ok("Config edit cancelled.")
+                return CommandResult.ok("Config edit cancelled.", presentation="warning")
             return self._set_key(key, selection.value)
 
-        try:
-            value = Prompt.ask(
-                f"Set {key}",
-                default=str(current_value) if current_value is not None else "",
-            )
-        except (KeyboardInterrupt, EOFError):
-            return CommandResult.ok("Config edit cancelled.")
+        value = prompt_text(
+            f"Set {key}",
+            default=str(current_value) if current_value is not None else "",
+        )
+        if value is None:
+            return CommandResult.ok("Config edit cancelled.", presentation="warning")
         return self._set_key(key, value)
 
-    def help_text(self) -> str:
-        return (
-            "Read or write configuration values.\n"
-            "Usage:\n"
-            "  /config                    Open the interactive config editor "
-            "(or show all values without a TTY)\n"
-            "  /config <key>              Show value for a specific key\n"
-            "  /config <key> <value>      Set a config value\n"
-            "\n"
-            "Keys use dotted notation (e.g., general.default_mode, generation.temperature)."
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="System",
+            summary="Read or edit configuration values.",
+            usage="/config [key] [value]",
+            argument_hint="[key] [value]",
+            details=(
+                "Run /config with no arguments to open the interactive config editor in a "
+                "TTY, or use dotted keys for direct reads and writes."
+            ),
+            examples=(
+                "/config",
+                "/config general.default_mode",
+                "/config generation.temperature 0.2",
+            ),
         )
 
 

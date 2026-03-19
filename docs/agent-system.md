@@ -11,7 +11,7 @@ LocalAgentCLI operates in one of two modes at any time. The default mode is **Ag
 | Aspect | Chat Mode | Agent Mode |
 |---|---|---|
 | Purpose | Conversational interaction | Autonomous task execution |
-| Input handling | Plain text → model → response | Plain text → task → plan → execute |
+| Input handling | Plain text → model → response | Plain text → triage → direct answer or task execution |
 | Tool usage | Not invoked automatically | Invoked as part of the agent loop |
 | Approval prompts | None (no actions taken) | Yes, per safety rules |
 | Context management | Auto-compaction + summaries | Auto-compaction + task state |
@@ -33,7 +33,7 @@ In chat mode, user input is sent directly to the model as a conversation message
 3. **Context auto-compaction**: When conversation history approaches the model's context window, older messages are automatically summarized. The summary replaces the original messages while preserving key information.
 4. **Pinned instructions**: Users can pin system-level instructions that survive compaction. Pinned instructions are always included at the top of the context.
 5. **Repository instructions**: If the active workspace belongs to a repository whose root contains `AGENTS.md`, that file is automatically loaded and prepended to the system prompt as the default repository instruction set.
-6. **Reasoning display**: If the model emits reasoning/thinking tokens, they are displayed in a scrollable panel above the response. This panel is visually distinct from the response output.
+6. **Secondary output display**: If the model emits reasoning/thinking, tool-call metadata, provider notifications, or similar secondary events, they are rendered separately from the primary assistant response and preserved in session metadata.
 7. **Summaries**: The system can generate a summary of the conversation on demand or automatically at session save.
 
 ### ChatController
@@ -73,11 +73,17 @@ class ChatController:
 
 ### Behavior
 
-In agent mode, user input is interpreted as a **task**. The agent analyzes the task, generates a plan, and executes it step-by-step using tools. Each step's result is observed and used to update the plan. The loop continues until the task is complete or the user intervenes.
+In agent mode, user input first goes through an internal triage pass that uses the full effective context: pinned instructions, repository instructions from `AGENTS.md`, compacted history, and recent messages. The triage result determines one of three execution paths:
+
+1. **`direct_answer`**: simple factual or explanatory prompts skip planning and are answered immediately through the normal model stream
+2. **`single_step_task`**: one concrete action gets a single synthesized step and executes without a separate planner round-trip
+3. **`multi_step_task`**: complex or staged work uses the planner and full iterative agent loop
+
+The loop continues until the task is complete, fails, or the user intervenes.
 
 ### Core Principles
 
-1. **Explicit plan shown**: Before executing, the agent displays its plan to the user. The plan shows the high-level steps the agent intends to take.
+1. **Adaptive planning**: Trivial requests in agent mode do not incur planning overhead. Plans are shown only for `single_step_task` and `multi_step_task` paths.
 2. **Multi-step execution**: Tasks are broken into discrete steps. Each step may involve one or more tool calls.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
@@ -87,11 +93,11 @@ In agent mode, user input is interpreted as a **task**. The agent analyzes the t
 
 ```
 ┌──────────────────┐
-│  Understand Task │  ← Parse user input, gather context
+│  Understand Task │  ← Parse user input, gather context, triage
 └────────┬─────────┘
          ▼
 ┌──────────────────┐
-│  Generate Plan   │  ← Break task into steps
+│  Generate Plan   │  ← Only when triage requires planned execution
 └────────┬─────────┘
          ▼
 ┌──────────────────┐
@@ -115,14 +121,16 @@ In agent mode, user input is interpreted as a **task**. The agent analyzes the t
 
 #### 1. Understand Task
 - The agent receives the user's input text
-- It examines the current workspace state (file listing, git status) if relevant
-- It determines what the user wants to accomplish
+- It builds the effective model context from pinned instructions, repository instructions, compacted history, and recent turns
+- It classifies the request as `direct_answer`, `single_step_task`, or `multi_step_task`
+- It examines the current workspace state only when the resulting task path requires it
 
 #### 2. Generate Plan
-- The model generates a structured plan with numbered steps
+- `single_step_task`: the controller synthesizes one executable step locally and begins execution immediately
+- `multi_step_task`: the planner generates the minimum number of structured steps needed for the task
 - Each step describes the action, the tool(s) to use, and the expected outcome
-- The plan is displayed to the user before execution begins
-- The user can approve, modify, or reject the plan
+- The plan is displayed before or as execution begins
+- There is no separate plan-review pause; only tool approvals can pause execution
 
 #### 3. Execute Step
 - The agent selects the next step from the plan
@@ -154,6 +162,7 @@ In agent mode, user input is interpreted as a **task**. The agent analyzes the t
 | Model-controlled retries | The model decides when and how to retry failed steps |
 | No fixed step limit | There is no hard limit on the number of steps. System safeguards (timeout, user interrupt) apply instead |
 | Subtask decomposition | Complex steps are broken into smaller sub-steps |
+| Direct-answer fast path | Simple prompts in agent mode can bypass planning entirely while still using full session context |
 
 ### AgentController
 
@@ -169,8 +178,16 @@ class AgentController:
         self._safety = safety
         self._loop = AgentLoop(model, tool_registry, safety)
 
+    def dispatch_input(self, task_input: str) -> AgentDispatch:
+        """Triage one plain-text input and return the correct execution path.
+
+        - direct_answer -> stream chunks immediately
+        - single_step_task -> create a one-step TaskPlan locally
+        - multi_step_task -> start the planner + agent loop
+        """
+
     def handle_task(self, task_input: str) -> Iterator[AgentEvent]:
-        """Process a task in agent mode.
+        """Compatibility wrapper for planned execution paths.
 
         Yields AgentEvent objects for the UI to render:
         - PlanGenerated: initial plan
@@ -207,11 +224,11 @@ class AgentLoop:
     def run(self, task: str, context: list[Message]) -> Iterator[AgentEvent]:
         """Execute the agent loop until completion or interruption.
 
-        1. Send task + context to model with tool definitions
-        2. Model responds with plan or tool calls
+        1. Receive a synthesized or planned TaskPlan
+        2. Send task + context + current step to the model with tool definitions
         3. If tool call: route through safety, execute, observe
-        4. Feed observation back to model
-        5. Repeat until model indicates completion
+        4. Feed observations back to the model
+        5. Repeat until the plan completes or fails
         """
 ```
 
@@ -289,6 +306,8 @@ class TaskFailed(AgentEvent):
     plan: TaskPlan
 ```
 
+Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They stream normalized `StreamChunk` events directly and are persisted in session history with metadata marking the response as `agent_task="direct_answer"` and `fast_path=True`.
+
 ---
 
 ## Mode Switching
@@ -300,7 +319,7 @@ class TaskFailed(AgentEvent):
 
 ### `/mode agent`
 - Switches to agent mode
-- **Precondition check**: Calls `model.supports_tools()`. If `False`:
+- **Precondition check**: Validates `tool_use` on the active target. For remote providers, this check is based on the selected remote model id discovered from the provider's model list, not just the provider type. If the active target lacks tool support:
   - Refuses the switch
   - Displays: `"Cannot enter agent mode: the active model ({model_name}) does not support tool use. Use /set to switch to a tool-capable target."`
 - Session history is preserved
@@ -312,6 +331,6 @@ class TaskFailed(AgentEvent):
 Even though there is no fixed step limit, the system protects against runaway agents:
 
 1. **User interrupt (Ctrl+C)**: Immediately stops the current task and returns control to the prompt.
-2. **Inactivity timeout**: If the agent has not made progress (no tool calls, no new reasoning) for a configurable duration, it is paused with a notification.
+2. **Inactivity timeout**: If the agent has not made progress for a configurable duration, the task fails with a clear notification.
 3. **Resource limits**: If a single tool call exceeds resource limits (e.g., shell command timeout), it is killed and the agent is notified.
-4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it pauses and asks the user for guidance.
+4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it replans once around the failure and eventually terminates with `TaskFailed` if progress still cannot be made.

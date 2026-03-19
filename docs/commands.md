@@ -110,16 +110,26 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/models remove <name>`
 - **Syntax**: `/models remove <name>`
-- **Behavior**: Removes an installed model. Deletes model files from `~/.localagent/models/` and removes the registry entry. Prompts for confirmation before deletion.
-
-#### `/models use <name>`
-- **Syntax**: `/models use <name>`
-- **Behavior**: Sets the active model for the current session. Loads the model into memory using the appropriate backend. If another model is loaded, unloads it first.
-- **Validation**: Fails if the model name is not found in the registry.
+- **Behavior**: Removes an installed model. Deletes model files from `~/.localagent/models/` and removes the registry entry.
+- **Selection**: If no name is provided in an interactive terminal, opens a picker of installed models.
 
 #### `/models inspect <name>`
 - **Syntax**: `/models inspect <name>`
 - **Behavior**: Displays detailed metadata about an installed model: format, size on disk, parameter count (if available), quantization level, capabilities (tool use, reasoning, streaming), backend assignment, and version info.
+- **Selection**: If no name is provided in an interactive terminal, opens a picker of installed models.
+
+---
+
+### Target Commands
+
+#### `/set`
+- **Syntax**: `/set`
+- **Behavior**: Opens a layered picker for choosing the active inference target.
+  1. Choose between `Providers` and `Local models`
+  2. For providers: choose a configured provider, then choose one of its discovered models
+  3. For local models: choose one installed local model directly
+- **Scope**: Applies to the current session only.
+- **Notes**: This is the primary interactive replacement for `/models use` and `/providers use`.
 
 ---
 
@@ -141,14 +151,13 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/providers remove`
 - **Syntax**: `/providers remove <name>`
 - **Behavior**: Removes a configured provider. Deletes stored credentials. Prompts for confirmation.
-
-#### `/providers use`
-- **Syntax**: `/providers use <name>`
-- **Behavior**: Sets the active provider for the current session. Overrides the global config for this session only.
+- **Selection**: If no name is provided in an interactive terminal, opens a picker of configured providers.
 
 #### `/providers test`
 - **Syntax**: `/providers test [name]`
-- **Behavior**: Tests connectivity to a provider by sending a minimal request. Reports success or failure with error details. Without a name, tests the currently active provider.
+- **Behavior**: Tests connectivity to a provider by sending a minimal request. Reports success or failure with error details.
+- **Selection**: In an interactive terminal, if no name is provided the command opens a picker of configured providers, defaulting to the current provider when possible.
+- **Non-interactive behavior**: Without a name, falls back to the current session provider and then the globally active provider.
 
 ---
 
@@ -175,6 +184,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/session load <name>`
 - **Syntax**: `/session load <name>`
 - **Behavior**: Loads a previously saved session. Restores all session state including history and active model.
+- **Selection**: If no name is provided in an interactive terminal, opens a picker of saved sessions.
 
 #### `/session list`
 - **Syntax**: `/session list`
@@ -190,15 +200,12 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/agent approve`
 - **Syntax**: `/agent approve`
-- **Behavior**: Switches to autonomous approval mode for the current agent task. The agent will no longer prompt for approval on standard actions (file writes, shell commands). High-risk actions still require explicit approval.
+- **Behavior**: Sets approval mode to `autonomous` for the current session and future sessions. If an agent task is currently paused on approval, the pending action is approved and the task resumes in autonomous mode. High-risk actions still require explicit approval.
+- **Reset**: Use `/config safety.approval_mode balanced` to switch back to balanced approvals.
 
 #### `/agent deny`
 - **Syntax**: `/agent deny`
 - **Behavior**: Denies the pending agent action and halts the current step. The agent re-plans from the current state.
-
-#### `/agent stop`
-- **Syntax**: `/agent stop`
-- **Behavior**: Immediately stops the running agent task. Preserves current state so the user can review what was done.
 
 ---
 

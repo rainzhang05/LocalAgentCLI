@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,20 +18,29 @@ from localagentcli.session.state import Session
 class SessionManager:
     """Manages session lifecycle: create, save, load, list, clear."""
 
-    def __init__(self, sessions_dir: Path, config: ConfigManager):
+    def __init__(
+        self,
+        sessions_dir: Path,
+        config: ConfigManager,
+        default_target_resolver: Callable[[str, str], tuple[str, str]] | None = None,
+    ):
         self._dir = sessions_dir
         self._config = config
         self._current: Session | None = None
+        self._default_target_resolver = default_target_resolver
 
     def new_session(self) -> Session:
         """Create a fresh session with defaults from config."""
         now = datetime.now()
+        provider = str(self._config.get("provider.active_provider", "") or "")
+        model = str(self._config.get("model.active_model", "") or "")
+        provider, model = self._resolve_default_target(provider, model)
         session = Session(
             id=str(uuid4()),
             name=None,
             mode=self._config.get("general.default_mode", "agent"),
-            model=self._config.get("model.active_model", ""),
-            provider=self._config.get("provider.active_provider", ""),
+            model=model,
+            provider=provider,
             workspace=self._config.get("general.workspace", "."),
             created_at=now,
             updated_at=now,
@@ -121,3 +131,19 @@ class SessionManager:
         if key in session.config_overrides:
             return session.config_overrides[key]
         return self._config.get(key)
+
+    def _resolve_default_target(self, provider: str, model: str) -> tuple[str, str]:
+        """Validate or replace the configured default target for new sessions."""
+        if self._default_target_resolver is None:
+            return provider, model
+        if not provider and not model:
+            return "", ""
+
+        resolved_provider, resolved_model = self._default_target_resolver(provider, model)
+        resolved_provider = resolved_provider or ""
+        resolved_model = resolved_model or ""
+
+        if (resolved_provider, resolved_model) != (provider, model):
+            self._config.set("provider.active_provider", resolved_provider)
+            self._config.set("model.active_model", resolved_model)
+        return resolved_provider, resolved_model

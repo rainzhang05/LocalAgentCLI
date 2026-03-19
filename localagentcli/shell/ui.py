@@ -246,7 +246,7 @@ class ShellUI:
             except KeyboardInterrupt:
                 model.cancel()
                 agent_controller.stop()
-                self._stream_renderer.render_activity("Agent task interrupted.")
+                self._stream_renderer.render_warning("Agent task interrupted.")
             except Exception as exc:
                 agent_controller.stop()
                 self._stream_renderer.render_error(str(exc))
@@ -270,7 +270,7 @@ class ShellUI:
             self._stream_renderer.render_stream(chunks)
         except KeyboardInterrupt:
             model.cancel()
-            self._stream_renderer.render_activity("Generation interrupted.")
+            self._stream_renderer.render_warning("Generation interrupted.")
         except Exception as exc:
             self._stream_renderer.render_error(str(exc))
 
@@ -606,16 +606,14 @@ class ShellUI:
                     self._drain_agent_events(self._agent_controller.deny_action())
                 else:
                     self._agent_controller.stop()
-                    self._stream_renderer.render_activity("Agent task stopped.")
+                    self._stream_renderer.render_warning("Agent task stopped.")
                 return
 
     def _prompt_for_tool_approval(self, event: ToolCallRequested) -> str:
         """Prompt inline for approval of a pending tool call."""
         while True:
-            self._console.print(
-                "[yellow][Enter] Approve  |  [d] Deny  |  [v] View details  |  "
-                "/agent approve  |  Ctrl+C stop task[/yellow]"
-            )
+            self._stream_renderer.flush_pending_details()
+            self._stream_renderer.render_approval_prompt()
             response = self._console.input("").strip()
             if response == "":
                 return "approve"
@@ -624,10 +622,13 @@ class ShellUI:
             if response in {"/agent approve"}:
                 return "approve_all"
             if response == "v":
-                self._console.print(self._format_tool_preview(event))
+                self._stream_renderer.render_preview(
+                    f"{event.tool_name} preview",
+                    self._format_tool_preview(event),
+                )
                 continue
-            self._console.print(
-                "[red]Invalid response. Use Enter, d, v, /agent approve, or Ctrl+C.[/red]"
+            self._stream_renderer.render_error(
+                "Invalid response. Use Enter, d, v, /agent approve, or Ctrl+C."
             )
 
     def _format_tool_preview(self, event: ToolCallRequested) -> str:
@@ -683,7 +684,7 @@ class ShellUI:
         if not stop:
             return False
         self._agent_controller.stop()
-        self._stream_renderer.render_activity("Agent task stopped.")
+        self._stream_renderer.render_warning("Agent task stopped.")
         return True
 
     def _workspace_root(self) -> Path:

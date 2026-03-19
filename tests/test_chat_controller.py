@@ -89,3 +89,18 @@ class TestChatController:
 
         controller.unpin_instruction(0)
         assert controller._session.pinned_instructions == []
+
+    def test_handle_input_includes_workspace_agents_instruction(self):
+        model = FakeModel()
+        session = _make_session(
+            pinned_instructions=["Keep answers concise."],
+            metadata={"workspace_instruction": "Follow AGENTS.md exactly."},
+        )
+        controller = ChatController(model=model, session=session)
+
+        list(controller.handle_input("Hi there"))
+
+        system_message = model.stream_calls[0][0][0]
+        assert system_message.role == "system"
+        assert "Follow AGENTS.md exactly." in system_message.content
+        assert "Keep answers concise." in system_message.content

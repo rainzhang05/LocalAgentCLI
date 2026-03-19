@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 4 complete — chat controller, context compaction, reasoning panel, mode switching)
+> **Last updated**: 2026-03-18 (Phase 5 complete — tool system, agent loop, planner, approvals, and agent commands)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -95,7 +95,7 @@ After implementing a component:
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-18 — retained on `Session` and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-18 |
-| `[x]` | `/mode agent` command | 2026-03-18 — capability gate implemented; full task execution remains Phase 5 |
+| `[x]` | `/mode agent` command | 2026-03-18 — mode switching implemented in Phase 4 and now activates the Phase 5 agent workflow |
 | `[x]` | Status header display | 2026-03-18 — header shows mode, active model/provider target, and workspace |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
 | `[x]` | Tab completion for commands | 2026-03-18 — slash command and subcommand completion via prompt toolkit completer |
@@ -106,25 +106,25 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | Tool base class (ABC) | |
-| `[ ]` | Tool registry | |
-| `[ ]` | `file_read` tool | |
-| `[ ]` | `file_search` tool | |
-| `[ ]` | `directory_list` tool | |
-| `[ ]` | `file_write` tool | |
-| `[ ]` | `patch_apply` tool | |
-| `[ ]` | `shell_execute` tool | |
-| `[ ]` | `test_execute` tool | |
-| `[ ]` | `git_status` tool | |
-| `[ ]` | `git_diff` tool | |
-| `[ ]` | `git_commit` tool | |
-| `[ ]` | Agent controller | |
-| `[ ]` | Agent loop (understand/plan/execute/observe) | |
-| `[ ]` | Task planner | |
-| `[ ]` | Agent events system | |
-| `[ ]` | `/agent approve` command | |
-| `[ ]` | `/agent deny` command | |
-| `[ ]` | `/agent stop` command | |
+| `[x]` | Tool base class (ABC) | 2026-03-18 |
+| `[x]` | Tool registry | 2026-03-18 |
+| `[x]` | `file_read` tool | 2026-03-18 |
+| `[x]` | `file_search` tool | 2026-03-18 |
+| `[x]` | `directory_list` tool | 2026-03-18 |
+| `[x]` | `file_write` tool | 2026-03-18 |
+| `[x]` | `patch_apply` tool | 2026-03-18 |
+| `[x]` | `shell_execute` tool | 2026-03-18 |
+| `[x]` | `test_execute` tool | 2026-03-18 |
+| `[x]` | `git_status` tool | 2026-03-18 |
+| `[x]` | `git_diff` tool | 2026-03-18 |
+| `[x]` | `git_commit` tool | 2026-03-18 |
+| `[x]` | Agent controller | 2026-03-18 — session-integrated task orchestration with persistence, compaction, approvals, and tool-result history |
+| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-18 — iterative per-step execution with tool calling, replanning, and completion/failure events |
+| `[x]` | Task planner | 2026-03-18 — model-driven JSON plans with heuristic fallback and replan support |
+| `[x]` | Agent events system | 2026-03-18 — structured plan, step, reasoning, tool, completion, and failure events rendered by the shell |
+| `[x]` | `/agent approve` command | 2026-03-18 — resumes pending tool actions and can switch the current task to autonomous approvals |
+| `[x]` | `/agent deny` command | 2026-03-18 — rejects the pending tool action and resumes the agent loop |
+| `[x]` | `/agent stop` command | 2026-03-18 — stops the active agent task from the command layer or inline approval flow |
 
 ---
 
@@ -133,10 +133,10 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[ ]` | Safety layer (central gate) | |
-| `[ ]` | Approval manager (balanced mode) | |
-| `[ ]` | Approval manager (autonomous mode) | |
-| `[ ]` | Approval UX (inline prompts) | |
-| `[ ]` | Workspace boundary enforcement | |
+| `[~]` | Approval manager (balanced mode) | 2026-03-18 — agent mode now pauses side-effecting tool calls for confirmation; central safety gate still pending |
+| `[~]` | Approval manager (autonomous mode) | 2026-03-18 — task-scoped autonomous approvals supported after explicit user approval; broader safety integration still pending |
+| `[~]` | Approval UX (inline prompts) | 2026-03-18 — inline approve/deny/view/stop prompts implemented for agent tool calls; not yet generalized beyond agent mode |
+| `[~]` | Workspace boundary enforcement | 2026-03-18 — tool path resolution rejects escapes outside the workspace root; central enforcement layer still pending |
 | `[ ]` | Symlink validation | |
 | `[ ]` | High-risk action detection | |
 | `[ ]` | Rollback manager (file backups) | |
@@ -150,10 +150,10 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-17 |
 | `[ ]` | Backend auto-install on demand | |
-| `[x]` | Unit tests | 2026-03-18 — 553 tests |
+| `[x]` | Unit tests | 2026-03-18 — 605 tests |
 | `[ ]` | Integration tests | |
 | `[ ]` | CLI tests | |
-| `[ ]` | Agent workflow tests | |
+| `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
 | `[ ]` | Safety tests | |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Linux) | 2026-03-17 — via CI matrix |

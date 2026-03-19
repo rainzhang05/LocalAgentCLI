@@ -113,8 +113,8 @@ class KeyManager:
 Remote providers can advertise their available models:
 
 - **OpenAI-compatible**: `GET /v1/models` returns a list of available models
-- **Anthropic**: Models are known statically (the API does not expose a model list endpoint); the system maintains a built-in list of Anthropic models with their capabilities
-- **Generic REST**: No automatic discovery; user must specify the model name
+- **Anthropic**: `GET /v1/models` returns the models accessible to the current API key
+- **Generic REST**: Attempts `GET /models` (or a configured models endpoint) and falls back to the configured default model if discovery is unavailable
 
 ```python
 class RemoteProvider(ABC):
@@ -220,10 +220,10 @@ class AnthropicProvider(RemoteProvider):
         """True for Claude models with extended thinking support."""
 
     def test_connection(self) -> ConnectionTestResult:
-        """Send a minimal messages request and check for valid response."""
+        """GET /v1/models and check for a valid response."""
 
     def list_models(self) -> list[RemoteModelInfo]:
-        """Return built-in list of known Anthropic models."""
+        """GET /v1/models and parse the response."""
 ```
 
 ### GenericRESTProvider
@@ -238,6 +238,9 @@ class GenericRESTProvider(RemoteProvider):
 
     def stream_generate(self, messages: list[Message], **kwargs) -> Iterator[StreamChunk]:
         """Send request using configured mapping. Parse response using response mapping."""
+
+    def list_models(self) -> list[RemoteModelInfo]:
+        """Try a configured models endpoint, then fall back to the provider's default model."""
 ```
 
 The `request_mapping` and `response_mapping` dicts define how to translate between the unified message format and the provider's expected format:

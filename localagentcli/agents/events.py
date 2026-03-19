@@ -38,6 +38,8 @@ class ToolCallRequested(AgentEvent):
     tool_name: str
     arguments: dict
     requires_approval: bool
+    risk_level: str = "normal"
+    warnings: list[str] = field(default_factory=list)
     type: str = field(init=False, default="tool_call_requested")
 
 

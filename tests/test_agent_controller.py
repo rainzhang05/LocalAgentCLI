@@ -180,3 +180,20 @@ class TestAgentController:
             for event in followup_events
         )
         assert isinstance(followup_events[-1], TaskComplete)
+
+    def test_build_context_messages_includes_workspace_agents_instruction(self, tmp_path: Path):
+        model = FakeAgentModel([GenerationResult(text='{"steps":[{"description":"noop"}]}')])
+        session = _make_session(tmp_path)
+        session.metadata["workspace_instruction"] = "Follow AGENTS.md exactly."
+        session.pinned_instructions.append("Keep edits minimal.")
+        controller = AgentController(
+            model=model,
+            session=session,
+            tool_registry=create_default_tool_registry(tmp_path),
+        )
+
+        messages = controller._build_context_messages()
+
+        assert messages[0].role == "system"
+        assert "Follow AGENTS.md exactly." in messages[0].content
+        assert "Keep edits minimal." in messages[0].content

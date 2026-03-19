@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import os
 
-from rich.prompt import Prompt
-
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.providers.keys import KeyManager
-from localagentcli.shell.prompt import supports_interactive_prompt
+from localagentcli.shell.prompt import prompt_secret, supports_interactive_prompt
 
 HF_TOKEN_KEY_NAME = "hf_token"
 HF_TOKEN_ENV_NAMES = (
@@ -45,21 +43,23 @@ class HFTokenHandler(CommandHandler):
         if not token:
             if not supports_interactive_prompt():
                 return CommandResult.error("Usage: /hf-token <token>")
-            try:
-                token = Prompt.ask("Hugging Face token", password=True)
-            except (KeyboardInterrupt, EOFError):
-                return CommandResult.ok("HF token setup cancelled.")
+            entered_token = prompt_secret("Hugging Face token")
+            if entered_token is None:
+                return CommandResult.ok("HF token setup cancelled.", presentation="warning")
+            token = entered_token
         if not token:
             return CommandResult.error("A Hugging Face token is required.")
 
         self._key_manager.store_key(HF_TOKEN_KEY_NAME, token)
         _set_hf_token_environment(token)
-        return CommandResult.ok("HF token saved.")
+        return CommandResult.ok("HF token saved.", presentation="success")
 
-    def help_text(self) -> str:
-        return (
-            "Store or replace the Hugging Face token used for model discovery and downloads.\n"
-            "Usage: /hf-token [token]"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="System",
+            summary="Store or replace the Hugging Face token used for discovery and downloads.",
+            usage="/hf-token [token]",
+            argument_hint="[token]",
         )
 
 

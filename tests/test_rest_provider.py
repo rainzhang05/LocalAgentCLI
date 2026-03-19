@@ -112,6 +112,30 @@ class TestRESTGenerate:
             result = provider.generate([ModelMessage(role="user", content="Hi")])
         assert result.text == ""
 
+    def test_generate_with_reasoning_and_tool_fields(self):
+        provider = _make_provider(
+            options={
+                "supports_tools": True,
+                "supports_reasoning": True,
+                "response_mapping": {
+                    "content_field": "output.text",
+                    "reasoning_field": "output.reasoning",
+                    "tool_calls_field": "output.tool_calls",
+                },
+            }
+        )
+        data = {
+            "output": {
+                "text": "Done",
+                "reasoning": "Think first",
+                "tool_calls": [{"function": {"name": "file_read", "arguments": "{}"}}],
+            }
+        }
+        with patch.object(provider._client, "post", return_value=_mock_response(data)):
+            result = provider.generate([ModelMessage(role="user", content="Hi")])
+        assert result.reasoning == "Think first"
+        assert result.tool_calls[0]["function"]["name"] == "file_read"
+
 
 # ---------------------------------------------------------------------------
 # stream_generate() tests

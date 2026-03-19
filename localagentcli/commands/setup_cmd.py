@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from rich.console import Console
-from rich.prompt import Prompt
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.config.manager import ConfigManager
 from localagentcli.session.manager import SessionManager
-from localagentcli.shell.prompt import supports_interactive_prompt
+from localagentcli.shell.prompt import (
+    SelectionOption,
+    prompt_text,
+    select_option,
+    supports_interactive_prompt,
+)
 
 
 class SetupHandler(CommandHandler):
@@ -20,63 +24,83 @@ class SetupHandler(CommandHandler):
         self._console = console
 
     def execute(self, args: list[str]) -> CommandResult:
-        self._console.print()
-        self._console.print("[bold]Setup Wizard[/bold]")
-        self._console.print("Configure your LocalAgent CLI settings.\n")
-
         current_workspace = self._config.get("general.workspace", ".")
         current_mode = self._config.get("general.default_mode", "agent")
         current_level = self._config.get("general.logging_level", "normal")
 
         if supports_interactive_prompt():
-            workspace = Prompt.ask(
+            workspace = prompt_text(
                 "Workspace directory",
-                default=current_workspace,
-                console=self._console,
+                default=str(current_workspace),
             )
-            mode = Prompt.ask(
-                "Default mode",
-                choices=["chat", "agent"],
-                default=current_mode,
-                console=self._console,
+            if workspace is None:
+                return CommandResult.ok(
+                    "Setup cancelled. Using current settings.",
+                    presentation="warning",
+                )
+
+            mode_selection = select_option(
+                "Choose the default mode",
+                [
+                    SelectionOption(value="chat", label="chat"),
+                    SelectionOption(value="agent", label="agent"),
+                ],
+                default=str(current_mode),
             )
-            level = Prompt.ask(
-                "Logging level",
-                choices=["normal", "verbose", "debug"],
-                default=current_level,
-                console=self._console,
+            if mode_selection is None:
+                return CommandResult.ok(
+                    "Setup cancelled. Using current settings.",
+                    presentation="warning",
+                )
+            mode = mode_selection.value
+
+            level_selection = select_option(
+                "Choose the logging level",
+                [
+                    SelectionOption(value="normal", label="normal"),
+                    SelectionOption(value="verbose", label="verbose"),
+                    SelectionOption(value="debug", label="debug"),
+                ],
+                default=str(current_level),
             )
+            if level_selection is None:
+                return CommandResult.ok(
+                    "Setup cancelled. Using current settings.",
+                    presentation="warning",
+                )
+            level = level_selection.value
         else:
             workspace = current_workspace
             mode = current_mode
             level = current_level
-            self._console.print(
-                "[dim]Non-interactive setup detected; using current default settings.[/dim]"
-            )
 
         try:
             self._config.set("general.workspace", workspace)
             self._config.set("general.default_mode", mode)
             self._config.set("general.logging_level", level)
         except ValueError as e:
-            self._console.print(f"[red]Warning: {e}[/red]")
+            return CommandResult.error(str(e))
 
         # Update session with new config values
         session = self._session_manager.current
         session.mode = self._config.get("general.default_mode", "agent")
         session.workspace = self._config.get("general.workspace", ".")
 
-        self._console.print()
-        self._console.print(
-            "[dim]Model and provider setup will be available once\n"
-            "model/provider support is installed.[/dim]"
+        body = (
+            "Model and provider setup will be available once model/provider support is installed."
         )
-        self._console.print()
+        if not supports_interactive_prompt():
+            body = "Non-interactive setup detected; using current default settings.\n\n" + body
 
-        return CommandResult.ok("Setup complete.")
+        return CommandResult.ok("Setup complete.", presentation="success", body=body)
 
-    def help_text(self) -> str:
-        return "Run the interactive setup wizard.\nUsage: /setup"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="System",
+            summary="Run the interactive setup wizard.",
+            usage="/setup",
+            details="Configure the default workspace, mode, and logging level.",
+        )
 
 
 def register(

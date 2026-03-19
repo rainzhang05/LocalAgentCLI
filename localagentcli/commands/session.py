@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
 from localagentcli.session.manager import SessionManager
+from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
 
 
 class SessionNewHandler(CommandHandler):
@@ -46,7 +47,15 @@ class SessionLoadHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         if not args:
-            return CommandResult.error("Session name required.\nUsage: /session load <name>")
+            if not supports_interactive_prompt():
+                return CommandResult.error("Session name required.\nUsage: /session load <name>")
+            sessions = self._session_manager.list_sessions()
+            if not sessions:
+                return CommandResult.ok("No saved sessions.")
+            selection = _select_session_option(self._session_manager, "Choose a session to load")
+            if selection is None:
+                return CommandResult.ok("Session load cancelled.")
+            args = [selection.value]
         try:
             self._session_manager.load_session(args[0])
             return CommandResult.ok(
@@ -122,9 +131,40 @@ class SessionParentHandler(CommandHandler):
 
 def register(router: CommandRouter, session_manager: SessionManager) -> None:
     """Register all /session subcommands."""
-    router.register("session", SessionParentHandler())
+    router.register("session", SessionParentHandler(), visible_in_menu=False)
     router.register("session new", SessionNewHandler(session_manager))
     router.register("session save", SessionSaveHandler(session_manager))
     router.register("session load", SessionLoadHandler(session_manager))
     router.register("session list", SessionListHandler(session_manager))
     router.register("session clear", SessionClearHandler(session_manager))
+
+
+def build_session_selection_options(session_manager: SessionManager) -> list[SelectionOption]:
+    """Build interactive selection options for saved sessions."""
+    options: list[SelectionOption] = []
+    for item in session_manager.list_sessions():
+        name = str(item.get("name", ""))
+        if not name:
+            continue
+        model = str(item.get("model", "")) or "(none)"
+        mode = str(item.get("mode", "")) or "unknown"
+        options.append(
+            SelectionOption(
+                value=name,
+                label=name,
+                description=f"{mode} • {model}",
+                aliases=(mode, model),
+            )
+        )
+    return options
+
+
+def _select_session_option(
+    session_manager: SessionManager,
+    message: str,
+) -> SelectionOption | None:
+    """Prompt for one saved session."""
+    options = build_session_selection_options(session_manager)
+    if not options:
+        return None
+    return select_option(message, options)

@@ -63,6 +63,18 @@ class TestStreamRendererRenderChunk:
         assert list(renderer._secondary_entries) == ["think"]
         assert renderer._buffer == ""
 
+    def test_primary_notification_renders_activity(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        renderer.render_chunk(
+            StreamChunk(
+                text="[WARNING] Near memory limit", kind="notification", importance="primary"
+            )
+        )
+
+        console.print.assert_called_once_with("ℹ [WARNING] Near memory limit")
+        assert list(renderer._secondary_entries) == []
+
 
 class TestStreamRendererRenderStream:
     def test_returns_full_text(self):

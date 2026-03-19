@@ -132,19 +132,25 @@ class ChatController:
         """Stream the assistant response and write it back to session history."""
         assistant_parts: list[str] = []
         reasoning_parts: list[str] = []
+        chunks: list[StreamChunk] = []
 
         for chunk in self._model.stream_generate(messages, **generation_options):
+            chunks.append(chunk)
             if chunk.text:
-                if chunk.is_reasoning:
+                if chunk.kind == "reasoning":
                     reasoning_parts.append(chunk.text)
-                elif not chunk.is_done and not chunk.is_tool_call:
+                elif chunk.kind == "final_text":
                     assistant_parts.append(chunk.text)
             yield chunk
 
         assistant_text = "".join(assistant_parts).strip()
         reasoning_text = "".join(reasoning_parts).strip()
         if assistant_text or reasoning_text:
-            metadata = {"reasoning": reasoning_text} if reasoning_text else {}
+            metadata: dict[str, object] = {
+                "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+            }
+            if reasoning_text:
+                metadata["reasoning"] = reasoning_text
             self._session.history.append(
                 Message(
                     role="assistant",

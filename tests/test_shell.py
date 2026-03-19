@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from rich.text import Text
 
@@ -606,6 +606,63 @@ class TestShellUIModelResolution:
 
 
 class TestShellUIHelpers:
+    def test_prompt_for_tool_approval_flushes_details_before_prompt(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._console.input.return_value = ""
+        ui._stream_renderer = MagicMock()
+        event = ToolCallRequested(
+            tool_name="patch_apply",
+            arguments={"path": "file.py", "old_text": "old", "new_text": "new"},
+            requires_approval=True,
+        )
+
+        result = ui._prompt_for_tool_approval(event)
+
+        assert result == "approve"
+        assert ui._stream_renderer.method_calls[:2] == [
+            call.flush_pending_details(),
+            call.render_approval_prompt(),
+        ]
+
+    def test_prompt_for_tool_approval_preview_flow_for_patch_apply(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._console.input.side_effect = ["v", ""]
+        ui._stream_renderer = MagicMock()
+        event = ToolCallRequested(
+            tool_name="patch_apply",
+            arguments={"path": "file.py", "old_text": "old", "new_text": "new"},
+            requires_approval=True,
+        )
+
+        result = ui._prompt_for_tool_approval(event)
+
+        assert result == "approve"
+        preview_call = ui._stream_renderer.render_preview.call_args
+        assert preview_call.args[0] == "patch_apply preview"
+        assert "Replace" in preview_call.args[1]
+        assert "With" in preview_call.args[1]
+
+    def test_prompt_for_tool_approval_preview_flow_for_file_write(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._console.input.side_effect = ["v", ""]
+        ui._stream_renderer = MagicMock()
+        event = ToolCallRequested(
+            tool_name="file_write",
+            arguments={"path": "file.py", "content": "a" * 600},
+            requires_approval=True,
+        )
+
+        result = ui._prompt_for_tool_approval(event)
+
+        assert result == "approve"
+        preview_call = ui._stream_renderer.render_preview.call_args
+        assert preview_call.args[0] == "file_write preview"
+        assert "file.py" in preview_call.args[1]
+        assert preview_call.args[1].endswith("...")
+
     def test_format_tool_preview_for_patch_apply(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         event = ToolCallRequested(
@@ -661,8 +718,51 @@ class TestShellUIHelpers:
         assert result is False
         controller.stop.assert_not_called()
 
+    def test_stop_agent_task_with_confirmation_accepts_and_warns(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        controller = MagicMock()
+        controller.has_active_task = True
+        ui._agent_controller = controller
+        ui._stream_renderer = MagicMock()
+
+        with patch("localagentcli.shell.ui.Confirm.ask", return_value=True):
+            result = ui._stop_agent_task_with_confirmation()
+
+        assert result is True
+        controller.stop.assert_called_once()
+        ui._stream_renderer.render_warning.assert_called_once_with("Agent task stopped.")
+
     def test_workspace_root_resolves_current_workspace(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._session_manager.current.workspace = "."
 
         assert ui._workspace_root() == Path(".").resolve()
+
+    def test_handle_plain_text_renders_warning_on_chat_interrupt(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        model = MagicMock()
+        ui._session_manager.current.mode = "chat"
+        ui._resolve_active_model = MagicMock(return_value=model)
+        ui._stream_renderer = MagicMock()
+        ui._stream_renderer.render_stream.side_effect = KeyboardInterrupt
+
+        ui._handle_plain_text("hello")
+
+        model.cancel.assert_called_once()
+        ui._stream_renderer.render_warning.assert_called_once_with("Generation interrupted.")
+
+    def test_handle_plain_text_renders_warning_on_agent_interrupt(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        model = MagicMock()
+        controller = MagicMock()
+        controller.dispatch_input.side_effect = KeyboardInterrupt
+        ui._session_manager.current.mode = "agent"
+        ui._resolve_active_model = MagicMock(return_value=model)
+        ui._get_or_create_agent_controller = MagicMock(return_value=controller)
+        ui._stream_renderer = MagicMock()
+
+        ui._handle_plain_text("do something")
+
+        model.cancel.assert_called_once()
+        controller.stop.assert_called_once()
+        ui._stream_renderer.render_warning.assert_called_once_with("Agent task interrupted.")

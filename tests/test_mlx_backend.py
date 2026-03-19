@@ -99,7 +99,52 @@ class TestMLXGenerate:
         backend._tokenizer.apply_chat_template.side_effect = AttributeError
 
         mock_mlx_lm = MagicMock()
+        mock_mlx_lm.stream_generate = None
         mock_mlx_lm.generate.return_value = "Hello world"
+
+        with patch.object(backend, "_import_mlx_lm", return_value=mock_mlx_lm):
+            result = backend.generate([ModelMessage(role="user", content="hi")])
+
+        assert result.text == "Hello world"
+
+    def test_generate_uses_sampler_instead_of_temp(self, backend: MLXBackend):
+        backend._model = MagicMock()
+        backend._tokenizer = MagicMock()
+        backend._tokenizer.apply_chat_template.side_effect = AttributeError
+
+        mock_mlx_lm = MagicMock()
+        mock_mlx_lm.stream_generate = None
+        mock_mlx_lm.generate.return_value = "Hello world"
+
+        with patch.object(backend, "_import_mlx_lm", return_value=mock_mlx_lm):
+            with patch.object(backend, "_build_sampler", return_value="sampler"):
+                backend.generate(
+                    [ModelMessage(role="user", content="hi")],
+                    temperature=0.2,
+                    max_tokens=123,
+                )
+
+        kwargs = mock_mlx_lm.generate.call_args.kwargs
+        assert kwargs["sampler"] == "sampler"
+        assert "temp" not in kwargs
+        assert "temperature" not in kwargs
+
+    def test_generate_retries_with_stream_generate_on_temp_signature_error(
+        self,
+        backend: MLXBackend,
+    ):
+        backend._model = MagicMock()
+        backend._tokenizer = MagicMock()
+        backend._tokenizer.apply_chat_template.side_effect = AttributeError
+
+        mock_mlx_lm = MagicMock()
+        mock_mlx_lm.generate.side_effect = TypeError(
+            "generate_step() got an unexpected keyword argument 'temp'"
+        )
+        mock_mlx_lm.stream_generate.return_value = [
+            MagicMock(text="Hello "),
+            MagicMock(text="world"),
+        ]
 
         with patch.object(backend, "_import_mlx_lm", return_value=mock_mlx_lm):
             result = backend.generate([ModelMessage(role="user", content="hi")])
@@ -123,14 +168,18 @@ class TestMLXStreamGenerate:
         backend._tokenizer.apply_chat_template.side_effect = AttributeError
 
         mock_mlx_lm = MagicMock()
-        mock_mlx_lm.generate.return_value = "streamed text"
+        mock_mlx_lm.stream_generate.return_value = [
+            MagicMock(text="streamed "),
+            MagicMock(text="text"),
+        ]
 
         with patch.object(backend, "_import_mlx_lm", return_value=mock_mlx_lm):
             chunks = list(backend.stream_generate([ModelMessage(role="user", content="hi")]))
 
-        assert len(chunks) == 2
-        assert chunks[0].text == "streamed text"
-        assert chunks[1].is_done is True
+        assert len(chunks) == 3
+        assert chunks[0].text == "streamed "
+        assert chunks[1].text == "text"
+        assert chunks[2].is_done is True
 
 
 # ---------------------------------------------------------------------------

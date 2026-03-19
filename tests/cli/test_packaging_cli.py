@@ -77,7 +77,9 @@ def _run_cli(home: Path, user_input: str, timeout: int = 20) -> subprocess.Compl
 def _interrupt_process(process: subprocess.Popen[str]) -> None:
     """Send the closest available Ctrl+C-style signal for the current platform."""
     if os.name == "nt":
-        process.send_signal(signal.CTRL_BREAK_EVENT)
+        assert process.stdin is not None
+        process.stdin.write("\x03\n")
+        process.stdin.flush()
         return
     process.send_signal(signal.SIGINT)
 

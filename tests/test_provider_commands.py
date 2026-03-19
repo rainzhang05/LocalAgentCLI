@@ -226,6 +226,23 @@ class TestProvidersRemove:
         handler = ProvidersRemoveHandler(registry)
         assert handler.help_text() != ""
 
+    @patch("localagentcli.commands.providers.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.providers.select_option")
+    def test_remove_uses_picker_when_name_missing(
+        self,
+        mock_select,
+        _mock_supports,
+        registry: ProviderRegistry,
+    ):
+        _add_openai(registry)
+        mock_select.return_value = MagicMock(value="openai")
+
+        handler = ProvidersRemoveHandler(registry)
+        result = handler.execute([])
+
+        assert result.success is True
+        assert registry.get("openai") is None
+
 
 # ------------------------------------------------------------------
 # ProvidersUseHandler tests
@@ -366,3 +383,25 @@ class TestProvidersTest:
     ):
         handler = ProvidersTestHandler(registry, session_manager)
         assert handler.help_text() != ""
+
+    @patch("localagentcli.commands.providers.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.commands.providers.select_option")
+    def test_test_uses_picker_when_name_missing(
+        self,
+        mock_select,
+        _mock_supports,
+        registry: ProviderRegistry,
+        session_manager: SessionManager,
+    ):
+        _add_openai(registry)
+        mock_select.return_value = MagicMock(value="openai")
+        handler = ProvidersTestHandler(registry, session_manager)
+        mock_provider = MagicMock()
+        mock_provider.test_connection.return_value = ConnectionTestResult(
+            success=True, message="OK", latency_ms=10.0
+        )
+
+        with patch.object(registry, "create_provider", return_value=mock_provider):
+            result = handler.execute([])
+
+        assert result.success is True

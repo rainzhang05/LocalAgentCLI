@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Iterator
 
 import httpx
@@ -21,6 +22,27 @@ from localagentcli.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _AnthropicBlockState:
+    """State for a single streamed Anthropic content block."""
+
+    block_type: str
+    block_id: str = ""
+    name: str = ""
+    input_json: str = ""
+    input_data: dict = field(default_factory=dict)
+
+    def to_tool_call(self) -> dict:
+        return {
+            "id": self.block_id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": self.input_json or json.dumps(self.input_data, ensure_ascii=False),
+            },
+        }
 
 
 class AnthropicProvider(RemoteProvider):
@@ -52,7 +74,9 @@ class AnthropicProvider(RemoteProvider):
         """POST /v1/messages without streaming."""
         body = self._build_request_body(messages, stream=False, **kwargs)
         try:
-            response = self._client.post("/v1/messages", json=body)
+            response = self._request_with_retries(
+                lambda: self._client.post("/v1/messages", json=body)
+            )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
@@ -62,33 +86,28 @@ class AnthropicProvider(RemoteProvider):
         data = response.json()
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
+        tool_calls: list[dict] = []
         for block in data.get("content", []):
             if block.get("type") == "text":
                 text_parts.append(block.get("text", ""))
             elif block.get("type") == "thinking":
                 reasoning_parts.append(block.get("thinking", ""))
             elif block.get("type") == "tool_use":
-                tool_calls = [
+                tool_calls.append(
                     {
                         "id": block.get("id", ""),
                         "type": "function",
                         "function": {
                             "name": block.get("name", ""),
-                            "arguments": json.dumps(block.get("input", {})),
+                            "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
                         },
                     }
-                ]
-                return GenerationResult(
-                    text="".join(text_parts),
-                    reasoning="".join(reasoning_parts),
-                    tool_calls=tool_calls,
-                    usage=data.get("usage", {}),
-                    finish_reason=data.get("stop_reason", ""),
                 )
 
         return GenerationResult(
             text="".join(text_parts),
             reasoning="".join(reasoning_parts),
+            tool_calls=tool_calls,
             usage=data.get("usage", {}),
             finish_reason=data.get("stop_reason", ""),
         )
@@ -98,31 +117,47 @@ class AnthropicProvider(RemoteProvider):
     ) -> Iterator[StreamChunk]:
         """POST /v1/messages with stream=True. Handle Anthropic SSE format."""
         body = self._build_request_body(messages, stream=True, **kwargs)
+        blocks: dict[int, _AnthropicBlockState] = {}
+        context = None
         try:
-            with self._client.stream("POST", "/v1/messages", json=body) as resp:
-                resp.raise_for_status()
-                event_type = ""
-                for line in resp.iter_lines():
-                    if line.startswith("event: "):
-                        event_type = line[7:].strip()
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    chunk = self._parse_sse_event(event_type, line[6:])
-                    if chunk is not None:
-                        yield chunk
-                        if chunk.is_done:
-                            return
+            context, resp = self._open_stream_with_retries(
+                lambda: self._client.stream("POST", "/v1/messages", json=body)
+            )
+            resp.raise_for_status()
+            event_type = ""
+            for line in resp.iter_lines():
+                if line.startswith("event: "):
+                    event_type = line[7:].strip()
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                for chunk in self._parse_sse_event(event_type, line[6:], blocks):
+                    yield chunk
+                    if chunk.is_done:
+                        return
         except httpx.HTTPStatusError as e:
-            yield StreamChunk(text=f"API error: {e.response.status_code}", is_done=True)
+            yield StreamChunk(
+                text=f"API error: {e.response.status_code}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
         except (httpx.TimeoutException, httpx.ConnectError) as e:
-            yield StreamChunk(text=f"Connection error: {e}", is_done=True)
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        finally:
+            if context is not None:
+                context.__exit__(None, None, None)
 
     def test_connection(self) -> ConnectionTestResult:
         """Use /v1/models to verify connectivity and API-key scope."""
         start = time.monotonic()
         try:
-            response = self._client.get("/v1/models")
+            response = self._request_with_retries(lambda: self._client.get("/v1/models"))
             response.raise_for_status()
             latency = max((time.monotonic() - start) * 1000, 0.001)
             model_count = len(response.json().get("data", []))
@@ -149,7 +184,7 @@ class AnthropicProvider(RemoteProvider):
     def list_models(self) -> list[RemoteModelInfo]:
         """GET /v1/models and parse the response."""
         try:
-            response = self._client.get("/v1/models")
+            response = self._request_with_retries(lambda: self._client.get("/v1/models"))
             response.raise_for_status()
             data = response.json()
             models: list[RemoteModelInfo] = []
@@ -177,16 +212,16 @@ class AnthropicProvider(RemoteProvider):
         ]
 
     def supports_tools(self) -> bool:
-        return True
+        return bool(self._capabilities_for_model(self.active_model).get("tool_use", False))
 
     def supports_reasoning(self) -> bool:
-        return True
+        return bool(self._capabilities_for_model(self.active_model).get("reasoning", False))
 
     def supports_streaming(self) -> bool:
         return True
 
     def capabilities(self) -> dict:
-        return {"tool_use": True, "reasoning": True, "streaming": True}
+        return self._capabilities_for_model(self.active_model)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -199,9 +234,11 @@ class AnthropicProvider(RemoteProvider):
         **kwargs: object,
     ) -> dict:
         """Build the request body for /v1/messages."""
+        model_name = str(kwargs.get("model", self.active_model) or self.active_model)
+        self.set_active_model(model_name)
         system_text, api_messages = self._format_messages(messages)
         body: dict = {
-            "model": kwargs.get("model", self._default_model),
+            "model": model_name,
             "messages": api_messages,
             "stream": stream,
             "max_tokens": kwargs.get("max_tokens", 4096),
@@ -292,31 +329,96 @@ class AnthropicProvider(RemoteProvider):
         return "\n\n".join(system_parts), api_messages
 
     @staticmethod
-    def _parse_sse_event(event_type: str, data_str: str) -> StreamChunk | None:
-        """Parse an Anthropic SSE event into a StreamChunk."""
+    def _parse_sse_event(
+        event_type: str,
+        data_str: str,
+        blocks: dict[int, _AnthropicBlockState],
+    ) -> list[StreamChunk]:
+        """Parse an Anthropic SSE event into normalized stream chunks."""
         try:
             data = json.loads(data_str)
         except json.JSONDecodeError:
-            return None
+            return []
+
+        chunks: list[StreamChunk] = []
+
+        if event_type == "content_block_start":
+            index = int(data.get("index", 0))
+            block = data.get("content_block", {})
+            block_type = str(block.get("type", ""))
+            if block_type:
+                blocks[index] = _AnthropicBlockState(
+                    block_type=block_type,
+                    block_id=str(block.get("id", "")),
+                    name=str(block.get("name", "")),
+                    input_data=block.get("input", {})
+                    if isinstance(block.get("input", {}), dict)
+                    else {},
+                )
+                if block_type == "tool_use":
+                    chunks.append(
+                        StreamChunk(
+                            text=f"Model prepared tool call: {block.get('name', '')}",
+                            kind="notification",
+                            importance="secondary",
+                            transient=True,
+                            payload={"tool_name": block.get("name", "")},
+                        )
+                    )
+            return chunks
 
         if event_type == "content_block_delta":
+            index = int(data.get("index", 0))
+            state = blocks.get(index)
             delta = data.get("delta", {})
             delta_type = delta.get("type", "")
             if delta_type == "text_delta":
-                return StreamChunk(text=delta.get("text", ""))
-            if delta_type == "thinking_delta":
-                return StreamChunk(text=delta.get("thinking", ""), is_reasoning=True)
+                chunks.append(StreamChunk(text=delta.get("text", ""), kind="final_text"))
+            elif delta_type == "thinking_delta":
+                chunks.append(
+                    StreamChunk(
+                        text=delta.get("thinking", ""),
+                        kind="reasoning",
+                        importance="secondary",
+                    )
+                )
+            elif delta_type == "input_json_delta" and state is not None:
+                state.input_json += str(delta.get("partial_json", ""))
+            return chunks
+
+        if event_type == "content_block_stop":
+            index = int(data.get("index", 0))
+            state = blocks.pop(index, None)
+            if state is not None and state.block_type == "tool_use":
+                tool_call = state.to_tool_call()
+                chunks.append(
+                    StreamChunk(
+                        kind="tool_call",
+                        importance="secondary",
+                        payload=tool_call,
+                        tool_call_data=tool_call,
+                    )
+                )
+            return chunks
 
         if event_type == "message_stop":
-            return StreamChunk(is_done=True)
+            return [StreamChunk(kind="done", is_done=True, payload={"finish_reason": "stop"})]
 
         if event_type == "message_delta":
             usage = data.get("usage")
             stop_reason = data.get("delta", {}).get("stop_reason")
             if stop_reason:
-                return StreamChunk(is_done=True, usage=usage)
+                chunks.append(
+                    StreamChunk(
+                        kind="done",
+                        is_done=True,
+                        usage=usage if isinstance(usage, dict) else None,
+                        payload={"finish_reason": stop_reason},
+                    )
+                )
+            return chunks
 
-        return None
+        return []
 
     @staticmethod
     def _capabilities_for_model(model_id: str) -> dict:

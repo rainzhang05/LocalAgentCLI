@@ -139,8 +139,8 @@ When the user types `/`:
 
 Typing `/models` with no subcommand opens a layered picker backed by the same prompt-toolkit menu system:
 1. Choose the local runtime family (`PyTorch / Safetensors`, `MLX` when supported, or `GGUF`)
-2. Choose a curated model family (for example `GPT-OSS`, `Qwen`, or `Gemma`)
-3. Choose the exact Hugging Face repo from the curated list
+2. Choose from a broad set of Hugging Face model families (for example `GPT-OSS`, `Qwen`, `Llama`, `Gemma`, `Mistral`, `Phi`, `DeepSeek`, `Granite`, and others)
+3. Choose the exact Hugging Face repo discovered live from the Hub API for that backend/family pair
 4. Start the download immediately and set the installed model as the active local model for the current session
 
 The picker must be keyboard-first:
@@ -203,7 +203,7 @@ class StreamRenderer:
 
 | State | Behavior |
 |---|---|
-| Idle (waiting for input) | First press shows an exit hint. A second press within 2 seconds exits the shell. |
+| Idle (waiting for input) | First press shows an exit hint. A second consecutive press exits the shell. Any other input resets the exit confirmation. |
 | Model generating (chat mode) | Stop generation immediately, keep any partial output already shown, and return to the prompt. |
 | Agent executing (agent mode) | Stop the current task and return to the prompt. |
 | Tool executing | Kill the tool subprocess. Return timeout/cancelled result to agent. |
@@ -214,7 +214,7 @@ class StreamRenderer:
 Ctrl+C during generation or agent execution does not crash the application. It:
 1. Interrupts the active operation
 2. Keeps any partial output already rendered
-3. Returns to the input prompt, or exits if the user double-presses Ctrl+C while already idle
+3. Returns to the input prompt, or exits if the user presses Ctrl+C twice consecutively while already idle
 
 ---
 

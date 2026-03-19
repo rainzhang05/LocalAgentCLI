@@ -33,11 +33,11 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/setup`
 - **Syntax**: `/setup`
-- **Behavior**: Launches the first-run interactive setup wizard. Walks the user through:
-  1. Selecting or installing a model (local or remote)
-  2. Configuring a remote provider (if desired)
-  3. Setting the default mode (chat or agent)
-  4. Setting the workspace directory
+- **Behavior**: Launches the first-run setup wizard. In the current implementation it configures:
+  1. Workspace directory
+  2. Default mode (`chat` or `agent`)
+  3. Logging level (`normal`, `verbose`, or `debug`)
+- **Non-interactive behavior**: If stdin is not interactive (for example under `pipx` smoke tests, CI pipes, or shell redirection), the command does not prompt. It keeps the current/default values, persists them, and completes successfully so first launch does not fail.
 - **Idempotent**: Can be re-run at any time to reconfigure.
 
 #### `/status`

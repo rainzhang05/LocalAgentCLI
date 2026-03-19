@@ -32,8 +32,9 @@ In chat mode, user input is sent directly to the model as a conversation message
 2. **Session history**: The full conversation history is maintained and sent with each request (subject to context limits).
 3. **Context auto-compaction**: When conversation history approaches the model's context window, older messages are automatically summarized. The summary replaces the original messages while preserving key information.
 4. **Pinned instructions**: Users can pin system-level instructions that survive compaction. Pinned instructions are always included at the top of the context.
-5. **Reasoning display**: If the model emits reasoning/thinking tokens, they are displayed in a scrollable panel above the response. This panel is visually distinct from the response output.
-6. **Summaries**: The system can generate a summary of the conversation on demand or automatically at session save.
+5. **Repository instructions**: If the active workspace belongs to a repository whose root contains `AGENTS.md`, that file is automatically loaded and prepended to the system prompt as the default repository instruction set.
+6. **Reasoning display**: If the model emits reasoning/thinking tokens, they are displayed in a scrollable panel above the response. This panel is visually distinct from the response output.
+7. **Summaries**: The system can generate a summary of the conversation on demand or automatically at session save.
 
 ### ChatController
 
@@ -80,6 +81,7 @@ In agent mode, user input is interpreted as a **task**. The agent analyzes the t
 2. **Multi-step execution**: Tasks are broken into discrete steps. Each step may involve one or more tool calls.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
+5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
 
 ### Agent Loop
 

@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from localagentcli.tools.base import Tool
+
+
+class RiskLevel(str, Enum):
+    """Risk classification used by the safety layer."""
+
+    NORMAL = "normal"
+    HIGH = "high"
 
 
 class ApprovalManager:
@@ -16,8 +25,10 @@ class ApprovalManager:
         """Return the current approval mode."""
         return self._mode
 
-    def needs_approval(self, tool: Tool) -> bool:
+    def needs_approval(self, tool: Tool, risk_level: RiskLevel) -> bool:
         """Determine whether the tool needs explicit approval."""
+        if risk_level == RiskLevel.HIGH:
+            return True
         if tool.is_read_only:
             return False
         if not tool.requires_approval:

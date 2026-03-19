@@ -28,11 +28,11 @@ The default mode balances productivity with safety.
 
 ### Autonomous (via `/agent approve`)
 
-When the user issues `/agent approve` during an agent task, the current task switches to autonomous mode:
-- Standard actions (file writes, shell commands, tests, git commits) are auto-approved for the duration of the current task
+When the user issues `/agent approve`, approval mode switches to autonomous for the current session and future sessions:
+- Standard actions (file writes, shell commands, tests, git commits) are auto-approved
 - High-risk actions still require explicit approval
-- Autonomy resets when the task completes or the user issues `/agent stop`
-- This mode does not persist across sessions
+- If an agent task is currently paused on approval, the pending action resumes in autonomous mode
+- To switch back, set `safety.approval_mode` to `balanced` (for example via `/config safety.approval_mode balanced`)
 
 ### Future Modes (Extensible)
 

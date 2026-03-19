@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-18 (Phase 2 complete — remote providers, streaming, key management)
+> **Last updated**: 2026-03-18 (Phase 3 complete — local models, backends, installer, model commands)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -66,22 +66,22 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[ ]` | Model registry (`registry.json`) | |
-| `[ ]` | Model installer (HF download) | |
-| `[ ]` | Model installer (URL download) | |
-| `[ ]` | Format detector (MLX/GGUF/safetensors) | |
-| `[ ]` | Backend base class (ABC) | |
-| `[ ]` | MLX backend | |
-| `[ ]` | GGUF backend | |
-| `[ ]` | Safetensors backend | |
-| `[ ]` | Hardware detection and warnings | |
-| `[ ]` | `/models list` command | |
-| `[ ]` | `/models search` command | |
-| `[ ]` | `/models install` command | |
-| `[ ]` | `/models remove` command | |
-| `[ ]` | `/models use` command | |
-| `[ ]` | `/models inspect` command | |
-| `[ ]` | Model versioning | |
+| `[x]` | Model registry (`registry.json`) | 2026-03-18 — ModelEntry dataclass, JSON persistence with filelock |
+| `[x]` | Model installer (HF download) | 2026-03-18 — huggingface_hub.snapshot_download |
+| `[x]` | Model installer (URL download) | 2026-03-18 — httpx streaming with resume support |
+| `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-18 — auto-detection pipeline |
+| `[x]` | Backend base class (ABC) | 2026-03-17 — already existed from Phase 2 |
+| `[x]` | MLX backend | 2026-03-18 — macOS Apple Silicon, lazy mlx-lm import |
+| `[x]` | GGUF backend | 2026-03-18 — all platforms, lazy llama-cpp-python import |
+| `[x]` | Safetensors backend | 2026-03-18 — all platforms, lazy torch/transformers import |
+| `[x]` | Hardware detection and warnings | 2026-03-18 — CPU/RAM/GPU detection, >80% warning |
+| `[x]` | `/models list` command | 2026-03-18 |
+| `[x]` | `/models search` command | 2026-03-18 |
+| `[x]` | `/models install` command | 2026-03-18 — hf and url subcommands |
+| `[x]` | `/models remove` command | 2026-03-18 — with file cleanup |
+| `[x]` | `/models use` command | 2026-03-18 — with hardware warnings |
+| `[x]` | `/models inspect` command | 2026-03-18 |
+| `[x]` | Model versioning | 2026-03-18 — auto-increment v1/v2, name@version syntax |
 
 ---
 
@@ -150,7 +150,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-17 |
 | `[ ]` | Backend auto-install on demand | |
-| `[x]` | Unit tests | 2026-03-18 — 384 tests, 93% coverage |
+| `[x]` | Unit tests | 2026-03-18 — 553 tests |
 | `[ ]` | Integration tests | |
 | `[ ]` | CLI tests | |
 | `[ ]` | Agent workflow tests | |

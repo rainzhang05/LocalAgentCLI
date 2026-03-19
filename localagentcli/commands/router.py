@@ -42,13 +42,21 @@ class CommandRouter:
 
     def __init__(self):
         self._commands: dict[str, CommandHandler] = {}
+        self._menu_visible: dict[str, bool] = {}
 
-    def register(self, name: str, handler: CommandHandler) -> None:
+    def register(
+        self,
+        name: str,
+        handler: CommandHandler,
+        *,
+        visible_in_menu: bool = True,
+    ) -> None:
         """Register a command handler.
 
         Name can be multi-word for subcommands (e.g., 'session save').
         """
         self._commands[name] = handler
+        self._menu_visible[name] = visible_in_menu
 
     def dispatch(self, input_line: str) -> CommandResult:
         """Parse input and dispatch to the registered handler.
@@ -83,6 +91,14 @@ class CommandRouter:
         """Return the command registry."""
         return dict(self._commands)
 
+    def get_visible_commands(self) -> dict[str, CommandHandler]:
+        """Return only commands that should appear in the live slash menu."""
+        return {
+            name: handler
+            for name, handler in self._commands.items()
+            if self._menu_visible.get(name, True)
+        }
+
     def get_completions(self) -> list[str]:
         """Return all registered command names prefixed with /."""
-        return [f"/{name}" for name in sorted(self._commands.keys())]
+        return [f"/{name}" for name in sorted(self.get_visible_commands().keys())]

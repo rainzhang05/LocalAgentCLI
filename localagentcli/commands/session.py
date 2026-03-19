@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter
+from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
 
@@ -15,10 +15,18 @@ class SessionNewHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         self._session_manager.new_session()
-        return CommandResult.ok("New session started.", data={"action": "session_changed"})
+        return CommandResult.ok(
+            "New session started.",
+            data={"action": "session_changed"},
+            presentation="success",
+        )
 
-    def help_text(self) -> str:
-        return "Start a fresh session.\nUsage: /session new"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Session",
+            summary="Start a fresh session with the default target and empty history.",
+            usage="/session new",
+        )
 
 
 class SessionSaveHandler(CommandHandler):
@@ -31,12 +39,17 @@ class SessionSaveHandler(CommandHandler):
         name = args[0] if args else None
         try:
             path = self._session_manager.save_session(name)
-            return CommandResult.ok(f"Session saved to {path}")
+            return CommandResult.ok(f"Session saved to {path}", presentation="success")
         except RuntimeError as e:
             return CommandResult.error(str(e))
 
-    def help_text(self) -> str:
-        return "Save the current session.\nUsage: /session save [name]"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Session",
+            summary="Save the current session to disk.",
+            usage="/session save [name]",
+            argument_hint="[name]",
+        )
 
 
 class SessionLoadHandler(CommandHandler):
@@ -51,24 +64,30 @@ class SessionLoadHandler(CommandHandler):
                 return CommandResult.error("Session name required.\nUsage: /session load <name>")
             sessions = self._session_manager.list_sessions()
             if not sessions:
-                return CommandResult.ok("No saved sessions.")
+                return CommandResult.ok("No saved sessions.", presentation="status")
             selection = _select_session_option(self._session_manager, "Choose a session to load")
             if selection is None:
-                return CommandResult.ok("Session load cancelled.")
+                return CommandResult.ok("Session load cancelled.", presentation="warning")
             args = [selection.value]
         try:
             self._session_manager.load_session(args[0])
             return CommandResult.ok(
                 f"Session '{args[0]}' loaded.",
                 data={"action": "session_changed"},
+                presentation="success",
             )
         except FileNotFoundError:
             return CommandResult.error(
                 f"Session '{args[0]}' not found.\nUse /session list to see available sessions."
             )
 
-    def help_text(self) -> str:
-        return "Load a saved session.\nUsage: /session load <name>"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Session",
+            summary="Load a saved session.",
+            usage="/session load <name>",
+            argument_hint="[name]",
+        )
 
 
 class SessionListHandler(CommandHandler):
@@ -80,7 +99,7 @@ class SessionListHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         sessions = self._session_manager.list_sessions()
         if not sessions:
-            return CommandResult.ok("No saved sessions.")
+            return CommandResult.ok("No saved sessions.", presentation="status")
 
         lines = ["Saved sessions:", ""]
         lines.append(f"  {'Name':<25s} {'Mode':<8s} {'Model':<20s} {'Messages':<10s} {'Created'}")
@@ -93,8 +112,12 @@ class SessionListHandler(CommandHandler):
             )
         return CommandResult.ok("\n".join(lines))
 
-    def help_text(self) -> str:
-        return "List all saved sessions.\nUsage: /session list"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Session",
+            summary="List saved sessions with their mode, target, and message count.",
+            usage="/session list",
+        )
 
 
 class SessionClearHandler(CommandHandler):
@@ -105,10 +128,14 @@ class SessionClearHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         self._session_manager.clear_session()
-        return CommandResult.ok("Session history cleared.")
+        return CommandResult.ok("Session history cleared.", presentation="success")
 
-    def help_text(self) -> str:
-        return "Clear session history (keeps model/provider/workspace).\nUsage: /session clear"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Session",
+            summary="Clear session history while keeping the active target and workspace.",
+            usage="/session clear",
+        )
 
 
 class SessionParentHandler(CommandHandler):
@@ -117,15 +144,16 @@ class SessionParentHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.error("/session requires a subcommand: new, save, load, list, clear")
 
-    def help_text(self) -> str:
-        return (
-            "Manage sessions.\n"
-            "Subcommands:\n"
-            "  /session new              Start a fresh session\n"
-            "  /session save [name]      Save current session\n"
-            "  /session load <name>      Load a saved session\n"
-            "  /session list             List saved sessions\n"
-            "  /session clear            Clear session history"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Session",
+            summary="Manage saved sessions.",
+            usage="/session <new|save|load|list|clear>",
+            argument_hint="<subcommand>",
+            details=(
+                "Use /session new to reset context, /session save or load for continuity, "
+                "and /session clear to keep the target while removing history."
+            ),
         )
 
 

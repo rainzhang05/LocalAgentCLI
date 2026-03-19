@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 from rich.console import Console
@@ -90,7 +89,7 @@ class ShellUI:
         self._active_backend: ModelBackend | None = None
         self._active_backend_model = ""
         self._agent_controller: AgentController | None = None
-        self._last_idle_interrupt_at: float | None = None
+        self._awaiting_idle_exit_confirmation = False
 
         self._router = CommandRouter()
         self._register_commands()
@@ -158,7 +157,7 @@ class ShellUI:
             try:
                 self._display_status_header()
                 user_input = self._prompt_session.prompt("> ")
-                self._last_idle_interrupt_at = None
+                self._awaiting_idle_exit_confirmation = False
                 if not user_input.strip():
                     continue
 
@@ -184,7 +183,7 @@ class ShellUI:
             except KeyboardInterrupt:
                 self._console.print()
                 if self._should_exit_after_idle_interrupt():
-                    self._handle_exit()
+                    self._handle_exit(prompt_to_save=False)
                     break
                 continue
             except EOFError:
@@ -416,11 +415,11 @@ class ShellUI:
             return
         self._console.print(f"[red]✗ {result.message}[/red]")
 
-    def _handle_exit(self) -> None:
+    def _handle_exit(self, *, prompt_to_save: bool = True) -> None:
         """Handle clean shutdown with optional session save."""
         self._sync_prompt_history_to_session()
         session = self._session_manager.current
-        if session.is_modified:
+        if prompt_to_save and session.is_modified:
             try:
                 save = Confirm.ask(
                     "Save session before exiting?",
@@ -686,11 +685,10 @@ class ShellUI:
         return entry
 
     def _should_exit_after_idle_interrupt(self) -> bool:
-        """Exit after two idle Ctrl+C presses within a short window."""
-        now = time.monotonic()
-        if self._last_idle_interrupt_at is not None and now - self._last_idle_interrupt_at <= 2:
-            self._last_idle_interrupt_at = None
+        """Exit after two idle Ctrl+C presses with no other action in between."""
+        if self._awaiting_idle_exit_confirmation:
+            self._awaiting_idle_exit_confirmation = False
             return True
-        self._last_idle_interrupt_at = now
-        self._console.print("[dim]Press Ctrl+C again within 2 seconds to exit.[/dim]")
+        self._awaiting_idle_exit_confirmation = True
+        self._console.print("[dim]Press Ctrl+C again to exit.[/dim]")
         return False

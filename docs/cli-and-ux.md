@@ -17,7 +17,7 @@ This document defines the terminal user interface: visual style, UI elements, in
 
 ### Status Header
 
-A persistent single-line header at the top of the terminal showing current state:
+A single-line status summary showing current state:
 
 ```
 LocalAgent | mode: agent | model: codellama-7b (gguf) | workspace: ~/project
@@ -29,7 +29,7 @@ LocalAgent | mode: agent | model: codellama-7b (gguf) | workspace: ~/project
 - Active model name and backend type (or provider name for remote models)
 - Workspace path (abbreviated with `~`)
 
-**Update behavior**: The header updates immediately when mode, model, or workspace changes. It does not scroll with output.
+**Update behavior**: The current implementation prints this line before each prompt, so it appears in scrollback rather than staying pinned. Making it truly persistent is deferred to a later UX phase.
 
 ### Prompt Line
 
@@ -71,7 +71,7 @@ two sub-arrays...█
 
 ### Secondary Details Panel
 
-When the model emits reasoning/thinking tokens, raw tool-call metadata, provider notifications, or similar low-priority events, they are displayed in a visually distinct dimmed panel above the primary response:
+When the model emits reasoning/thinking tokens, raw tool-call metadata, provider notifications, or similar low-priority events, they are displayed in a visually distinct dimmed `Details` lane:
 
 ```
 ┌─ Details ────────────────────────────────────────────┐
@@ -85,6 +85,7 @@ Quicksort is a divide-and-conquer sorting algorithm...
 
 **Behavior:**
 - Secondary entries are shown by default in dim styling so they remain visible without competing with the final answer
+- The renderer prints pending detail before the first primary answer text, and flushes any later-arriving detail once at the next safe boundary such as task completion or an approval prompt
 - The on-screen panel is capped to a rolling window of recent secondary entries during active generation
 - Full normalized secondary events are still preserved in session metadata even when the on-screen view is capped
 
@@ -114,6 +115,8 @@ Tool calls, approvals, and system events are displayed inline between user input
 - `⟳` — pending approval (yellow)
 - `✗` — failed or denied action (red)
 - `ℹ` — informational message (default high-contrast text)
+
+Supporting warnings or reasoning that do not deserve the main status lane are queued into the dimmed `Details` lane instead of being mixed into the main answer body.
 
 ---
 
@@ -187,7 +190,8 @@ class StreamRenderer:
         """Render a single stream chunk to the terminal.
 
         - final_text: append and render inline
-        - reasoning/tool_call/notification/error: route to dimmed details panel
+        - reasoning/tool_call/secondary notification/error: route to dimmed details lane
+        - primary notification: render as status
         - done: finalize output (add newline, flush)
         """
 
@@ -226,7 +230,7 @@ Ctrl+C during generation or agent execution does not crash the application. It:
 Errors are displayed inline with clear formatting:
 
 ```
-✗ Error: Model 'nonexistent' not found in registry.
+✗ Model 'nonexistent' not found in registry.
   Available models: codellama-7b, mistral-7b
   Use /models list to see all installed models.
 ```

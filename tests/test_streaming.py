@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from rich.panel import Panel
+
 from localagentcli.models.backends.base import StreamChunk
 from localagentcli.shell.streaming import StreamRenderer
 
@@ -19,7 +21,8 @@ class TestStreamRendererRenderChunk:
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_chunk(StreamChunk(text="thinking...", is_reasoning=True))
-        console.print.assert_called_once_with("[dim]thinking...[/dim]", end="")
+        console.print.assert_not_called()
+        assert renderer._reasoning_buffer == "thinking..."
 
     def test_done_chunk_prints_newline(self):
         console = MagicMock()
@@ -73,6 +76,24 @@ class TestStreamRendererRenderStream:
         renderer.render_stream(iter([StreamChunk(text="new"), StreamChunk(is_done=True)]))
         assert renderer._buffer == "new"
 
+    def test_renders_reasoning_panel_before_text(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_stream(
+            iter(
+                [
+                    StreamChunk(text="thinking...", is_reasoning=True),
+                    StreamChunk(text="Hello"),
+                    StreamChunk(is_done=True),
+                ]
+            )
+        )
+
+        panel_arg = console.print.call_args_list[0].args[0]
+        assert isinstance(panel_arg, Panel)
+        assert "thinking..." in panel_arg.renderable
+
 
 class TestStreamRendererRenderError:
     def test_render_error(self):
@@ -80,3 +101,11 @@ class TestStreamRendererRenderError:
         renderer = StreamRenderer(console)
         renderer.render_error("Something went wrong")
         console.print.assert_called_once_with("\n[red]Error: Something went wrong[/red]")
+
+
+class TestStreamRendererActivity:
+    def test_render_activity(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        renderer.render_activity("Context compacted")
+        console.print.assert_called_once_with("[blue]ℹ Context compacted[/blue]")

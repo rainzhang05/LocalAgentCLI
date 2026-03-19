@@ -213,22 +213,23 @@ class TestShellUIRun:
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("No model connected" in c for c in calls)
 
-    def test_agent_mode_plain_text_shows_phase_message(self, config, storage):
+    def test_agent_mode_plain_text_uses_agent_controller(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._session_manager.current.mode = "agent"
         ui._resolve_active_model = MagicMock(return_value=MagicMock())
         ui._stream_renderer = MagicMock()
 
-        with patch("localagentcli.shell.ui.ChatController") as mock_controller_cls:
+        with patch("localagentcli.shell.ui.AgentController") as mock_controller_cls:
             controller = MagicMock()
-            controller.handle_input.return_value = iter([])
+            controller.handle_task.return_value = iter(["agent-event"])
             controller.last_compaction_count = 0
+            controller.has_active_task = False
             mock_controller_cls.return_value = controller
 
             ui._handle_plain_text("do something")
 
-        activity_text = ui._stream_renderer.render_activity.call_args_list[0][0][0]
-        assert "Phase 5" in activity_text
+        controller.handle_task.assert_called_once_with("do something")
+        ui._stream_renderer.render_agent_event.assert_called_once_with("agent-event")
 
     def test_rebuild_prompt_session_uses_session_history(self, config, storage):
         ui = ShellUI(config=config, storage=storage)

@@ -138,7 +138,8 @@ class TestSetupCommand:
     """Tests for /setup."""
 
     @patch("localagentcli.commands.setup_cmd.Prompt.ask")
-    def test_setup_sets_config(self, mock_ask, config, session_manager):
+    @patch("localagentcli.commands.setup_cmd.supports_interactive_prompt", return_value=True)
+    def test_setup_sets_config(self, _mock_interactive, mock_ask, config, session_manager):
         # Return workspace, mode, logging level
         mock_ask.side_effect = ["/tmp/workspace", "chat", "verbose"]
 
@@ -149,6 +150,20 @@ class TestSetupCommand:
         assert config.get("general.default_mode") == "chat"
         assert config.get("general.workspace") == "/tmp/workspace"
         assert config.get("general.logging_level") == "verbose"
+
+    @patch("localagentcli.commands.setup_cmd.supports_interactive_prompt", return_value=False)
+    @patch("localagentcli.commands.setup_cmd.Prompt.ask")
+    def test_setup_uses_defaults_without_tty(
+        self, mock_ask, _mock_interactive, config, session_manager
+    ):
+        router = _make_router(config, session_manager)
+        result = router.dispatch("setup")
+
+        assert result.success
+        mock_ask.assert_not_called()
+        assert config.get("general.workspace") == "."
+        assert config.get("general.default_mode") == "agent"
+        assert config.get("general.logging_level") == "normal"
 
 
 class TestSessionCommands:

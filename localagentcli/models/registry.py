@@ -130,6 +130,17 @@ class ModelRegistry:
             entries[idx][key] = value
         self._save(entries)
 
+    def update_version(self, name: str, version: str, updates: dict) -> None:
+        """Update fields of a specific model version."""
+        entries = self._load()
+        for index, entry in enumerate(entries):
+            if entry["name"] == name and entry["version"] == version:
+                for key, value in updates.items():
+                    entries[index][key] = value
+                self._save(entries)
+                return
+        raise KeyError(f"Model '{name}' version '{version}' not found")
+
     def search(self, query: str) -> list[ModelEntry]:
         """Search installed models by name, format, or metadata."""
         entries = self._load()

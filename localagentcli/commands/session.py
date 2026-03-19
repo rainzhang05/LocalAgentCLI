@@ -14,7 +14,7 @@ class SessionNewHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         self._session_manager.new_session()
-        return CommandResult.ok("New session started.")
+        return CommandResult.ok("New session started.", data={"action": "session_changed"})
 
     def help_text(self) -> str:
         return "Start a fresh session.\nUsage: /session new"
@@ -49,7 +49,10 @@ class SessionLoadHandler(CommandHandler):
             return CommandResult.error("Session name required.\nUsage: /session load <name>")
         try:
             self._session_manager.load_session(args[0])
-            return CommandResult.ok(f"Session '{args[0]}' loaded.")
+            return CommandResult.ok(
+                f"Session '{args[0]}' loaded.",
+                data={"action": "session_changed"},
+            )
         except FileNotFoundError:
             return CommandResult.error(
                 f"Session '{args[0]}' not found.\nUse /session list to see available sessions."

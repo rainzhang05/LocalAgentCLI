@@ -59,3 +59,27 @@ class TestAgentCommands:
 
         assert not result.success
         assert "No pending" in result.message
+
+    def test_undo_runs_supplied_action(self, config):
+        router = CommandRouter()
+        register_agent(
+            router,
+            lambda: None,
+            config,
+            undo_last=lambda: ("Reverted last agent change.", "Path: demo.py"),
+        )
+
+        result = router.dispatch("agent undo")
+
+        assert result.success
+        assert result.presentation == "success"
+        assert result.body == "Path: demo.py"
+
+    def test_undo_all_errors_when_history_is_unavailable(self, config):
+        router = CommandRouter()
+        register_agent(router, lambda: None, config)
+
+        result = router.dispatch("agent undo-all")
+
+        assert not result.success
+        assert "No rollback history" in result.message

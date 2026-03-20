@@ -119,6 +119,25 @@ class TestStatusCommand:
         assert "agent" in result.message
         assert "Workspace:" in result.message
 
+    def test_shows_agent_task_state_and_undo_count(self, config, session_manager):
+        session_manager.current.metadata["agent_task_state"] = {
+            "route": "single_step_task",
+            "phase": "waiting_approval",
+            "step_index": 1,
+            "step_description": "Patch app.py",
+            "pending_tool": "patch_apply",
+            "rollback_count": 3,
+        }
+        router = _make_router(config, session_manager)
+
+        result = router.dispatch("status")
+
+        assert result.success
+        assert "Agent route:" in result.message
+        assert "single-step task" in result.message
+        assert "Pending tool:" in result.message
+        assert "Undo ready:" in result.message
+
 
 class TestConfigCommand:
     """Tests for /config."""

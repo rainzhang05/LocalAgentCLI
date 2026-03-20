@@ -84,7 +84,7 @@ When autonomous mode is active, the prompt is skipped for standard actions. The 
 ✓ patch_apply: src/main.py (auto-approved)
 ✓ shell_execute: npm test (auto-approved)
 ⚠ shell_execute: rm -rf /tmp/data (HIGH RISK — approval required)
-   [Enter] Approve  |  [d] Deny
+    [Enter] Approve  |  [d] Deny  |  [v] View details  |  [a] Approve all
 ```
 
 High-risk actions never inherit autonomous approval. The prompt always returns for those cases, even if the operator previously chose `Approve all`.

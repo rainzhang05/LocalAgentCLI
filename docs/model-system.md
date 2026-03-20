@@ -81,9 +81,23 @@ The registry lives at `~/.localagent/registry.json` and tracks all installed mod
   "path": "~/.localagent/models/codellama-7b/v1/",
   "size_bytes": 4123456789,
   "capabilities": {
-    "tool_use": true,
+    "tool_use": false,
     "reasoning": false,
     "streaming": true
+  },
+  "capability_provenance": {
+    "tool_use": {
+      "tier": "verified",
+      "reason": "Local runtimes do not emit structured tool calls yet."
+    },
+    "reasoning": {
+      "tier": "unknown",
+      "reason": "Reasoning output has not been verified for this local runtime."
+    },
+    "streaming": {
+      "tier": "verified",
+      "reason": "Local runtimes stream token output directly."
+    }
   },
   "metadata": {
     "source": "huggingface",
@@ -95,6 +109,22 @@ The registry lives at `~/.localagent/registry.json` and tracks all installed mod
   }
 }
 ```
+
+### Capability Provenance
+
+Registry entries keep two related views of local-model behavior:
+
+- `capabilities`: the current boolean flags used by the runtime APIs (`supports_tools()`, `supports_reasoning()`, `supports_streaming()`)
+- `capability_provenance`: why those booleans are set and how trustworthy each claim is
+
+Local registry entries use these rules:
+
+- `tool_use = false` with tier `verified`
+- `streaming = true` with tier `verified`
+- `reasoning = true` with tier `inferred` only when installer fingerprinting matched a reasoning-oriented family
+- `reasoning = false` with tier `unknown` otherwise
+
+Older registry entries that do not yet store provenance are normalized to the same local defaults when they are loaded.
 
 ### Registry Operations
 
@@ -147,6 +177,7 @@ When a model is installed, the system runs an automatic detection pipeline:
 ### Step 4: Metadata Extraction
 - Read `config.json` for parameter count, architecture, quantization
 - Determine capabilities (tool use, reasoning, streaming) from model architecture and metadata
+- Record capability provenance alongside those booleans so user-facing commands can explain what is verified, inferred, or still unknown
 - Capability inference is conservative: reasoning may be inferred from model family/metadata, but `tool_use` remains `False` unless the runtime can emit structured tool calls
 - Calculate total size on disk
 - Record source and installation timestamp

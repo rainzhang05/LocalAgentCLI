@@ -47,6 +47,7 @@ Before modifying any code in this repository, read the relevant documentation in
 
 - If the docs say X and the code says Y, the docs are correct — fix the code
 - If you change a behavior that is documented, update the relevant doc
+- Keep repository-owned docs product-local. Do not mention external workspace phases, migration bookkeeping, or reference-repo provenance in `LocalAgentCLI` docs.
 - Do not add undocumented features
 
 ### 5. Update Current State

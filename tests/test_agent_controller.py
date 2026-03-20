@@ -7,10 +7,12 @@ from pathlib import Path
 
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import (
+    PhaseChanged,
     PlanGenerated,
     PlanUpdated,
     StepStarted,
     TaskComplete,
+    TaskRouted,
     ToolCallRequested,
     ToolCallResult,
 )
@@ -86,7 +88,11 @@ class TestAgentController:
 
         events = list(controller.handle_task("Inspect the notes file and report findings"))
 
-        assert isinstance(events[0], PlanGenerated)
+        assert isinstance(events[0], TaskRouted)
+        assert any(
+            isinstance(event, PhaseChanged) and event.phase == "planning" for event in events
+        )
+        assert any(isinstance(event, PlanGenerated) for event in events)
         assert sum(isinstance(event, StepStarted) for event in events) == 2
         assert any(
             isinstance(event, ToolCallRequested) and not event.requires_approval for event in events
@@ -137,6 +143,10 @@ class TestAgentController:
 
         assert any(
             isinstance(event, ToolCallResult) and event.result.status == "denied"
+            for event in followup_events
+        )
+        assert any(
+            isinstance(event, PhaseChanged) and event.phase == "recovering"
             for event in followup_events
         )
         assert any(isinstance(event, PlanUpdated) for event in followup_events)
@@ -214,6 +224,7 @@ class TestAgentController:
         texts = [chunk.text for chunk in dispatch.stream if chunk.text]
         assert texts[-1] == "GitHub is a code hosting platform."
         assert controller._session.history[-1].metadata["fast_path"] is True
+        assert controller.task_state["phase"] == "completed"
 
     def test_build_context_messages_includes_workspace_agents_instruction(self, tmp_path: Path):
         model = FakeAgentModel([GenerationResult(text='{"steps":[{"description":"noop"}]}')])
@@ -231,3 +242,71 @@ class TestAgentController:
         assert messages[0].role == "system"
         assert "Follow AGENTS.md exactly." in messages[0].content
         assert "Keep edits minimal." in messages[0].content
+
+    def test_stop_marks_task_as_stopped(self, tmp_path: Path):
+        model = FakeAgentModel(
+            [
+                GenerationResult(
+                    text="",
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "file_write",
+                                "arguments": '{"path":"output.txt","content":"hello"}',
+                            },
+                        }
+                    ],
+                )
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+        )
+
+        list(controller.handle_task("Create an output file"))
+        controller.stop("Agent task interrupted.")
+
+        assert controller.has_active_task is False
+        assert controller.task_state["phase"] == "stopped"
+        assert controller._session.history[-1].metadata["agent_task"] == "stopped"
+
+    def test_autonomous_approval_mode_persists_across_completed_tasks(self, tmp_path: Path):
+        (tmp_path / "notes.txt").write_text("alpha\n", encoding="utf-8")
+        model = FakeAgentModel(
+            [
+                GenerationResult(
+                    text=(
+                        '{"steps":[{"description":"Read notes"},{"description":"Report findings"}]}'
+                    )
+                ),
+                GenerationResult(
+                    text="",
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "file_read",
+                                "arguments": '{"path":"notes.txt"}',
+                            },
+                        }
+                    ],
+                ),
+                GenerationResult(text="Read notes successfully."),
+                GenerationResult(text="Reported the contents to the user."),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+        )
+        controller.set_autonomous()
+
+        list(controller.handle_task("Inspect the notes file and report findings"))
+
+        assert controller.approval_mode == "autonomous"

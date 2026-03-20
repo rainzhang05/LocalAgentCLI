@@ -722,21 +722,35 @@ class ShellUI:
         arguments = dict(event.arguments)
         header = self._tool_preview_header(event)
         if event.tool_name == "patch_apply":
+            old_text, old_truncated = self._truncate_preview_text(
+                str(arguments.get("old_text", ""))
+            )
+            new_text, new_truncated = self._truncate_preview_text(
+                str(arguments.get("new_text", ""))
+            )
+            replace_label = "Replace" + (" (truncated)" if old_truncated else "")
+            with_label = "With" + (" (truncated)" if new_truncated else "")
             return header + (
-                f"Replace:\n{arguments.get('old_text', '')}\n\n"
-                f"With:\n{arguments.get('new_text', '')}"
+                "Action: patch existing file\n\n"
+                f"{replace_label}:\n{old_text}\n\n"
+                f"{with_label}:\n{new_text}"
             )
         if event.tool_name == "file_write":
             content = str(arguments.get("content", ""))
-            preview = content[:500] + ("..." if len(content) > 500 else "")
+            preview, truncated = self._truncate_preview_text(content)
             path = str(arguments.get("path", "(unknown)"))
             action = (
                 "overwrite existing file" if self._preview_path_exists(path) else "create new file"
             )
-            return header + f"Action: {action}\n\nContent preview:\n{preview}"
+            label = "Content preview" + (" (truncated)" if truncated else "")
+            return header + f"Action: {action}\n\n{label}:\n{preview}"
         if event.tool_name == "shell_execute":
+            command_preview, command_truncated = self._truncate_preview_text(
+                str(arguments.get("command", ""))
+            )
+            command_label = "Command" + (" (truncated)" if command_truncated else "")
             return header + (
-                f"Command:\n{arguments.get('command', '')}\n\n"
+                f"{command_label}:\n{command_preview}\n\n"
                 f"Working directory: {arguments.get('working_dir', '.')}"
             )
         if event.tool_name == "test_execute":
@@ -780,6 +794,12 @@ class ShellUI:
             return (self._workspace_root() / raw_path).resolve().exists()
         except Exception:
             return False
+
+    def _truncate_preview_text(self, text: str, *, limit: int = 500) -> tuple[str, bool]:
+        """Return preview-safe text plus whether truncation was applied."""
+        if len(text) <= limit:
+            return text, False
+        return text[:limit] + "...", True
 
     def _handle_agent_resume(self, result: CommandResult) -> None:
         """Resume a paused agent task after an /agent command."""

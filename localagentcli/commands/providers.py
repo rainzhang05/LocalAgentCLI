@@ -5,6 +5,13 @@ from __future__ import annotations
 from rich.console import Console
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
+from localagentcli.config.manager import ConfigManager
+from localagentcli.models.readiness import (
+    build_target_readiness,
+    format_capability_brief,
+    selection_state_label,
+    unknown_capability_provenance,
+)
 from localagentcli.providers.base import RemoteProvider
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderEntry, ProviderRegistry
@@ -51,8 +58,15 @@ class ProvidersParentHandler(CommandHandler):
 class ProvidersListHandler(CommandHandler):
     """List all configured providers."""
 
-    def __init__(self, registry: ProviderRegistry):
+    def __init__(
+        self,
+        registry: ProviderRegistry,
+        session_manager: SessionManager | None = None,
+        config: ConfigManager | None = None,
+    ):
         self._registry = registry
+        self._session_manager = session_manager
+        self._config = config
 
     def execute(self, args: list[str]) -> CommandResult:
         entries = self._registry.list_providers()
@@ -64,11 +78,20 @@ class ProvidersListHandler(CommandHandler):
 
         active = self._registry.get_active_name()
         lines = ["Configured providers:", ""]
-        lines.append(f"  {'Name':<20s} {'Type':<12s} {'Status'}")
-        lines.append(f"  {'─' * 20} {'─' * 12} {'─' * 12}")
+        lines.append(f"  {'Name':<20s} {'Type':<12s} {'Status':<12s} {'Model':<24s} Readiness")
+        lines.append(f"  {'─' * 20} {'─' * 12} {'─' * 12} {'─' * 24} {'─' * 18}")
         for entry in entries:
             marker = " *" if entry.name == active else ""
-            lines.append(f"  {entry.name:<20s} {entry.type:<12s} {entry.status}{marker}")
+            selected_model = self._selected_model_for_provider(entry.name)
+            model_label = selected_model or "-"
+            readiness_label = "model unselected"
+            if selected_model:
+                readiness = self._provider_readiness(entry.name, selected_model)
+                readiness_label = selection_state_label(readiness.selection_state)
+            lines.append(
+                f"  {entry.name:<20s} {entry.type:<12s} {entry.status:<12s} "
+                f"{model_label:<24s} {readiness_label}{marker}"
+            )
         if active:
             lines.append(f"\n  * = active provider ({active})")
         return CommandResult.ok("\n".join(lines))
@@ -79,6 +102,52 @@ class ProvidersListHandler(CommandHandler):
             summary="List configured remote providers.",
             usage="/providers list",
         )
+
+    def _selected_model_for_provider(self, provider_name: str) -> str:
+        """Return the selected model for a provider when one is known."""
+        if self._session_manager is not None:
+            session = self._session_manager.current
+            if session.provider == provider_name and session.model:
+                return session.model
+
+        active_provider = (
+            str(self._config.get("provider.active_provider", "") or "")
+            if self._config is not None
+            else ""
+        )
+        active_model = (
+            str(self._config.get("model.active_model", "") or "")
+            if self._config is not None
+            else ""
+        )
+        if active_provider == provider_name and active_model:
+            return active_model
+        return ""
+
+    def _provider_readiness(self, provider_name: str, model_name: str):
+        """Resolve provider-model readiness without crashing the listing command."""
+        provider = None
+        try:
+            provider = self._registry.create_provider(provider_name)
+            return resolve_remote_model_readiness(provider, model_name)
+        except Exception:
+            return build_target_readiness(
+                kind="provider",
+                selection_state="unknown",
+                capabilities={"tool_use": False, "reasoning": False, "streaming": True},
+                capability_provenance=unknown_capability_provenance(
+                    {"tool_use": False, "reasoning": False, "streaming": True},
+                    reason=f"Provider '{provider_name}' could not be inspected.",
+                ),
+                summary=f"Provider '{provider_name}' could not be inspected.",
+                guidance="Run /providers test to refresh provider readiness.",
+            )
+        finally:
+            try:
+                if provider is not None:
+                    provider.close()
+            except Exception:
+                pass
 
 
 class ProvidersAddHandler(CommandHandler):
@@ -261,22 +330,35 @@ class ProvidersUseHandler(CommandHandler):
         session = self._session_manager.current
         session.provider = name
         session.model = ""
+        provider = None
         try:
             provider = self._registry.create_provider(name)
             models = provider.list_models()
         except Exception:
             models = []
-        else:
+        finally:
             try:
-                provider.close()
+                if provider is not None:
+                    provider.close()
             except Exception:
                 pass
         if models:
             session.model = models[0].id or models[0].name
         session.touch()
         if session.model:
+            if models[0].selection_state == "legacy_fallback":
+                message = (
+                    f"Active provider set to '{name}' (legacy fallback model: {session.model}). "
+                    "Run /providers test and /set to refresh live discovery."
+                )
+            else:
+                message = (
+                    f"Active provider set to '{name}' "
+                    f"(auto-selected {selection_state_label(models[0].selection_state)} "
+                    f"model: {session.model})."
+                )
             return CommandResult.ok(
-                f"Active provider set to '{name}' (model: {session.model}).",
+                message,
                 presentation="success",
             )
         return CommandResult.ok(
@@ -335,17 +417,31 @@ class ProvidersTestHandler(CommandHandler):
         if entry is None:
             return CommandResult.error(f"Provider '{name}' not found.")
 
+        provider = None
         try:
             provider = self._registry.create_provider(name)
             result = provider.test_connection()
         except Exception as e:
             return CommandResult.error(f"Failed to create provider: {e}")
+        discovery_body = _provider_discovery_report(
+            provider,
+            selected_model=(
+                self._session_manager.current.model
+                if self._session_manager.current.provider == name
+                else ""
+            ),
+        )
+        try:
+            provider.close()
+        except Exception:
+            pass
 
         if result.success:
             self._registry.update_status(name, "tested")
             return CommandResult.ok(
                 f"Provider '{name}': {result.message} ({result.latency_ms:.0f}ms)",
                 presentation="success",
+                body=discovery_body,
             )
         return CommandResult.error(f"Provider '{name}': {result.message}")
 
@@ -364,11 +460,12 @@ def register(
     registry: ProviderRegistry,
     key_manager: KeyManager,
     session_manager: SessionManager,
+    config: ConfigManager,
     console: Console,
 ) -> None:
     """Register all /providers subcommands."""
     router.register("providers", ProvidersParentHandler(), visible_in_menu=False)
-    router.register("providers list", ProvidersListHandler(registry))
+    router.register("providers list", ProvidersListHandler(registry, session_manager, config))
     router.register("providers add", ProvidersAddHandler(registry, key_manager, console))
     router.register("providers remove", ProvidersRemoveHandler(registry))
     router.register(
@@ -407,22 +504,16 @@ def build_remote_model_selection_options(
         if not model_id or model_id in seen:
             continue
         seen.add(model_id)
-        capabilities = model.capabilities or {}
-        flags = [
-            label
-            for key, label in (
-                ("tool_use", "tools"),
-                ("reasoning", "reasoning"),
-                ("streaming", "streaming"),
-            )
-            if capabilities.get(key)
-        ]
-        description = ", ".join(flags) if flags else "remote model"
+        readiness = _remote_model_readiness(model)
         options.append(
             SelectionOption(
                 value=model_id,
                 label=model.name or model_id,
-                description=description,
+                description=(
+                    f"{selection_state_label(model.selection_state)} • "
+                    f"{format_capability_brief('tools', readiness.capabilities['tool_use'])} • "
+                    f"{format_capability_brief('reasoning', readiness.capabilities['reasoning'])}"
+                ),
                 aliases=(model_id,),
             )
         )
@@ -440,3 +531,89 @@ def _select_provider_option(
     if not options:
         return None
     return select_option(message, options, default=default)
+
+
+def resolve_remote_model_readiness(
+    provider: RemoteProvider,
+    model_name: str,
+):
+    """Resolve readiness for one selected provider model."""
+    selected = (model_name or "").strip()
+    provider.set_active_model(selected or None)
+    if not selected:
+        capabilities = provider.capabilities()
+        return build_target_readiness(
+            kind="provider",
+            selection_state="model_unselected",
+            capabilities=capabilities,
+            capability_provenance=unknown_capability_provenance(
+                capabilities,
+                reason="No provider model is selected.",
+            ),
+            summary="No provider model selected.",
+            guidance="Use /set or /set default to choose one.",
+        )
+
+    for model in provider.list_models():
+        if model.id == selected or model.name == selected:
+            guidance = (
+                "Run /providers test and /set to refresh live discovery."
+                if model.selection_state == "legacy_fallback"
+                else "Use /set to choose another model if this target does not fit the task."
+            )
+            return build_target_readiness(
+                kind="provider",
+                selection_state=model.selection_state,
+                capabilities=model.capabilities,
+                capability_provenance=model.capability_provenance,
+                guidance=guidance,
+            )
+
+    capabilities = provider.capabilities()
+    return build_target_readiness(
+        kind="provider",
+        selection_state="unknown",
+        capabilities=capabilities,
+        capability_provenance=unknown_capability_provenance(
+            capabilities,
+            reason=f"The selected provider model '{selected}' was not returned by live discovery.",
+        ),
+        summary=f"Model '{selected}' was not returned by provider discovery.",
+        guidance="Run /providers test and /set to refresh live discovery.",
+    )
+
+
+def _provider_discovery_report(provider: RemoteProvider, *, selected_model: str) -> str:
+    """Render a concise discovery/readiness report for /providers test."""
+    models = provider.list_models()
+    if not models:
+        return "Model discovery: no models returned."
+
+    if any(model.selection_state == "api_discovered" for model in models):
+        lines = [f"Model discovery: api discovered ({len(models)} model(s))."]
+    else:
+        lines = [
+            "Model discovery: legacy fallback (stored default model only).",
+            "Run /providers test and /set to refresh live discovery.",
+        ]
+
+    if selected_model:
+        readiness = resolve_remote_model_readiness(provider, selected_model)
+        selection_label = selection_state_label(readiness.selection_state)
+        lines.append(f"Current target: {selected_model} [{selection_label}].")
+    return "\n".join(lines)
+
+
+def _remote_model_readiness(model):
+    """Build readiness details for one discovered provider model."""
+    return build_target_readiness(
+        kind="provider",
+        selection_state=model.selection_state,
+        capabilities=model.capabilities,
+        capability_provenance=model.capability_provenance,
+        guidance=(
+            "Run /providers test and /set to refresh live discovery."
+            if model.selection_state == "legacy_fallback"
+            else "Use /set to choose another model if this target does not fit the task."
+        ),
+    )

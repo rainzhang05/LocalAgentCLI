@@ -110,7 +110,7 @@ class ModeAgentHandler(CommandHandler):
             except Exception as exc:
                 return CommandResult.error(
                     f"Cannot enter agent mode: failed to inspect provider "
-                    f"'{session.provider}': {exc}"
+                    f"'{session.provider}': {exc}. Run /providers test to verify connectivity."
                 )
             finally:
                 try:
@@ -121,9 +121,10 @@ class ModeAgentHandler(CommandHandler):
             tool_use = readiness.capabilities["tool_use"]
             if readiness.selection_state in {"legacy_fallback", "unknown"}:
                 return CommandResult.error(
-                    "Cannot enter agent mode: the active provider model "
-                    f"({session.model}) is {selection_state_label(readiness.selection_state)}. "
-                    "Run /providers test, then /set to choose a live-discovered model."
+                    "Cannot enter agent mode: active provider model "
+                    f"'{session.model}' is {selection_state_label(readiness.selection_state)}. "
+                    "Run /providers test to refresh discovery, then use /set to choose an "
+                    "API-discovered model."
                 )
             if not tool_use.supported:
                 return CommandResult.error(

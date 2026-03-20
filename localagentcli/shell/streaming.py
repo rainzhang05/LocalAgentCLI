@@ -11,12 +11,16 @@ from rich.text import Text
 
 from localagentcli.agents.events import (
     AgentEvent,
+    PhaseChanged,
     PlanGenerated,
     PlanUpdated,
     ReasoningOutput,
     StepStarted,
     TaskComplete,
     TaskFailed,
+    TaskRouted,
+    TaskStopped,
+    TaskTimedOut,
     ToolCallRequested,
     ToolCallResult,
 )
@@ -153,6 +157,19 @@ class StreamRenderer:
 
     def render_agent_event(self, event: AgentEvent) -> None:
         """Render a structured agent event."""
+        if isinstance(event, TaskRouted):
+            self.render_status(f"Agent route: {_humanize_route(event.route)}.")
+            return
+        if isinstance(event, PhaseChanged):
+            if event.phase in {"planning", "waiting_approval", "replanning", "recovering"}:
+                self.render_status(event.summary)
+            elif event.phase == "failed":
+                self.render_error(event.summary)
+            elif event.phase in {"stopped", "timed_out"}:
+                self.render_warning(event.summary)
+            elif event.phase == "executing" and not event.step_index:
+                self.render_status(event.summary)
+            return
         if isinstance(event, PlanGenerated):
             self.flush_pending_details()
             self._render_plan(event.plan, "Plan")
@@ -177,10 +194,18 @@ class StreamRenderer:
             )
             for warning in event.warnings:
                 self.render_secondary(f"Warning: {warning}")
+            if event.risk_reason:
+                self.render_secondary(f"Risk: {event.risk_reason}")
+            if event.rollback_summary:
+                self.render_secondary(event.rollback_summary)
             return
         if isinstance(event, ToolCallResult):
             if event.result.status == "success":
                 self.render_success(event.result.summary)
+                if event.result.files_changed and event.rollback_entries:
+                    self.render_status(
+                        f"Undo available: {event.rollback_entries} change(s). Use /agent undo."
+                    )
             elif event.result.status == "denied":
                 self.render_warning(event.result.summary)
             else:
@@ -194,6 +219,12 @@ class StreamRenderer:
             if event.summary.strip():
                 self.flush_pending_details()
                 self._console.print(event.summary)
+            return
+        if isinstance(event, TaskStopped):
+            self.render_warning(event.reason)
+            return
+        if isinstance(event, TaskTimedOut):
+            self.render_warning(event.reason)
             return
         if isinstance(event, TaskFailed):
             self.render_error(event.reason)
@@ -266,3 +297,12 @@ def _console_encoding(console: Console) -> str | None:
     if isinstance(encoding, str) and encoding:
         return encoding
     return None
+
+
+def _humanize_route(route: str) -> str:
+    mapping = {
+        "direct_answer": "direct answer",
+        "single_step_task": "single-step task",
+        "multi_step_task": "multi-step task",
+    }
+    return mapping.get(route, route.replace("_", " "))

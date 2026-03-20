@@ -422,7 +422,10 @@ class ProvidersTestHandler(CommandHandler):
             provider = self._registry.create_provider(name)
             result = provider.test_connection()
         except Exception as e:
-            return CommandResult.error(f"Failed to create provider: {e}")
+            return CommandResult.error(
+                f"Cannot test provider '{name}': {e}. "
+                "Use /providers list to verify configured providers."
+            )
         discovery_body = _provider_discovery_report(
             provider,
             selected_model=(
@@ -557,7 +560,8 @@ def resolve_remote_model_readiness(
     for model in provider.list_models():
         if model.id == selected or model.name == selected:
             guidance = (
-                "Run /providers test and /set to refresh live discovery."
+                "Run /providers test to refresh discovery, then use /set to choose an "
+                "API-discovered model."
                 if model.selection_state == "legacy_fallback"
                 else "Use /set to choose another model if this target does not fit the task."
             )
@@ -579,7 +583,10 @@ def resolve_remote_model_readiness(
             reason=f"The selected provider model '{selected}' was not returned by live discovery.",
         ),
         summary=f"Model '{selected}' was not returned by provider discovery.",
-        guidance="Run /providers test and /set to refresh live discovery.",
+        guidance=(
+            "Run /providers test to refresh discovery, then use /set to choose an "
+            "API-discovered model."
+        ),
     )
 
 
@@ -594,7 +601,10 @@ def _provider_discovery_report(provider: RemoteProvider, *, selected_model: str)
     else:
         lines = [
             "Model discovery: legacy fallback (stored default model only).",
-            "Run /providers test and /set to refresh live discovery.",
+            (
+                "Run /providers test to refresh discovery, then use /set to choose an "
+                "API-discovered model."
+            ),
         ]
 
     if selected_model:
@@ -612,7 +622,8 @@ def _remote_model_readiness(model):
         capabilities=model.capabilities,
         capability_provenance=model.capability_provenance,
         guidance=(
-            "Run /providers test and /set to refresh live discovery."
+            "Run /providers test to refresh discovery, then use /set to choose an "
+            "API-discovered model."
             if model.selection_state == "legacy_fallback"
             else "Use /set to choose another model if this target does not fit the task."
         ),

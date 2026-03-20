@@ -43,7 +43,10 @@ class ProvidersParentHandler(CommandHandler):
     """Parent handler that shows subcommand help."""
 
     def execute(self, args: list[str]) -> CommandResult:
-        return CommandResult.error("/providers requires a subcommand: list, add, remove, use, test")
+        return CommandResult.error(
+            "/providers requires a subcommand: list, add, remove, use, test. "
+            "Use /help providers for details."
+        )
 
     def describe(self) -> CommandSpec:
         return CommandSpec(
@@ -349,7 +352,8 @@ class ProvidersUseHandler(CommandHandler):
             if models[0].selection_state == "legacy_fallback":
                 message = (
                     f"Active provider set to '{name}' (legacy fallback model: {session.model}). "
-                    "Run /providers test and /set to refresh live discovery."
+                    "Run /providers test to refresh discovery, then use /set to choose an "
+                    "API-discovered model."
                 )
             else:
                 message = (

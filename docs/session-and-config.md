@@ -190,6 +190,8 @@ class Message:
 - Creates a fresh session with default values
 - Applies the CLI-wide default target selected via `/set default`
 - If that stored target is no longer valid, the shell falls back to another available installed model or configured provider model when possible
+- When a replacement happens, the shell prints one warning naming the invalid target, the replacement target, and the reason for the repair
+- The repaired target is written back to config so future sessions start from the valid replacement
 - Clears history, tasks, and config overrides
 - Does not affect global config
 

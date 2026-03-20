@@ -48,15 +48,22 @@ class TestModelEntry:
         assert e.capabilities["streaming"] is True
         assert e.capabilities["tool_use"] is False
         assert e.metadata == {}
+        assert e.capability_provenance == {}
 
     def test_to_dict(self):
         e = _make_entry()
+        e.capability_provenance = {
+            "tool_use": {"tier": "verified", "reason": "Known false."},
+            "reasoning": {"tier": "unknown", "reason": "Not verified."},
+            "streaming": {"tier": "verified", "reason": "Known true."},
+        }
         d = e.to_dict()
         assert d["name"] == "codellama-7b"
         assert d["version"] == "v1"
         assert d["format"] == "gguf"
         assert d["size_bytes"] == 4_000_000_000
         assert d["metadata"]["source"] == "huggingface"
+        assert d["capability_provenance"]["tool_use"]["tier"] == "verified"
 
     def test_from_dict(self):
         d = {
@@ -73,6 +80,9 @@ class TestModelEntry:
         assert e.version == "v2"
         assert e.format == "mlx"
         assert e.capabilities["tool_use"] is True
+        assert e.capability_provenance["tool_use"]["tier"] == "unknown"
+        assert e.capability_provenance["reasoning"]["tier"] == "unknown"
+        assert e.capability_provenance["streaming"]["tier"] == "verified"
 
     def test_from_dict_defaults(self):
         e = ModelEntry.from_dict({})
@@ -80,15 +90,24 @@ class TestModelEntry:
         assert e.version == "v1"
         assert e.format == ""
         assert e.size_bytes == 0
+        assert e.capability_provenance["tool_use"]["tier"] == "verified"
+        assert e.capability_provenance["reasoning"]["tier"] == "unknown"
+        assert e.capability_provenance["streaming"]["tier"] == "verified"
 
     def test_roundtrip(self):
         original = _make_entry()
+        original.capability_provenance = {
+            "tool_use": {"tier": "verified", "reason": "Known false."},
+            "reasoning": {"tier": "inferred", "reason": "Fingerprint matched."},
+            "streaming": {"tier": "verified", "reason": "Known true."},
+        }
         restored = ModelEntry.from_dict(original.to_dict())
         assert restored.name == original.name
         assert restored.version == original.version
         assert restored.format == original.format
         assert restored.size_bytes == original.size_bytes
         assert restored.metadata == original.metadata
+        assert restored.capability_provenance == original.capability_provenance
 
 
 # ---------------------------------------------------------------------------

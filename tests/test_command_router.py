@@ -83,7 +83,8 @@ class TestCommandRouter:
         router = CommandRouter()
         result = router.dispatch("")
         assert not result.success
-        assert "Empty command" in result.message
+        assert "Command is empty" in result.message
+        assert "/help" in result.message
 
     def test_dispatch_whitespace_only(self):
         router = CommandRouter()
@@ -95,6 +96,7 @@ class TestCommandRouter:
         result = router.dispatch("unknown")
         assert not result.success
         assert "Unknown command" in result.message
+        assert "/help" in result.message
 
     def test_dispatch_suggests_subcommands(self):
         router = CommandRouter()
@@ -105,6 +107,16 @@ class TestCommandRouter:
         assert "subcommand" in result.message
         assert "save" in result.message
         assert "load" in result.message
+        assert "/help session" in result.message
+
+    def test_dispatch_unknown_command_with_suggestion(self):
+        router = CommandRouter()
+        router.register("session", StubHandler())
+
+        result = router.dispatch("sesion")
+
+        assert not result.success
+        assert "Did you mean /session?" in result.message
 
     def test_get_commands(self):
         router = CommandRouter()

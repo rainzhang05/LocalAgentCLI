@@ -70,6 +70,7 @@ class TestProvidersParent:
         result = handler.execute([])
         assert result.success is False
         assert "subcommand" in result.message
+        assert "/help providers" in result.message
 
     def test_help_text(self):
         handler = ProvidersParentHandler()
@@ -325,6 +326,7 @@ class TestProvidersUse:
 
         assert result.success is True
         assert "legacy fallback model: gpt-4o" in result.message
+        assert "API-discovered model" in result.message
 
     def test_use_no_name(
         self,

@@ -258,7 +258,7 @@ class TestStreamRendererAgentEvents:
 
         renderer.render_agent_event(StepStarted(step=PlanStep(index=2, description="Run tests")))
 
-        assert "Starting step 2" in console.print.call_args.args[0]
+        assert "Step 2 started" in console.print.call_args.args[0]
 
     def test_tool_request_renders_warnings(self):
         console = MagicMock()
@@ -322,7 +322,7 @@ class TestStreamRendererAgentEvents:
 
         renderer.render_agent_event(TaskComplete(summary="Finished", plan=plan))
 
-        assert "Task complete." in console.print.call_args_list[0].args[0]
+        assert "Task completed." in console.print.call_args_list[0].args[0]
         assert console.print.call_args_list[1].args[0] == "Finished"
 
     def test_task_failed_renders_error(self):

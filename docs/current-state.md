@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Agent task state is now visible through route and phase surfaces, prompt-toolbar and `/status` snapshots include pending-task and undo details, approval previews are tool-specific and rollback-aware, autonomous approvals persist correctly across tasks, and stop/timeout outcomes render distinctly from failures.)
+> **Last updated**: 2026-03-19 (Target readiness now carries capability-confidence tiers across local models and remote providers, `/set`, `/models`, and `/providers` surfaces explain what the CLI believes and why, agent-mode gating rejects untrusted provider fallback states explicitly, and startup default-target repairs warn instead of silently switching targets.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -36,7 +36,7 @@ After implementing a component:
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-17 |
 | `[x]` | Session state dataclass | 2026-03-17 |
-| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-17 |
+| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-19 — invalid startup default targets are now repaired to the next valid model/provider target with one explicit warning naming the old and replacement targets |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
 | `[x]` | Logger (file-based, leveled) | 2026-03-17 |
 
@@ -48,16 +48,16 @@ After implementing a component:
 |---|---|---|
 | `[x]` | Provider base class (ABC) | 2026-03-18 |
 | `[x]` | Provider registry | 2026-03-18 |
-| `[x]` | OpenAI-compatible provider | 2026-03-19 — model list now comes from the provider `GET /models` response with default-model fallback, streamed tool-call deltas are accumulated, and capability checks are resolved per selected model id |
-| `[x]` | Anthropic provider | 2026-03-19 — model list and connection test now use the live `GET /v1/models` API with default-model fallback, and mixed text/thinking/tool blocks are preserved in order for non-streaming and streaming paths |
-| `[x]` | Generic REST provider | 2026-03-19 — configurable model discovery endpoint/fields now back provider model selection, with default-model fallback plus optional mapped reasoning/tool-call fields |
+| `[x]` | OpenAI-compatible provider | 2026-03-19 — model list now comes from the provider `GET /models` response with default-model fallback, streamed tool-call deltas are accumulated, capability checks are resolved per selected model id, and discovered models now carry inferred-vs-fallback readiness provenance |
+| `[x]` | Anthropic provider | 2026-03-19 — model list and connection test now use the live `GET /v1/models` API with default-model fallback, mixed text/thinking/tool blocks are preserved in order for non-streaming and streaming paths, and discovered models now carry inferred-vs-fallback readiness provenance |
+| `[x]` | Generic REST provider | 2026-03-19 — configurable model discovery endpoint/fields now back provider model selection, with default-model fallback plus optional mapped reasoning/tool-call fields, and discovery results now label configured-vs-fallback readiness provenance |
 | `[x]` | API key manager (keychain + encrypted) | 2026-03-18 |
 | `[x]` | `/providers add` command | 2026-03-19 — provider type/name/base URL/API key/test-now prompts now share the same picker/text/secret/confirm contract as the rest of the shell |
-| `[x]` | `/providers list` command | 2026-03-18 |
+| `[x]` | `/providers list` command | 2026-03-19 — now shows selected model context plus `model unselected`, `api discovered`, or `legacy fallback` readiness state when known |
 | `[x]` | `/providers remove` command | 2026-03-18 |
-| `[x]` | `/providers use` command | 2026-03-18 — retained as a hidden compatibility alias behind `/set` |
-| `[x]` | `/set` target-selection command | 2026-03-19 — unified picker for local models and provider models, with provider model selection starting empty instead of prefilled |
-| `[x]` | `/providers test` command | 2026-03-18 |
+| `[x]` | `/providers use` command | 2026-03-19 — retained as a hidden compatibility alias behind `/set`, now explicitly states whether it auto-bound a live-discovered model or only a legacy fallback |
+| `[x]` | `/set` target-selection command | 2026-03-19 — unified picker for local models and provider models, with provider model selection starting empty instead of prefilled and picker descriptions now surfacing readiness tiers and discovery state |
+| `[x]` | `/providers test` command | 2026-03-19 — now reports both connectivity and whether model discovery succeeded live or fell back to legacy provider defaults |
 | `[x]` | SSE streaming support | 2026-03-19 — normalized chunk pipeline now preserves final text, reasoning, tool calls, notifications, errors, and done events consistently across providers |
 | `[x]` | Model abstraction layer | 2026-03-19 — `generate()` now collects the same normalized stream pipeline used by `stream_generate()` |
 
@@ -67,8 +67,8 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | Model registry (`registry.json`) | 2026-03-18 — ModelEntry dataclass, JSON persistence with filelock |
-| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, faster fallback progress refresh, compatibility with newer `huggingface_hub` progress kwargs, and conservative capability inference during registration |
+| `[x]` | Model registry (`registry.json`) | 2026-03-19 — ModelEntry now persists capability provenance alongside boolean capability flags, with backwards-compatible defaults for older registry entries |
+| `[x]` | Model installer (HF download) | 2026-03-19 — Hugging Face Hub download with live per-file progress when dry-run planning is available, faster fallback progress refresh, compatibility with newer `huggingface_hub` progress kwargs, conservative capability inference during registration, and local readiness provenance recording |
 | `[x]` | Model installer (URL download) | 2026-03-19 — httpx streaming with resume support and continuously refreshed progress output |
 | `[x]` | Format detector (MLX/GGUF/safetensors) | 2026-03-19 — auto-detection pipeline with unsupported-backend-aware repair for stale registry entries |
 | `[x]` | Backend base class (ABC) | 2026-03-17 — already existed from Phase 2 |
@@ -76,12 +76,12 @@ After implementing a component:
 | `[x]` | GGUF backend | 2026-03-19 — all platforms, lazy llama-cpp-python import, and best-effort cancellation hook |
 | `[x]` | Safetensors backend | 2026-03-19 — all platforms, lazy torch/transformers import, plus threaded-stream cancellation via stopping criteria |
 | `[x]` | Hardware detection and warnings | 2026-03-18 — CPU/RAM/GPU detection, >80% warning |
-| `[x]` | `/models list` command | 2026-03-18 |
+| `[x]` | `/models list` command | 2026-03-19 — now adds a compact readiness column for agent availability/confidence |
 | `[x]` | `/models search` command | 2026-03-18 |
 | `[x]` | `/models install` command | 2026-03-19 — hf and url subcommands, plus `/models` layered picker backed by live Hugging Face family/model discovery across many families |
 | `[x]` | `/models remove` command | 2026-03-18 — with file cleanup |
 | `[x]` | `/models use` command | 2026-03-18 — hidden compatibility alias behind `/set`, still supports direct selection with hardware warnings |
-| `[x]` | `/models inspect` command | 2026-03-18 |
+| `[x]` | `/models inspect` command | 2026-03-19 — now renders per-capability readiness lines with both tier and rationale instead of raw booleans |
 | `[x]` | Model versioning | 2026-03-18 — auto-increment v1/v2, name@version syntax |
 
 ---
@@ -96,7 +96,7 @@ After implementing a component:
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-19 — mode changes now use shared success/warning presentation for normal switches and cancelled stop-confirmation paths |
-| `[x]` | `/mode agent` command | 2026-03-19 — mode switching implemented in Phase 4, now activates the Phase 5 agent workflow, and uses shared success/status presentation for readiness guidance |
+| `[x]` | `/mode agent` command | 2026-03-19 — mode switching implemented in Phase 4, now activates the Phase 5 agent workflow, uses shared success/status presentation for readiness guidance, and rejects untrusted remote fallback states explicitly |
 | `[x]` | Status header display | 2026-03-19 — replaced by a persistent prompt-time status toolbar showing mode, active target, workspace, and a short hint; `/status` uses the same snapshot data in expanded form |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
 | `[x]` | Tab completion for commands | 2026-03-18 — live slash-command menu, typed filtering, arrow-key navigation, and Tab acceptance via prompt-toolkit |
@@ -153,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 758 tests total across unit, component, integration, and CLI coverage, now including regressions for agent route/phase visibility, approval persistence, richer approval previews, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 84.80% coverage |
+| `[x]` | Unit tests | 2026-03-19 — 775 tests total across unit, component, integration, and CLI coverage, now including regressions for readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 85.16% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -181,13 +181,13 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | `docs/architecture.md` | Complete |
-| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, always-available `/hf-token`, shared command metadata, renderer-backed command presentation, and the expanded `/agent` approval/undo surfaces documented |
-| `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, backend cancellation behavior, and editable Hugging Face token flow documented |
-| `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, and the CLI-wide default-target model selection flow documented |
-| `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, named runtime phases, persisted task-state snapshots, and updated safeguard behavior documented |
+| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, always-available `/hf-token`, shared command metadata, renderer-backed command presentation, readiness-aware target selection, and provider discovery messaging documented |
+| `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, local capability-provenance storage, backend cancellation behavior, and editable Hugging Face token flow documented |
+| `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, CLI-wide default-target model selection flow, and remote readiness provenance documented |
+| `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, named runtime phases, persisted task-state snapshots, and readiness-aware agent entry requirements documented |
 | `[x]` | `docs/tool-system.md` | Complete |
 | `[x]` | `docs/safety-and-permissions.md` | 2026-03-19 — approval persistence, risk/rollback preview context, explicit workspace-boundary blocking, and `/agent undo` rollback surfaces documented |
-| `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage and interactive `/config` editing documented |
+| `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage, explicit startup repair warnings, and interactive `/config` editing documented |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, and renderer-backed command-result presentation documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |

@@ -100,7 +100,24 @@ class TestInstallFromHF:
         assert result.model_entry.name == "codellama-7b-gguf"
         assert result.model_entry.version == "v1"
         assert result.model_entry.format == "gguf"
+        assert result.model_entry.capability_provenance["tool_use"]["tier"] == "verified"
+        assert result.model_entry.capability_provenance["reasoning"]["tier"] == "unknown"
+        assert result.model_entry.capability_provenance["streaming"]["tier"] == "verified"
         assert len(registry.list_models()) == 1
+
+    def test_reasoning_family_marks_inferred_readiness(self, installer: ModelInstaller):
+        def fake_download(repo_id, local_dir, **kwargs):
+            target = Path(local_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "model.gguf").write_bytes(b"\x00" * 100)
+
+        with patch.object(installer, "_download_hf", side_effect=fake_download):
+            result = installer.install_from_hf("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B-GGUF")
+
+        assert result.success is True
+        assert result.model_entry is not None
+        assert result.model_entry.capabilities["reasoning"] is True
+        assert result.model_entry.capability_provenance["reasoning"]["tier"] == "inferred"
 
     def test_custom_name(self, installer: ModelInstaller, registry: ModelRegistry):
         def fake_download(repo_id, local_dir, **kwargs):

@@ -53,6 +53,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
   - Approval mode
   - Current or last agent route, phase, step, and pending tool when available
   - Undo-ready rollback count when available
+- **Agent-mode layout**: In agent mode, `/status` keeps these agent fields visible even when no task is active by showing idle placeholders (for example route/phase `idle`, step/pending tool `(none)`, and `Undo ready: 0 change(s)`).
 - **Output**: Compact key-value display.
 
 #### `/config`

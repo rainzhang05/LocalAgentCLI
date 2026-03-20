@@ -32,6 +32,8 @@ class RemoteModelInfo:
     id: str
     name: str
     capabilities: dict = field(default_factory=dict)
+    capability_provenance: dict = field(default_factory=dict)
+    selection_state: str = "api_discovered"
 
 
 class RemoteProvider(ModelBackend):

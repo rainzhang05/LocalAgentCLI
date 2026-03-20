@@ -52,12 +52,12 @@ When a tool call requires approval, the system displays an inline prompt:
 ```
 🔧 patch_apply: src/main.py
 
-   [Enter] Approve  |  [d] Deny  |  [v] View full diff
+    [Enter] Approve  |  [d] Deny  |  [v] View details  |  [a] Approve all
 ```
 
 - **Enter (default)**: Approve and execute the tool call
 - **d**: Deny the action. The agent receives a `denied` status and re-plans.
-- **v**: Show a full preview of the change before deciding
+- **v**: Show a fuller preview of the change before deciding
 - **Approve all**: Switch approval mode to autonomous for this shell and future sessions, then run the pending action
 
 Preview builders are tool-specific. The first lines always show the highest-signal context available:
@@ -66,13 +66,14 @@ Preview builders are tool-specific. The first lines always show the highest-sign
 - high-risk warnings and why the action was flagged
 - whether the action will create or overwrite a file
 - whether undo will be available after a successful run
+- large sections are explicitly labeled `(truncated)` when clipped for readability
 
 For shell commands:
 ```
 🔧 shell_execute: npm install express
    Working dir: /project
 
-   [Enter] Approve  |  [d] Deny
+    [Enter] Approve  |  [d] Deny  |  [v] View details  |  [a] Approve all
 ```
 
 ### `/agent approve` Mode

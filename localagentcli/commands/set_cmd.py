@@ -194,9 +194,13 @@ class SetHandler(CommandHandler):
         session.touch()
         if self._persist_default:
             self._persist_target(entry.name, model_selection.value)
+        state = (
+            model_selection.description.split(" • ", 1)[0] if model_selection.description else ""
+        )
         message = (
             f"{self._target_label()} provider set to '{entry.name}' "
-            f"(model: {model_selection.value})."
+            f"(model: {model_selection.value}"
+            f"{', ' + state if state else ''})."
         )
         return CommandResult.ok(message, presentation="success")
 

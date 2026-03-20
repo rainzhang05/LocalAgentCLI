@@ -20,13 +20,15 @@ This document defines the terminal user interface: visual style, UI elements, in
 A single-line status summary shown in the prompt-toolkit toolbar while the shell is idle:
 
 ```
-LocalAgent | mode: agent | target: codellama-7b (gguf) | workspace: ~/project | Type /help
+LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/waiting approval | undo: 2 | workspace: ~/project | Type /help
 ```
 
 **Contents:**
 - Application name
 - Current mode (chat / agent)
 - Active target label (local model/backend or provider/model pair)
+- Current or last visible agent route/phase/step when agent mode has recent task state
+- Undo count when rollback history exists for the current session
 - Workspace path (abbreviated with `~`)
 - One short operator hint
 
@@ -117,6 +119,9 @@ Tool calls, approvals, and system events are displayed inline between user input
 ```
 > refactor the auth module
 
+  ℹ Agent route: multi-step task
+  ℹ planning: preparing the initial task plan
+
 ┌─ Plan ───────────────────────────────────────────────┐
 │ 1. Read current auth module                          │
 │ 2. Identify session-based patterns                   │
@@ -126,8 +131,12 @@ Tool calls, approvals, and system events are displayed inline between user input
 
   ✓ file_read: src/auth.py (auto-approved)
   ⟳ patch_apply: src/auth.py
-    Replace session token logic with JWT...
+    Risk: normal
+    Rollback available: src/auth.py will be backed up.
     Choose approval action: Approve / Deny / View details / Approve all
+
+  ✓ patch_apply: src/auth.py
+  ℹ Undo available: 1 change(s). Use /agent undo.
 
 ```
 
@@ -140,6 +149,7 @@ Tool calls, approvals, and system events are displayed inline between user input
 When the active terminal encoding cannot represent these glyphs, the shell falls back to ASCII-safe markers instead of failing the session.
 
 Supporting warnings or reasoning that do not deserve the main status lane are queued into the dimmed `Details` lane instead of being mixed into the main answer body.
+High-risk explanations, rollback notes, and low-priority recovery detail follow the same rule: they remain visible, but they do not displace the primary route/phase/status lines.
 
 ### Command Result Presentation
 
@@ -245,9 +255,9 @@ class StreamRenderer:
 |---|---|
 | Idle (waiting for input) | First press shows an exit hint. A second consecutive press exits the shell. Any other input resets the exit confirmation. |
 | Model generating (chat mode) | Stop generation immediately, keep any partial output already shown, and return to the prompt. |
-| Agent executing (agent mode) | Stop the current task and return to the prompt. |
+| Agent executing (agent mode) | Stop the current task, record a warning-style `stopped` outcome, and return to the prompt. |
 | Tool executing | Kill the tool subprocess. Return timeout/cancelled result to agent. |
-| Approval prompt displayed | Stop the current task and return to the prompt. |
+| Approval prompt displayed | Stop the current task and return to the prompt instead of converting the cancellation into a generic failure. |
 
 ### Graceful Shutdown
 
@@ -326,7 +336,7 @@ class ShellUI:
     def run(self) -> None:
         """Main input loop.
 
-        1. Display status header
+        1. Build the shared status snapshot for the prompt toolbar
         2. Show prompt
         3. Read input
         4. Route to command or model
@@ -334,8 +344,11 @@ class ShellUI:
         6. Repeat
         """
 
-    def display_status_header(self) -> None:
-        """Render the status header line."""
+    def _status_snapshot(self) -> StatusSnapshot:
+        """Build the same snapshot used by the toolbar and /status."""
+
+    def _prompt_toolbar_text(self) -> str:
+        """Render the prompt-toolbar status line."""
 
     def read_input(self) -> str:
         """Read user input with history and tab completion."""

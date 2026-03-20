@@ -16,7 +16,7 @@ LocalAgentCLI operates in one of two modes at any time. The default mode is **Ag
 | Approval prompts | None (no actions taken) | Yes, per safety rules |
 | Context management | Auto-compaction + summaries | Auto-compaction + task state |
 | Switch command | `/mode chat` | `/mode agent` |
-| Precondition | Any model | Model must support tool use |
+| Precondition | Any model | Target must report trusted tool-use readiness |
 
 ---
 
@@ -82,6 +82,13 @@ In agent mode, user input first goes through an internal triage pass that uses t
 The selected route is surfaced immediately in the shell activity stream and persisted in session metadata so the prompt toolbar and `/status` can describe the current or last task without re-parsing history.
 
 The loop continues until the task is complete, fails, or the user intervenes.
+
+### Entry Requirements
+
+- Local targets can enter agent mode only when the current readiness assessment still reports trusted tool use
+- Remote targets can enter agent mode only when `tool_use` is supported and its tier is `verified`, `inferred`, or `configured`
+- Remote targets in `legacy fallback` or `unknown` state are rejected until discovery is refreshed and the user reselects a live model
+- Rejections include the tool-use verdict, its readiness tier, and concrete next steps instead of only a raw boolean failure
 
 ### Core Principles
 

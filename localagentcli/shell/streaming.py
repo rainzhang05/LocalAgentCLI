@@ -179,7 +179,7 @@ class StreamRenderer:
             self._render_plan(event.plan, "Plan")
             return
         if isinstance(event, StepStarted):
-            self.render_status(f"Starting step {event.step.index}: {event.step.description}")
+            self.render_status(f"Step {event.step.index} started: {event.step.description}")
             return
         if isinstance(event, ToolCallRequested):
             marker = (
@@ -215,7 +215,7 @@ class StreamRenderer:
             self.render_secondary(event.text)
             return
         if isinstance(event, TaskComplete):
-            self.render_success("Task complete.")
+            self.render_success("Task completed.")
             if event.summary.strip():
                 self.flush_pending_details()
                 self._console.print(event.summary)

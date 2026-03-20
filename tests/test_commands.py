@@ -118,6 +118,25 @@ class TestStatusCommand:
         assert "Mode:" in result.message
         assert "agent" in result.message
         assert "Workspace:" in result.message
+        assert "Agent route:" in result.message
+        assert "idle" in result.message
+        assert "Pending tool:" in result.message
+        assert "(none)" in result.message
+        assert "Undo ready:" in result.message
+
+    def test_toolbar_shows_idle_agent_label_when_no_active_task(self):
+        snapshot = status_cmd.build_status_snapshot(
+            mode="agent",
+            target="(none)",
+            workspace="~/repo",
+            session_name="(unsaved)",
+            approval_mode="balanced",
+            message_count=0,
+        )
+
+        toolbar = status_cmd.format_status_toolbar(snapshot)
+
+        assert "agent: idle" in toolbar
 
     def test_shows_agent_task_state_and_undo_count(self, config, session_manager):
         session_manager.current.metadata["agent_task_state"] = {

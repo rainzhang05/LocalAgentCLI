@@ -15,6 +15,10 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.readiness import (
+    configured_remote_capability_provenance,
+    legacy_fallback_capability_provenance,
+)
 from localagentcli.providers.base import (
     ConnectionTestResult,
     RemoteModelInfo,
@@ -201,11 +205,14 @@ class GenericRESTProvider(RemoteProvider):
 
                 if not model_id:
                     continue
+                capabilities = self.capabilities()
                 models.append(
                     RemoteModelInfo(
                         id=model_id,
                         name=model_name or model_id,
-                        capabilities=self.capabilities(),
+                        capabilities=capabilities,
+                        capability_provenance=configured_remote_capability_provenance(capabilities),
+                        selection_state="api_discovered",
                     )
                 )
             if models:
@@ -214,11 +221,14 @@ class GenericRESTProvider(RemoteProvider):
             logger.debug("Failed to list models from %s", self._name)
 
         if self._default_model:
+            capabilities = self.capabilities()
             return [
                 RemoteModelInfo(
                     id=self._default_model,
                     name=self._default_model,
-                    capabilities=self.capabilities(),
+                    capabilities=capabilities,
+                    capability_provenance=legacy_fallback_capability_provenance(capabilities),
+                    selection_state="legacy_fallback",
                 )
             ]
         return []

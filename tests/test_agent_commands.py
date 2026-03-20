@@ -23,6 +23,16 @@ class FakeController:
 
 
 class TestAgentCommands:
+    def test_agent_parent_requires_subcommand_with_help_hint(self, config):
+        router = CommandRouter()
+        register_agent(router, lambda: None, config)
+
+        result = router.dispatch("agent")
+
+        assert not result.success
+        assert "requires a subcommand" in result.message
+        assert "/help agent" in result.message
+
     def test_approve_sets_autonomous_and_resumes_pending(self, config):
         controller = FakeController(active=True, pending=True)
         router = CommandRouter()

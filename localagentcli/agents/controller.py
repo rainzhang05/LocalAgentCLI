@@ -9,9 +9,14 @@ from pathlib import Path
 
 from localagentcli.agents.events import (
     AgentEvent,
+    PhaseChanged,
     PlanGenerated,
+    StepStarted,
     TaskComplete,
     TaskFailed,
+    TaskRouted,
+    TaskStopped,
+    TaskTimedOut,
     ToolCallRequested,
     ToolCallResult,
 )
@@ -40,6 +45,9 @@ class AgentDispatch:
     triage: TaskTriage
     events: Iterator[AgentEvent] | None = None
     stream: Iterator[StreamChunk] | None = None
+
+
+_UNCHANGED = object()
 
 
 class AgentController:
@@ -80,11 +88,16 @@ class AgentController:
         self._pending_tool: ToolCallRequested | None = None
         self._last_compaction_count = 0
         self._last_triage: TaskTriage | None = None
+        self._direct_stream_active = False
 
     @property
     def has_active_task(self) -> bool:
         """Whether an agent task is currently running or paused for approval."""
-        return self._generator is not None or self._pending_tool is not None
+        return (
+            self._generator is not None
+            or self._pending_tool is not None
+            or self._direct_stream_active
+        )
 
     @property
     def has_pending_approval(self) -> bool:
@@ -100,6 +113,19 @@ class AgentController:
     def approval_mode(self) -> str:
         """Current task-scoped approval mode."""
         return self._approval.mode
+
+    @property
+    def task_state(self) -> dict[str, object]:
+        """Current or last recorded agent task state for the session."""
+        state = self._session.metadata.get("agent_task_state", {})
+        if isinstance(state, dict):
+            return dict(state)
+        return {}
+
+    @property
+    def rollback_count(self) -> int:
+        """Number of rollback entries currently available for the session."""
+        return len(self._safety.rollback.get_history())
 
     @property
     def last_compaction_count(self) -> int:
@@ -131,9 +157,30 @@ class AgentController:
             "reason": triage.reason,
             "timestamp": datetime.now().isoformat(),
         }
+        if triage.outcome == "direct_answer":
+            self._update_task_state(
+                route=triage.outcome,
+                phase="executing",
+                step_index=None,
+                step_description=None,
+                pending_tool=None,
+                summary="Answering directly without tool use.",
+                active=True,
+            )
+        else:
+            self._update_task_state(
+                route=triage.outcome,
+                phase="planning",
+                step_index=None,
+                step_description=None,
+                pending_tool=None,
+                summary="Preparing agent execution.",
+                active=True,
+            )
         self._session.touch()
 
         if triage.outcome == "direct_answer":
+            self._direct_stream_active = True
             return AgentDispatch(
                 triage=triage,
                 stream=self._stream_direct_answer(context, self._profile("direct")),
@@ -141,6 +188,14 @@ class AgentController:
 
         supports_tools = getattr(self._model, "supports_tools", lambda: True)
         if not bool(supports_tools()):
+            self._update_task_state(
+                phase="failed",
+                summary=(
+                    "The active model/provider cannot execute tools in agent mode. "
+                    "Switch targets or ask a simple direct question instead."
+                ),
+                active=False,
+            )
             raise RuntimeError(
                 "The active model/provider cannot execute tools in agent mode. "
                 "Switch targets or ask a simple direct question instead."
@@ -164,7 +219,7 @@ class AgentController:
             planning_options=self._profile("planning"),
             inactivity_timeout=self._inactivity_timeout(),
         )
-        return AgentDispatch(triage=triage, events=self._drain())
+        return AgentDispatch(triage=triage, events=self._with_route_event(triage, self._drain()))
 
     def approve_action(self, autonomous: bool = False) -> Iterator[AgentEvent]:
         """Approve the pending tool call and optionally enable autonomous mode."""
@@ -172,6 +227,7 @@ class AgentController:
             self.set_autonomous()
         if self._pending_tool is None:
             return iter(())
+        self._update_task_state(pending_tool=None, summary="Approval granted.", active=True)
         self._pending_tool = None
         return self._drain(True)
 
@@ -179,6 +235,12 @@ class AgentController:
         """Deny the pending tool call and resume the task."""
         if self._pending_tool is None:
             return iter(())
+        self._update_task_state(
+            phase="recovering",
+            pending_tool=None,
+            summary="Approval denied. Recovering task flow.",
+            active=True,
+        )
         self._pending_tool = None
         return self._drain(False)
 
@@ -186,20 +248,33 @@ class AgentController:
         """Enable autonomous approvals for the current task."""
         self._approval.set_autonomous()
         self._session.metadata["approval_mode"] = self._approval.mode
+        self._update_task_state(summary="Autonomous approvals enabled.")
         self._session.touch()
 
-    def stop(self) -> None:
+    def stop(self, reason: str = "Task stopped by user.") -> None:
         """Stop the current task and reset controller state."""
         if not self.has_active_task:
             return
 
         self._loop.stop()
-        self._model.cancel()
-        self._pending_tool = None
-        self._generator = None
-        self._approval.reset()
-        self._session.metadata.pop("approval_mode", None)
-        self._session.touch()
+        cancel = getattr(self._model, "cancel", None)
+        if callable(cancel):
+            cancel()
+        self._session.history.append(
+            Message(
+                role="assistant",
+                content=reason,
+                timestamp=datetime.now(),
+                metadata={"agent_task": "stopped"},
+            )
+        )
+        self._update_task_state(
+            phase="stopped",
+            pending_tool=None,
+            summary=reason,
+            active=False,
+        )
+        self._finish_task()
 
     def compact_if_needed(self) -> int:
         """Compact the stored session history if needed before a task."""
@@ -225,6 +300,21 @@ class AgentController:
         )
         self._session.touch()
         return self._last_compaction_count
+
+    def _with_route_event(
+        self,
+        triage: TaskTriage,
+        events: Iterator[AgentEvent],
+    ) -> Iterator[AgentEvent]:
+        """Prepend a routing event before planned execution begins."""
+
+        def iterator() -> Iterator[AgentEvent]:
+            event = TaskRouted(route=triage.outcome, reason=triage.reason)
+            self._record_event(event)
+            yield event
+            yield from events
+
+        return iterator()
 
     def _drain(self, decision: bool | None = None) -> Iterator[AgentEvent]:
         """Yield events until completion or the next approval pause."""
@@ -252,12 +342,57 @@ class AgentController:
         return iterator()
 
     def _record_event(self, event: AgentEvent) -> None:
+        if isinstance(event, TaskRouted):
+            self._update_task_state(
+                route=event.route,
+                summary=event.reason or "Agent route selected.",
+                active=True,
+            )
+            return
+
+        if isinstance(event, PhaseChanged):
+            pending_tool = None if event.phase != "waiting_approval" else _UNCHANGED
+            self._update_task_state(
+                phase=event.phase,
+                step_index=event.step_index,
+                step_description=event.step_description,
+                pending_tool=pending_tool,
+                summary=event.summary,
+                active=event.phase not in {"stopped", "timed_out", "completed", "failed"},
+            )
+            return
+
         if isinstance(event, PlanGenerated):
             self._session.tasks.append(event.plan)
             self._session.touch()
             return
 
+        if isinstance(event, StepStarted):
+            self._update_task_state(
+                phase="executing",
+                step_index=event.step.index,
+                step_description=event.step.description,
+                pending_tool=None,
+                summary=f"Executing step {event.step.index}.",
+                active=True,
+            )
+            return
+
         if isinstance(event, ToolCallResult):
+            if event.result.status == "success":
+                self._update_task_state(
+                    phase="executing",
+                    pending_tool=None,
+                    summary=event.result.summary,
+                    active=True,
+                )
+            else:
+                self._update_task_state(
+                    phase="recovering",
+                    pending_tool=None,
+                    summary=event.result.summary,
+                    active=True,
+                )
             self._session.history.append(
                 Message(
                     role="tool",
@@ -268,25 +403,94 @@ class AgentController:
                         "status": event.result.status,
                         "exit_code": event.result.exit_code,
                         "files_changed": event.result.files_changed,
+                        "rollback_entries": event.rollback_entries,
                     },
                 )
             )
             self._session.touch()
             return
 
+        if isinstance(event, ToolCallRequested):
+            if event.requires_approval:
+                self._update_task_state(
+                    phase="waiting_approval",
+                    pending_tool=event.tool_name,
+                    summary=f"Waiting for approval: {event.tool_name}.",
+                    active=True,
+                )
+            else:
+                self._update_task_state(
+                    phase="executing",
+                    pending_tool=None,
+                    summary=f"Running tool: {event.tool_name}.",
+                    active=True,
+                )
+            return
+
         if isinstance(event, TaskComplete):
+            self._update_task_state(
+                phase="completed",
+                pending_tool=None,
+                summary="Task complete.",
+                active=False,
+            )
             self._session.history.append(
                 Message(
                     role="assistant",
                     content=event.summary,
                     timestamp=datetime.now(),
-                    metadata={"agent_task": "completed"},
+                    metadata={
+                        "agent_task": "completed",
+                        "triage": self.task_state.get("route", ""),
+                    },
+                )
+            )
+            self._finish_task()
+            return
+
+        if isinstance(event, TaskStopped):
+            self._update_task_state(
+                phase="stopped",
+                pending_tool=None,
+                summary=event.reason,
+                active=False,
+            )
+            self._session.history.append(
+                Message(
+                    role="assistant",
+                    content=event.reason,
+                    timestamp=datetime.now(),
+                    metadata={"agent_task": "stopped"},
+                )
+            )
+            self._finish_task()
+            return
+
+        if isinstance(event, TaskTimedOut):
+            self._update_task_state(
+                phase="timed_out",
+                pending_tool=None,
+                summary=event.reason,
+                active=False,
+            )
+            self._session.history.append(
+                Message(
+                    role="assistant",
+                    content=event.reason,
+                    timestamp=datetime.now(),
+                    metadata={"agent_task": "timed_out"},
                 )
             )
             self._finish_task()
             return
 
         if isinstance(event, TaskFailed):
+            self._update_task_state(
+                phase="failed",
+                pending_tool=None,
+                summary=event.reason,
+                active=False,
+            )
             self._session.history.append(
                 Message(
                     role="assistant",
@@ -300,16 +504,22 @@ class AgentController:
     def _finish_task(self) -> None:
         self._generator = None
         self._pending_tool = None
+        self._direct_stream_active = False
         self._approval.reset()
         self._session.metadata.pop("approval_mode", None)
+        self._update_task_state(active=False, pending_tool=None)
         self._session.touch()
 
     def undo_last(self):
         """Undo the most recent file change recorded for this session."""
+        if self.has_active_task:
+            raise RuntimeError("Stop the active agent task before undoing changes.")
         return self._safety.rollback.undo_last()
 
     def undo_all(self):
         """Undo all recorded file changes for this session."""
+        if self.has_active_task:
+            raise RuntimeError("Stop the active agent task before undoing changes.")
         return self._safety.rollback.undo_all()
 
     def _append_user_input(self, task_input: str) -> None:
@@ -407,10 +617,10 @@ class AgentController:
                     reasoning_parts.append(chunk.text)
                 yield chunk
         finally:
-            self._session.metadata.pop("approval_mode", None)
+            stopped = self.task_state.get("phase") == "stopped"
             assistant_text = "".join(assistant_parts).strip()
             reasoning_text = "".join(reasoning_parts).strip()
-            if assistant_text or reasoning_text:
+            if (assistant_text or reasoning_text) and not stopped:
                 self._session.history.append(
                     Message(
                         role="assistant",
@@ -427,7 +637,60 @@ class AgentController:
                         },
                     )
                 )
+                self._update_task_state(
+                    phase="completed",
+                    pending_tool=None,
+                    summary="Direct answer completed.",
+                    active=False,
+                )
+            elif stopped:
+                self._update_task_state(active=False, pending_tool=None)
+            self._finish_task()
             self._session.touch()
+
+    def _update_task_state(
+        self,
+        *,
+        route: object = _UNCHANGED,
+        phase: object = _UNCHANGED,
+        step_index: object = _UNCHANGED,
+        step_description: object = _UNCHANGED,
+        pending_tool: object = _UNCHANGED,
+        summary: object = _UNCHANGED,
+        active: object = _UNCHANGED,
+    ) -> None:
+        """Persist the current or last agent-task state into session metadata."""
+        current = self.task_state
+        state = {
+            "route": current.get("route", ""),
+            "phase": current.get("phase", ""),
+            "step_index": current.get("step_index"),
+            "step_description": current.get("step_description", ""),
+            "pending_tool": current.get("pending_tool", ""),
+            "summary": current.get("summary", ""),
+            "active": bool(current.get("active", False)),
+        }
+
+        if route is not _UNCHANGED:
+            state["route"] = route
+        if phase is not _UNCHANGED:
+            state["phase"] = phase
+        if step_index is not _UNCHANGED:
+            state["step_index"] = step_index
+        if step_description is not _UNCHANGED:
+            state["step_description"] = step_description
+        if pending_tool is not _UNCHANGED:
+            state["pending_tool"] = pending_tool
+        if summary is not _UNCHANGED:
+            state["summary"] = summary
+        if active is not _UNCHANGED:
+            state["active"] = bool(active)
+
+        state["approval_mode"] = self._approval.mode
+        state["rollback_count"] = self.rollback_count
+        state["updated_at"] = datetime.now().isoformat()
+        self._session.metadata["agent_task_state"] = state
+        self._session.touch()
 
     def _build_context_messages(self) -> list[ModelMessage]:
         system_parts = build_system_instructions(self._session)

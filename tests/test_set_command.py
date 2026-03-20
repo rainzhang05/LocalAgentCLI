@@ -57,6 +57,50 @@ def test_set_activates_local_model(config, session_manager, storage, monkeypatch
     assert session_manager.current.provider == ""
 
 
+def test_set_local_picker_descriptions_include_readiness(
+    config, session_manager, storage, monkeypatch
+):
+    monkeypatch.setattr("localagentcli.commands.set_cmd.supports_interactive_prompt", lambda: True)
+    registry = ModelRegistry(storage.registry_path)
+    registry.register(
+        ModelEntry(
+            name="demo",
+            version="v1",
+            format="gguf",
+            path=str(storage.models_dir / "demo" / "v1"),
+            size_bytes=1024,
+        )
+    )
+
+    descriptions: dict[str, str] = {}
+
+    def selector(message: str, options: list[SelectionOption], default: str | None):
+        _ = default
+        if message == "Choose what to activate":
+            return next(option for option in options if option.value == "local")
+        if message == "Choose a local model":
+            descriptions.update({option.value: option.description or "" for option in options})
+            return next(option for option in options if option.value == "demo@v1")
+        raise AssertionError(f"Unexpected prompt: {message}")
+
+    handler = SetHandler(
+        registry,
+        ProviderRegistry(config, KeyManager(storage.secrets_dir)),
+        HardwareDetector(),
+        config,
+        session_manager,
+        Console(quiet=True),
+        selector=selector,
+    )
+
+    result = handler.execute([])
+
+    assert result.success
+    assert "gguf" in descriptions["demo@v1"]
+    assert "tools: no [verified]" in descriptions["demo@v1"]
+    assert "reasoning: no [unknown]" in descriptions["demo@v1"]
+
+
 def test_set_activates_provider_model(config, session_manager, storage, monkeypatch):
     monkeypatch.setattr("localagentcli.commands.set_cmd.supports_interactive_prompt", lambda: True)
     key_manager = KeyManager(storage.secrets_dir)
@@ -105,6 +149,7 @@ def test_set_activates_provider_model(config, session_manager, storage, monkeypa
     assert result.success
     assert session_manager.current.provider == "openai"
     assert session_manager.current.model == "gpt-4o"
+    assert "api discovered" in result.message
 
 
 def test_set_requires_tty_without_interactive_prompt(
@@ -183,6 +228,75 @@ def test_set_provider_model_picker_starts_empty(config, session_manager, storage
 
     assert result.success
     assert ("Choose a provider model", None) in defaults_seen
+
+
+def test_set_provider_picker_descriptions_include_readiness(
+    config, session_manager, storage, monkeypatch
+):
+    monkeypatch.setattr("localagentcli.commands.set_cmd.supports_interactive_prompt", lambda: True)
+    key_manager = KeyManager(storage.secrets_dir)
+    key_manager._keyring_available = False
+    provider_registry = ProviderRegistry(config, key_manager)
+    provider_registry.add(
+        ProviderEntry(
+            name="openai",
+            type="openai",
+            base_url="https://api.openai.com/v1",
+        ),
+        "test-key",
+    )
+
+    descriptions: dict[str, str] = {}
+
+    def selector(message: str, options: list[SelectionOption], default: str | None):
+        _ = default
+        if message == "Choose what to activate":
+            return next(option for option in options if option.value == "provider")
+        if message == "Choose a provider":
+            return next(option for option in options if option.value == "openai")
+        if message == "Choose a provider model":
+            descriptions.update({option.value: option.description or "" for option in options})
+            return next(option for option in options if option.value == "gpt-4o")
+        raise AssertionError(f"Unexpected prompt: {message}")
+
+    handler = SetHandler(
+        ModelRegistry(storage.registry_path),
+        provider_registry,
+        HardwareDetector(),
+        config,
+        session_manager,
+        Console(quiet=True),
+        selector=selector,
+    )
+    handler._provider_registry.create_provider = lambda _name: type(  # type: ignore[method-assign]
+        "FakeProvider",
+        (),
+        {
+            "list_models": staticmethod(
+                lambda: [
+                    RemoteModelInfo(
+                        id="gpt-4o",
+                        name="GPT-4o",
+                        capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+                        capability_provenance={
+                            "tool_use": {"tier": "inferred", "reason": "Provider semantics."},
+                            "reasoning": {"tier": "inferred", "reason": "Provider semantics."},
+                            "streaming": {"tier": "inferred", "reason": "Provider semantics."},
+                        },
+                        selection_state="api_discovered",
+                    )
+                ]
+            ),
+            "close": staticmethod(lambda: None),
+        },
+    )()
+
+    result = handler.execute([])
+
+    assert result.success
+    assert "api discovered" in descriptions["gpt-4o"]
+    assert "tools: yes [inferred]" in descriptions["gpt-4o"]
+    assert "reasoning: no [inferred]" in descriptions["gpt-4o"]
 
 
 def test_set_default_persists_global_target(config, session_manager, storage, monkeypatch):

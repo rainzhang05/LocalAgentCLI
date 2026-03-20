@@ -21,6 +21,15 @@ def _make_router(config, session_manager, storage):
 
 
 class TestModeCommands:
+    def test_mode_parent_requires_subcommand_with_help_hint(self, config, session_manager, storage):
+        router, _, _ = _make_router(config, session_manager, storage)
+
+        result = router.dispatch("mode")
+
+        assert not result.success
+        assert "requires a subcommand" in result.message
+        assert "/help mode" in result.message
+
     def test_mode_chat_switches_session(self, config, session_manager, storage):
         router, _, _ = _make_router(config, session_manager, storage)
         session_manager.current.mode = "agent"

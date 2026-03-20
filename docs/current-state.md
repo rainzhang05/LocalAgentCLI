@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening complete in-repo, plus Phase 1 output-contract polish and Phase 2 UX unification for the shell — the renderer owns shared status/success/warning/error formatting, chat and planned-agent reasoning both flow through the dimmed `Details` lane, prompt-time status now lives in a persistent prompt-toolkit toolbar instead of repeated scrollback headers, slash commands expose shared `CommandSpec` metadata for help/completion, interactive flows reuse one prompt contract, and command results can opt into renderer-backed presentation without a full-screen TUI rewrite.)
+> **Last updated**: 2026-03-19 (Phase 7 hardening remains complete, and the workspace refinement phases now include Phase 3 agent visibility, approvals, and recovery: agent mode carries a visible route plus one runtime phase at a time, prompt-toolbar and `/status` snapshots include agent task state and undo availability, approval previews are tool-specific and rollback-aware, autonomous approvals persist correctly across tasks, and stop/timeout outcomes no longer masquerade as generic failures.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -26,11 +26,11 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and now exposes a persistent prompt-time status toolbar plus shared action/confirm prompts |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and now exposes a persistent prompt-time status toolbar that can surface agent route/phase and undo availability alongside shared action/confirm prompts |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations |
 | `[x]` | `/exit` command | 2026-03-17 |
-| `[x]` | `/status` command | 2026-03-19 — `/status` now renders the expanded form of the same shared status snapshot used by the prompt toolbar |
+| `[x]` | `/status` command | 2026-03-19 — `/status` now renders the expanded form of the same shared status snapshot used by the prompt toolbar, including agent route/phase/step, pending tool, and undo-ready counts when present |
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
@@ -119,13 +119,15 @@ After implementing a component:
 | `[x]` | `git_status` tool | 2026-03-18 |
 | `[x]` | `git_diff` tool | 2026-03-18 |
 | `[x]` | `git_commit` tool | 2026-03-18 |
-| `[x]` | Agent controller | 2026-03-19 — session-integrated task orchestration now includes triage-based direct-answer fast path, single-step synthesis, controller reuse, remote capability validation by selected model id, and interruption-aware cancellation |
-| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-19 — iterative per-step execution now accepts synthesized plans, enforces inactivity timeout, and replans around repeated failures before terminating |
+| `[x]` | Agent controller | 2026-03-19 — session-integrated task orchestration now includes triage-based direct-answer fast path, single-step synthesis, controller reuse, remote capability validation by selected model id, interruption-aware cancellation, persisted `agent_task_state` snapshots, and explicit stopped vs timed-out vs failed outcomes |
+| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-19 — iterative per-step execution now accepts synthesized plans, enforces inactivity timeout, surfaces named runtime phases (`planning`, `executing`, `waiting_approval`, `replanning`, `recovering`, `stopped`, `timed_out`, `completed`, `failed`), and replans around repeated failures before terminating |
 | `[x]` | Task planner | 2026-03-19 — model-driven JSON plans with heuristic fallback and replan support, now generating only the minimum number of steps needed instead of a fixed 2-6 step shape |
-| `[x]` | Agent events system | 2026-03-18 — structured plan, step, reasoning, tool, completion, and failure events rendered by the shell |
-| `[x]` | `/agent approve` command | 2026-03-18 — resumes pending tool actions and now persists autonomous approvals for the current and future sessions |
-| `[x]` | `/agent deny` command | 2026-03-18 — rejects the pending tool action and resumes the agent loop |
-| `[x]` | Ctrl+C agent stop path | 2026-03-19 — stops the active agent task from the shell, cancels active generation when supported, and exits the idle shell after a consecutive double press without prompting to save |
+| `[x]` | Agent events system | 2026-03-19 — structured route, phase, plan, step, reasoning, tool, completion, stopped, timeout, and failure events rendered by the shell, with approval-risk and rollback-preview metadata flowing into the renderer |
+| `[x]` | `/agent approve` command | 2026-03-19 — resumes pending tool actions and now persists autonomous approvals across future tasks in the shell and future sessions while still forcing explicit approval for high-risk actions |
+| `[x]` | `/agent deny` command | 2026-03-19 — rejects the pending tool action and returns the loop to recovery/replanning as needed |
+| `[x]` | `/agent undo` command | 2026-03-19 — reverts the most recent rollback entry recorded for the current session and refuses to run while an agent task is active |
+| `[x]` | `/agent undo-all` command | 2026-03-19 — reverts all rollback entries recorded for the current session in reverse order and refuses to run while an agent task is active |
+| `[x]` | Ctrl+C agent stop path | 2026-03-19 — stops the active agent task from the shell, cancels active generation when supported, records a warning-style stop state instead of a generic failure, and exits the idle shell after a consecutive double press without prompting to save |
 
 ---
 
@@ -133,15 +135,15 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | Safety layer (central gate) | 2026-03-18 — `localagentcli/safety/layer.py` now validates boundaries, classifies risk, applies approval policy, and records rollback history around tool execution |
+| `[x]` | Safety layer (central gate) | 2026-03-19 — `localagentcli/safety/layer.py` now validates boundaries, classifies risk, explains why high-risk actions were flagged, describes rollback availability up front, applies approval policy, and records rollback history around successful tool execution |
 | `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
-| `[x]` | Approval manager (autonomous mode) | 2026-03-18 — autonomous mode auto-approves standard actions but still pauses high-risk operations for explicit approval |
-| `[x]` | Approval UX (inline prompts) | 2026-03-19 — inline prompts now flush pending renderer detail before blocking for input, use the shared action-prompt surface for approve/deny/details/approve-all, and render previews through the same shell output grammar |
+| `[x]` | Approval manager (autonomous mode) | 2026-03-19 — autonomous mode auto-approves standard actions, persists correctly across future tasks, and still pauses high-risk operations for explicit approval |
+| `[x]` | Approval UX (inline prompts) | 2026-03-19 — inline prompts now flush pending renderer detail before blocking for input, use the shared action-prompt surface for approve/deny/details/approve-all, and render tool-specific previews with target, risk, warning, overwrite/create, and rollback context |
 | `[x]` | Workspace boundary enforcement | 2026-03-18 — dedicated `WorkspaceBoundary` enforces root confinement for tool paths and shell working directories |
 | `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
 | `[x]` | High-risk action detection | 2026-03-18 — shell commands and sensitive file paths are classified centrally so high-risk actions always require approval |
 | `[x]` | Rollback manager (file backups) | 2026-03-18 — `RollbackManager` stores per-session backups and a JSON rollback log under `cache/rollback/` |
-| `[x]` | Undo capability | 2026-03-18 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files, with Windows-safe modified-file restore behavior |
+| `[x]` | Undo capability | 2026-03-19 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files, with Windows-safe modified-file restore behavior plus explicit `/agent undo` and `/agent undo-all` command surfaces |
 
 ---
 
@@ -151,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 723 tests total across unit, component, integration, and CLI coverage, including normalized chunk handling, provider hardening, task triage, shell rendering, config editing, default-target selection, and backend cancellation; full suite passes at 84.78% coverage |
+| `[x]` | Unit tests | 2026-03-19 — 758 tests total across unit, component, integration, and CLI coverage, now including regressions for agent route/phase visibility, approval persistence, richer approval previews, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 84.80% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -179,14 +181,14 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | `docs/architecture.md` | Complete |
-| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, always-available `/hf-token`, shared command metadata, and renderer-backed command presentation documented |
+| `[x]` | `docs/commands.md` | 2026-03-19 — `/set default`, interactive `/config`, always-available `/hf-token`, shared command metadata, renderer-backed command presentation, and the expanded `/agent` approval/undo surfaces documented |
 | `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, backend cancellation behavior, and editable Hugging Face token flow documented |
 | `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, and the CLI-wide default-target model selection flow documented |
-| `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, and updated safeguard behavior documented |
+| `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, named runtime phases, persisted task-state snapshots, and updated safeguard behavior documented |
 | `[x]` | `docs/tool-system.md` | Complete |
-| `[x]` | `docs/safety-and-permissions.md` | Complete |
+| `[x]` | `docs/safety-and-permissions.md` | 2026-03-19 — approval persistence, risk/rollback preview context, explicit workspace-boundary blocking, and `/agent undo` rollback surfaces documented |
 | `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage and interactive `/config` editing documented |
-| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, shared prompt helpers, and renderer-backed command-result presentation documented |
+| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, and renderer-backed command-result presentation documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |

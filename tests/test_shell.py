@@ -435,6 +435,20 @@ class TestShellUIStatusToolbar:
         assert "target: (none)" in toolbar
         assert "workspace:" in toolbar
 
+    def test_prompt_toolbar_includes_agent_state_and_undo_count(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.metadata["agent_task_state"] = {
+            "route": "multi_step_task",
+            "phase": "waiting_approval",
+            "pending_tool": "patch_apply",
+            "rollback_count": 2,
+        }
+
+        toolbar = ui._prompt_toolbar_text()
+
+        assert "agent: multi-step task/waiting approval/patch_apply" in toolbar
+        assert "undo: 2" in toolbar
+
     def test_active_target_label_for_provider(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._session_manager.current.provider = "openai"
@@ -843,6 +857,41 @@ class TestShellUIHelpers:
         preview = ui._format_tool_preview(event)
 
         assert preview.endswith("...")
+
+    def test_format_tool_preview_for_shell_execute_includes_command_and_cwd(
+        self,
+        config,
+        storage,
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        event = ToolCallRequested(
+            tool_name="shell_execute",
+            arguments={"command": "pytest -q", "working_dir": "src"},
+            requires_approval=True,
+            risk_level="high",
+            risk_reason="Command matches a high-risk pattern: pytest",
+            rollback_summary="Rollback is not available for this action.",
+        )
+
+        preview = ui._format_tool_preview(event)
+
+        assert "Command:" in preview
+        assert "pytest -q" in preview
+        assert "Working directory: src" in preview
+        assert "Rollback is not available" in preview
+
+    def test_format_tool_preview_for_git_commit_includes_message_and_files(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        event = ToolCallRequested(
+            tool_name="git_commit",
+            arguments={"message": "feat: add agent undo", "files": ["app.py", "tests.py"]},
+            requires_approval=True,
+        )
+
+        preview = ui._format_tool_preview(event)
+
+        assert "Commit message: feat: add agent undo" in preview
+        assert "Files: app.py, tests.py" in preview
 
     def test_handle_agent_resume_approves_with_autonomy(self, config, storage):
         ui = ShellUI(config=config, storage=storage)

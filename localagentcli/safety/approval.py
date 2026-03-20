@@ -18,6 +18,7 @@ class ApprovalManager:
     """Track balanced vs autonomous approval behavior for one task."""
 
     def __init__(self, mode: str = "balanced"):
+        self._default_mode = mode
         self._mode = mode
 
     @property
@@ -35,10 +36,18 @@ class ApprovalManager:
             return False
         return self._mode != "autonomous"
 
-    def set_autonomous(self) -> None:
+    def set_autonomous(self, *, persist_default: bool = True) -> None:
         """Enable autonomous approvals for the current task."""
         self._mode = "autonomous"
+        if persist_default:
+            self._default_mode = "autonomous"
+
+    def set_balanced(self, *, persist_default: bool = True) -> None:
+        """Enable balanced approvals for the current task."""
+        self._mode = "balanced"
+        if persist_default:
+            self._default_mode = "balanced"
 
     def reset(self) -> None:
-        """Return to the default balanced mode."""
-        self._mode = "balanced"
+        """Return to the configured default approval mode."""
+        self._mode = self._default_mode

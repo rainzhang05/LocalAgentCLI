@@ -18,7 +18,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 1. **Consistent syntax**: All commands follow the pattern `/command [subcommand] [arguments]`. No positional ambiguity.
 2. **Hierarchical structure**: Related commands are grouped under a parent (e.g., `/models list`, `/models install`). Parent commands usually print subcommand help, but interactive parents are allowed when the command is explicitly acting as a wizard or picker.
 3. **Human-readable output**: All command responses use clear, formatted text. No raw data dumps.
-4. **Predictable errors**: Invalid commands return a structured error with the invalid input, a brief explanation, and a suggestion (e.g., "Did you mean `/models list`?").
+4. **Predictable errors**: Invalid commands return a structured error with the invalid input, a brief explanation, and a suggestion (e.g., "Did you mean `/models list`?"). Parent command groups that need a subcommand include a direct recovery hint (for example, `Use /help session for details.`).
 5. **Shared metadata**: Each handler declares a `CommandSpec` with group, summary, usage, argument hint, details, and examples. `/help`, slash-command completion metadata, and command-specific help all derive from that one contract.
 6. **Shared presentation**: Command handlers return `CommandResult` values with a presentation type (`plain`, `status`, `success`, `warning`, `error`) and an optional detail body so command outcomes use the same shell grammar as streaming activity.
 

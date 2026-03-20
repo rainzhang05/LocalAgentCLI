@@ -248,6 +248,9 @@ class TestAnthropicListModels:
         assert len(models) == 2
         assert models[0].id == "claude-sonnet-4-5"
         assert models[0].name == "Claude Sonnet 4.5"
+        assert models[0].selection_state == "api_discovered"
+        assert models[0].capability_provenance["tool_use"]["tier"] == "inferred"
+        assert models[0].capability_provenance["reasoning"]["tier"] == "inferred"
 
     def test_falls_back_to_default_model_on_error(self):
         provider = _make_provider()
@@ -255,6 +258,8 @@ class TestAnthropicListModels:
             models = provider.list_models()
         assert len(models) == 1
         assert models[0].id == provider.default_model
+        assert models[0].selection_state == "legacy_fallback"
+        assert models[0].capability_provenance["tool_use"]["tier"] == "legacy_fallback"
 
 
 # ---------------------------------------------------------------------------

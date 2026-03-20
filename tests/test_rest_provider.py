@@ -228,7 +228,7 @@ class TestRESTCapabilities:
 
 class TestRESTListModels:
     def test_returns_api_models(self):
-        provider = _make_provider()
+        provider = _make_provider(options={"supports_tools": True, "supports_reasoning": True})
         response = MagicMock()
         response.raise_for_status.return_value = None
         response.json.return_value = {"data": [{"id": "alpha"}, {"id": "beta"}]}
@@ -236,13 +236,20 @@ class TestRESTListModels:
             models = provider.list_models()
         assert len(models) == 2
         assert models[0].id == "alpha"
+        assert models[0].selection_state == "api_discovered"
+        assert models[0].capability_provenance["tool_use"]["tier"] == "configured"
+        assert models[0].capabilities["tool_use"] is True
+        assert models[0].capabilities["reasoning"] is True
 
     def test_returns_default_model_when_discovery_fails(self):
-        provider = _make_provider()
+        provider = _make_provider(options={"supports_tools": True, "supports_reasoning": True})
         with patch.object(provider._client, "get", side_effect=Exception("fail")):
             models = provider.list_models()
         assert len(models) == 1
         assert models[0].id == "local-model"
+        assert models[0].selection_state == "legacy_fallback"
+        assert models[0].capability_provenance["tool_use"]["tier"] == "legacy_fallback"
+        assert models[0].capabilities["tool_use"] is True
 
     def test_returns_default_model(self):
         provider = _make_provider()

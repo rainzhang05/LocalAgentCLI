@@ -147,6 +147,7 @@ class ShellUI:
             self._provider_registry,
             self._key_manager,
             self._session_manager,
+            self._config,
             self._console,
         )
         models_cmd.register(
@@ -178,6 +179,7 @@ class ShellUI:
     def run(self) -> None:
         """Main input loop."""
         self._logger.normal("Session started (id: %s)", self._session_manager.current.id)
+        self._render_default_target_warning()
 
         self._display_welcome()
         if self._first_run:
@@ -210,6 +212,7 @@ class ShellUI:
                         self._agent_controller_key = None
                         self._rebuild_prompt_session()
                         self._sync_workspace_instruction()
+                        self._render_default_target_warning()
                     if action == "agent_resume":
                         self._handle_agent_resume(result)
                     if action == "exit":
@@ -547,6 +550,12 @@ class ShellUI:
 
         if result.body:
             self._console.print(result.body)
+
+    def _render_default_target_warning(self) -> None:
+        """Render any pending default-target repair warning once."""
+        warning = self._session_manager.consume_default_target_warning()
+        if warning:
+            self._stream_renderer.render_warning(warning)
 
     def _handle_exit(self, *, prompt_to_save: bool = True) -> None:
         """Handle clean shutdown with optional session save."""

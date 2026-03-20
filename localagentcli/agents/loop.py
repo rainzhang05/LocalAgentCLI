@@ -8,12 +8,15 @@ from collections.abc import Generator
 
 from localagentcli.agents.events import (
     AgentEvent,
+    PhaseChanged,
     PlanGenerated,
     PlanUpdated,
     ReasoningOutput,
     StepStarted,
     TaskComplete,
     TaskFailed,
+    TaskStopped,
+    TaskTimedOut,
     ToolCallRequested,
     ToolCallResult,
 )
@@ -69,20 +72,28 @@ class AgentLoop:
         if generation_options:
             options.update(generation_options)
 
-        plan = plan or self._planner.create_plan(
-            task,
-            context,
-            generation_options=planning_options,
-        )
+        if plan is None:
+            yield PhaseChanged(phase="planning", summary="Planning task.")
+            plan = self._planner.create_plan(
+                task,
+                context,
+                generation_options=planning_options,
+            )
+        else:
+            yield PhaseChanged(phase="planning", summary="Prepared execution plan.")
         plan.status = "executing"
         transcript = list(context)
         last_activity = time.monotonic()
         yield PlanGenerated(plan)
+        yield PhaseChanged(phase="executing", summary="Executing plan.")
 
         while not self._stop_requested:
             if inactivity_timeout and (time.monotonic() - last_activity) > inactivity_timeout:
-                plan.status = "failed"
-                yield TaskFailed(reason="Agent task timed out due to inactivity.", plan=plan)
+                plan.status = "timed_out"
+                yield TaskTimedOut(
+                    reason="Agent task timed out due to inactivity.",
+                    plan=plan,
+                )
                 return
             step = plan.next_step()
             if step is None:
@@ -109,6 +120,12 @@ class AgentLoop:
 
             if step_summary is None:
                 if errors >= self._max_consecutive_errors:
+                    yield PhaseChanged(
+                        phase="replanning",
+                        summary=f"Replanning after repeated failures in step {step.index}.",
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
                     revised = self._planner.revise_plan(
                         task,
                         plan,
@@ -122,10 +139,17 @@ class AgentLoop:
                         plan=plan,
                         changes=f"Replanned after repeated failures in step {step.index}.",
                     )
+                    yield PhaseChanged(phase="executing", summary="Continuing with revised plan.")
                     continue
 
                 plan.update_step(step.index, "failed", "Step did not complete successfully.")
                 plan.status = "failed"
+                yield PhaseChanged(
+                    phase="failed",
+                    summary=f"Failed while executing step {step.index}.",
+                    step_index=step.index,
+                    step_description=step.description,
+                )
                 yield PlanUpdated(
                     plan=plan,
                     changes=f"Step {step.index} failed: {step.description}",
@@ -148,10 +172,10 @@ class AgentLoop:
                 None,
             )
             if current is not None:
-                current.status = "failed"
+                current.status = "skipped"
                 current.result = "Stopped by user."
-        plan.status = "failed"
-        yield TaskFailed(reason="Task stopped by user.", plan=plan)
+        plan.status = "stopped"
+        yield TaskStopped(reason="Task stopped by user.", plan=plan)
 
     def _run_step(
         self,
@@ -244,7 +268,15 @@ class AgentLoop:
                         f"Blocked tool '{resolved_tool_name}'",
                         decision.reason or "The requested action violated a safety rule.",
                     )
-                    yield ToolCallResult(tool_name=resolved_tool_name, result=tool_result)
+                    yield ToolCallResult(
+                        tool_name=resolved_tool_name,
+                        result=tool_result,
+                        rollback_entries=len(self._safety.rollback.get_history()),
+                    )
+                    yield PhaseChanged(
+                        phase="recovering",
+                        summary=f"Recovering after blocked tool call: {resolved_tool_name}.",
+                    )
                     messages.append(
                         ModelMessage(
                             role="tool",
@@ -264,8 +296,14 @@ class AgentLoop:
                     requires_approval=requires_approval,
                     risk_level=decision.risk_level.value,
                     warnings=decision.warnings,
+                    risk_reason=decision.risk_reason,
+                    rollback_summary=decision.rollback_summary,
                 )
                 if requires_approval:
+                    yield PhaseChanged(
+                        phase="waiting_approval",
+                        summary=f"Waiting for approval: {resolved_tool_name}.",
+                    )
                     approved = bool((yield request))
                 else:
                     yield request
@@ -280,7 +318,12 @@ class AgentLoop:
                         output=json.dumps(arguments, indent=2, sort_keys=True),
                     )
 
-            yield ToolCallResult(tool_name=tool_name or "unknown", result=tool_result)
+            rollback_entries = len(self._safety.rollback.get_history())
+            yield ToolCallResult(
+                tool_name=tool_name or "unknown",
+                result=tool_result,
+                rollback_entries=rollback_entries,
+            )
             messages.append(
                 ModelMessage(
                     role="tool",
@@ -289,6 +332,14 @@ class AgentLoop:
                 )
             )
             had_error = had_error or tool_result.status != "success"
+            if tool_result.status in {"denied", "error", "timeout"}:
+                recovery_target = tool_name or "unknown"
+                yield PhaseChanged(
+                    phase="recovering",
+                    summary=(
+                        f"Recovering after {tool_result.status} tool result: {recovery_target}."
+                    ),
+                )
 
         return messages, had_error
 

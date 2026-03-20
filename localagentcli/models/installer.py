@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from rich.console import Console
 
 from localagentcli.models.detector import ModelDetector
+from localagentcli.models.readiness import local_capability_provenance
 from localagentcli.models.registry import ModelEntry, ModelRegistry
 
 
@@ -282,13 +283,17 @@ class ModelInstaller:
             "backend": result.backend,
         }
 
+        capabilities = self._infer_capabilities(name, result.metadata, source_info)
         entry = ModelEntry(
             name=name,
             version=version,
             format=result.format,
             path=str(model_dir),
             size_bytes=size_bytes,
-            capabilities=self._infer_capabilities(name, result.metadata, source_info),
+            capabilities=capabilities,
+            capability_provenance=local_capability_provenance(
+                reasoning_supported=bool(capabilities.get("reasoning", False))
+            ),
             metadata=metadata,
         )
 

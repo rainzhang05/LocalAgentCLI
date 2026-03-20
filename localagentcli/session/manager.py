@@ -28,6 +28,7 @@ class SessionManager:
         self._config = config
         self._current: Session | None = None
         self._default_target_resolver = default_target_resolver
+        self._pending_default_target_warning = ""
 
     def new_session(self) -> Session:
         """Create a fresh session with defaults from config."""
@@ -132,6 +133,12 @@ class SessionManager:
             return session.config_overrides[key]
         return self._config.get(key)
 
+    def consume_default_target_warning(self) -> str:
+        """Return and clear any pending default-target repair warning."""
+        warning = self._pending_default_target_warning
+        self._pending_default_target_warning = ""
+        return warning
+
     def _resolve_default_target(self, provider: str, model: str) -> tuple[str, str]:
         """Validate or replace the configured default target for new sessions."""
         if self._default_target_resolver is None:
@@ -146,4 +153,17 @@ class SessionManager:
         if (resolved_provider, resolved_model) != (provider, model):
             self._config.set("provider.active_provider", resolved_provider)
             self._config.set("model.active_model", resolved_model)
+            old_target = _format_target(provider, model)
+            new_target = _format_target(resolved_provider, resolved_model)
+            self._pending_default_target_warning = (
+                f"Default target repaired: {old_target} was unavailable, so LocalAgentCLI "
+                f"switched to {new_target}."
+            )
         return resolved_provider, resolved_model
+
+
+def _format_target(provider: str, model: str) -> str:
+    """Render one provider/model pair for warning output."""
+    if provider:
+        return f"{provider} ({model or 'remote'})"
+    return model or "(none)"

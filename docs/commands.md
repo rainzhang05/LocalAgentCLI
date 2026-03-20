@@ -251,6 +251,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### Approval Prompts
 - **Behavior**: Pending tool approvals use the same action-prompt surface as other command flows, offering `Approve`, `Deny`, `View details`, and `Approve all`.
 - **Preview surface**: `View details` shows a tool-specific preview headed by the highest-signal context first: target path or command, working directory or staged files, risk reason, warnings, overwrite/create context, and rollback availability.
+- **Truncation contract**: Large preview sections (for example long patch blocks, file-write content, or shell commands) are clipped to a stable length and explicitly labeled as truncated so approval layout stays readable while signaling that full content was shortened.
 - **Persistence**: `Approve all` is equivalent to `/agent approve`; it persists autonomous approval for the current shell and future sessions.
 - **Stop behavior**: Cancelling the prompt stops the pending task instead of leaving the shell in an ambiguous state.
 

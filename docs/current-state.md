@@ -28,7 +28,7 @@ After implementing a component:
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
 | `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and now exposes a persistent prompt-time status toolbar that can surface agent route/phase and undo availability alongside shared action/confirm prompts |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
-| `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations |
+| `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations, and router-level unknown/invalid command errors now include consistent `/help` guidance plus close-match suggestions when available |
 | `[x]` | `/exit` command | 2026-03-17 |
 | `[x]` | `/status` command | 2026-03-19 — `/status` now renders the expanded form of the same shared status snapshot used by the prompt toolbar, including agent route/phase/step, pending tool, and undo-ready counts when present |
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
@@ -56,8 +56,8 @@ After implementing a component:
 | `[x]` | `/providers list` command | 2026-03-19 — now shows selected model context plus `model unselected`, `api discovered`, or `legacy fallback` readiness state when known |
 | `[x]` | `/providers remove` command | 2026-03-18 |
 | `[x]` | `/providers use` command | 2026-03-19 — retained as a hidden compatibility alias behind `/set`, now explicitly states whether it auto-bound a live-discovered model or only a legacy fallback |
-| `[x]` | `/set` target-selection command | 2026-03-19 — unified picker for local models and provider models, with provider model selection starting empty instead of prefilled and picker descriptions now surfacing readiness tiers and discovery state |
-| `[x]` | `/providers test` command | 2026-03-19 — now reports both connectivity and whether model discovery succeeded live or fell back to legacy provider defaults |
+| `[x]` | `/set` target-selection command | 2026-03-19 — unified picker for local models and provider models, with provider model selection starting empty instead of prefilled and picker descriptions now surfacing readiness tiers and discovery state; legacy-fallback provider selections now add explicit post-selection guidance to refresh discovery and pick an API-discovered model |
+| `[x]` | `/providers test` command | 2026-03-19 — now reports both connectivity and whether model discovery succeeded live or fell back to legacy provider defaults, with standardized fallback guidance phrasing and clearer provider-creation failure context |
 | `[x]` | SSE streaming support | 2026-03-19 — normalized chunk pipeline now preserves final text, reasoning, tool calls, notifications, errors, and done events consistently across providers |
 | `[x]` | Model abstraction layer | 2026-03-19 — `generate()` now collects the same normalized stream pipeline used by `stream_generate()` |
 
@@ -91,7 +91,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Chat controller | 2026-03-18 — `localagentcli/agents/chat.py` routes chat turns through the model abstraction layer |
-| `[x]` | Streaming output renderer | 2026-03-19 — renderer now owns the shared output contract for status, success, warning, error, and secondary-detail lanes; late-arriving secondary detail is flushed once at safe boundaries instead of disappearing after the first primary text |
+| `[x]` | Streaming output renderer | 2026-03-19 — renderer now owns the shared output contract for status, success, warning, error, and secondary-detail lanes; late-arriving secondary detail is flushed once at safe boundaries instead of disappearing after the first primary text, and step/task activity wording is now normalized (`Step N started`, `Task completed`) |
 | `[x]` | Reasoning panel display | 2026-03-19 — chat, direct-answer, and planned-agent reasoning now all use the same dimmed `Details` lane rather than mixing separate reasoning presentations |
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |

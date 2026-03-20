@@ -51,6 +51,8 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
   - Workspace path
   - Session name (if saved)
   - Approval mode
+  - Current or last agent route, phase, step, and pending tool when available
+  - Undo-ready rollback count when available
 - **Output**: Compact key-value display.
 
 #### `/config`
@@ -223,15 +225,27 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/agent approve`
 - **Syntax**: `/agent approve`
-- **Behavior**: Sets approval mode to `autonomous` for the current session and future sessions. If an agent task is currently paused on approval, the pending action is approved and the task resumes in autonomous mode. High-risk actions still require explicit approval.
+- **Behavior**: Sets approval mode to `autonomous` for the current shell and future sessions. If an agent task is currently paused on approval, the pending action is approved and the task resumes in autonomous mode. High-risk actions still require explicit approval.
 - **Reset**: Use `/config safety.approval_mode balanced` to switch back to balanced approvals.
 
 #### `/agent deny`
 - **Syntax**: `/agent deny`
-- **Behavior**: Denies the pending agent action and halts the current step. The agent re-plans from the current state.
+- **Behavior**: Denies the pending agent action. The active task enters recovery and may re-plan from the current state.
+
+#### `/agent undo`
+- **Syntax**: `/agent undo`
+- **Behavior**: Reverts the most recent rollback entry recorded for the current session.
+- **Guardrail**: Fails if an agent task is still active.
+
+#### `/agent undo-all`
+- **Syntax**: `/agent undo-all`
+- **Behavior**: Reverts every rollback entry recorded for the current session in reverse order.
+- **Guardrail**: Fails if an agent task is still active.
 
 #### Approval Prompts
-- **Behavior**: Pending tool approvals now use the same action-prompt surface as other command flows, offering `Approve`, `Deny`, `View details`, and `Approve all`.
+- **Behavior**: Pending tool approvals use the same action-prompt surface as other command flows, offering `Approve`, `Deny`, `View details`, and `Approve all`.
+- **Preview surface**: `View details` shows a tool-specific preview headed by the highest-signal context first: target path or command, working directory or staged files, risk reason, warnings, overwrite/create context, and rollback availability.
+- **Persistence**: `Approve all` is equivalent to `/agent approve`; it persists autonomous approval for the current shell and future sessions.
 - **Stop behavior**: Cancelling the prompt stops the pending task instead of leaving the shell in an ambiguous state.
 
 ---
@@ -290,8 +304,8 @@ class CommandHandler(ABC):
         ...
 
     @abstractmethod
-    def help_text(self) -> str:
-        """Return help text for this command."""
+    def describe(self) -> CommandSpec:
+        """Return metadata for help, completion, and command framing."""
         ...
 ```
 
@@ -303,14 +317,29 @@ class CommandResult:
     success: bool
     message: str
     data: dict | None = None
+    presentation: Literal["plain", "status", "success", "warning", "error"] = "plain"
+    body: str | None = None
 
     @classmethod
-    def ok(cls, message: str, data: dict | None = None) -> "CommandResult":
-        return cls(success=True, message=message, data=data)
+    def ok(
+        cls,
+        message: str,
+        data: dict | None = None,
+        *,
+        presentation: Literal["plain", "status", "success", "warning", "error"] = "plain",
+        body: str | None = None,
+    ) -> "CommandResult":
+        return cls(
+            success=True,
+            message=message,
+            data=data,
+            presentation=presentation,
+            body=body,
+        )
 
     @classmethod
-    def error(cls, message: str) -> "CommandResult":
-        return cls(success=False, message=message)
+    def error(cls, message: str, *, body: str | None = None) -> "CommandResult":
+        return cls(success=False, message=message, presentation="error", body=body)
 ```
 
 ### Registration
@@ -324,8 +353,12 @@ class ModelsListHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         ...
 
-    def help_text(self) -> str:
-        return "List all installed models"
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Models",
+            summary="List all installed models.",
+            usage="/models list",
+        )
 
 def register(router: CommandRouter) -> None:
     router.register("models list", ModelsListHandler())

@@ -87,7 +87,9 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/mode agent`
 - **Syntax**: `/mode agent`
 - **Behavior**: Switches the session to agent mode. Subsequent plain text input is processed as a task. The agent loop activates: planning, tool execution, observation, and iteration.
-- **Precondition**: The active model must support tool use. If it does not, this command fails with a clear error explaining why and suggesting a model that supports tools.
+- **Precondition**: The active target must report `tool_use = yes` with a trusted readiness tier (`verified`, `inferred`, or `configured`).
+- **Provider guardrail**: Remote models in `legacy fallback` or `unknown` readiness state are rejected until the user refreshes discovery with `/providers test` and then chooses a live model with `/set`.
+- **Failure messaging**: Rejections explain the tool-use verdict, its tier, and the reason the CLI does not trust that target for agent work.
 
 ---
 
@@ -104,7 +106,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/models list`
 - **Syntax**: `/models list`
-- **Behavior**: Lists all installed local models with their name, format, size, and capabilities.
+- **Behavior**: Lists all installed local models with their name, format, size, backend, and a compact readiness column for agent-mode availability.
 - **Output**: Formatted table.
 
 #### `/models search <query>`
@@ -128,7 +130,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/models inspect <name>`
 - **Syntax**: `/models inspect <name>`
-- **Behavior**: Displays detailed metadata about an installed model: format, size on disk, parameter count (if available), quantization level, capabilities (tool use, reasoning, streaming), backend assignment, and version info.
+- **Behavior**: Displays detailed metadata about an installed model: format, size on disk, parameter count (if available), quantization level, backend assignment, version info, and per-capability readiness lines with both tier and reason.
 - **Selection**: If no name is provided in an interactive terminal, opens a picker of installed models.
 
 ---
@@ -141,6 +143,9 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
   1. Choose between `Providers` and `Local models`
   2. For providers: choose a configured provider, then choose one of its discovered models
   3. For local models: choose one installed local model directly
+- **Picker detail**:
+  - Local model options include format, size, tool-use readiness, and reasoning readiness
+  - Provider model options include whether the model was `api discovered` or is a `legacy fallback`, plus tool-use and reasoning readiness
 - **Scope**: Applies to the current session only.
 - **Notes**: This is the primary interactive replacement for `/models use` and `/providers use`.
 - **Result framing**: Cancellation, empty-state guidance, and successful activation all use the shared status/success/warning command presentation contract.
@@ -149,7 +154,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Syntax**: `/set default`
 - **Behavior**: Opens the same layered picker as `/set`, but persists the selected target as the CLI-wide default for new sessions.
 - **Scope**: Global config. The selected target becomes the startup default until changed or removed.
-- **Fallback**: If the stored default target later becomes invalid (for example, a local model is deleted), the shell falls back to the next available installed model or configured provider model.
+- **Fallback**: If the stored default target later becomes invalid (for example, a local model is deleted), the shell falls back to the next available installed model or configured provider model and prints one warning naming both the old and replacement targets.
 - **Result framing**: Uses the same picker and presentation contract as `/set`.
 
 ---
@@ -158,7 +163,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/providers list`
 - **Syntax**: `/providers list`
-- **Behavior**: Lists all configured remote providers with their name, type (OpenAI / Anthropic / REST), and status (connected / not tested).
+- **Behavior**: Lists all configured remote providers with their name, type, status, selected model when known, and compact readiness context (`model unselected`, `api discovered`, or `legacy fallback`).
 
 #### `/providers add`
 - **Syntax**: `/providers add`
@@ -179,7 +184,7 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 #### `/providers test`
 - **Syntax**: `/providers test [name]`
-- **Behavior**: Tests connectivity to a provider by sending a minimal request. Reports success or failure with error details.
+- **Behavior**: Tests connectivity to a provider by sending a minimal request. Reports success or failure with error details, then summarizes whether live model discovery succeeded and whether the current target is `api discovered` or still a `legacy fallback`.
 - **Selection**: In an interactive terminal, if no name is provided the command opens a picker of configured providers, defaulting to the current provider when possible.
 - **Non-interactive behavior**: Without a name, falls back to the current session provider and then the globally active provider.
 

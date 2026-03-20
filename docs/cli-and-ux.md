@@ -150,6 +150,7 @@ When the active terminal encoding cannot represent these glyphs, the shell falls
 
 Supporting warnings or reasoning that do not deserve the main status lane are queued into the dimmed `Details` lane instead of being mixed into the main answer body.
 High-risk explanations, rollback notes, and low-priority recovery detail follow the same rule: they remain visible, but they do not displace the primary route/phase/status lines.
+Approval previews keep this rhythm by clipping very large patch/content/command sections and labeling those sections with `(truncated)` so operators can see when detail has been shortened.
 
 ### Command Result Presentation
 

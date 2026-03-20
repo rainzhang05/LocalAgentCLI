@@ -30,7 +30,7 @@ After implementing a component:
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations, and router-level unknown/invalid command errors now include consistent `/help` guidance plus close-match suggestions when available |
 | `[x]` | `/exit` command | 2026-03-17 |
-| `[x]` | `/status` command | 2026-03-19 — `/status` now renders the expanded form of the same shared status snapshot used by the prompt toolbar, including agent route/phase/step, pending tool, and undo-ready counts when present |
+| `[x]` | `/status` command | 2026-03-19 — `/status` now renders the expanded form of the same shared status snapshot used by the prompt toolbar, including route/phase/step, pending tool, and undo-ready counts; in agent mode, idle placeholders keep that section layout stable even when no task is active |
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
@@ -97,7 +97,7 @@ After implementing a component:
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-19 — mode changes now use shared success/warning presentation for normal switches and cancelled stop-confirmation paths |
 | `[x]` | `/mode agent` command | 2026-03-19 — mode switching implemented in Phase 4, now activates the Phase 5 agent workflow, uses shared success/status presentation for readiness guidance, rejects untrusted remote fallback states explicitly, and returns parent-command subcommand errors with explicit `/help mode` recovery guidance |
-| `[x]` | Status header display | 2026-03-19 — replaced by a persistent prompt-time status toolbar showing mode, active target, workspace, and a short hint; `/status` uses the same snapshot data in expanded form |
+| `[x]` | Status header display | 2026-03-19 — replaced by a persistent prompt-time status toolbar showing mode, active target, workspace, and a short hint; `/status` uses the same snapshot data in expanded form, and the toolbar now keeps agent-mode state explicit with an `agent: idle` label when no task is running |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
 | `[x]` | Tab completion for commands | 2026-03-18 — live slash-command menu, typed filtering, arrow-key navigation, and Tab acceptance via prompt-toolkit |
 

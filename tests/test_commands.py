@@ -397,6 +397,7 @@ class TestSessionCommands:
         result = router.dispatch("session")
         assert not result.success
         assert "subcommand" in result.message
+        assert "/help session" in result.message
 
 
 class TestExitCommand:

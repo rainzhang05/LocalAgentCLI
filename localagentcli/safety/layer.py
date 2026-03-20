@@ -21,6 +21,8 @@ class ApprovalResult:
     risk_level: RiskLevel
     reason: str | None = None
     warnings: list[str] = field(default_factory=list)
+    risk_reason: str | None = None
+    rollback_summary: str | None = None
 
     @property
     def approved(self) -> bool:
@@ -92,19 +94,25 @@ class SafetyLayer:
                 status="blocked",
                 risk_level=RiskLevel.HIGH,
                 reason=str(exc),
+                risk_reason="The action escapes the active workspace boundary.",
             )
 
-        risk_level = self.classify_risk(tool.name, args)
+        risk_level, risk_reason = self.describe_risk(tool.name, args)
+        rollback_summary = self.describe_rollback(tool, args)
         if self._approval.needs_approval(tool, risk_level):
             return ApprovalResult(
                 status="needs_approval",
                 risk_level=risk_level,
                 warnings=warnings,
+                risk_reason=risk_reason,
+                rollback_summary=rollback_summary,
             )
         return ApprovalResult(
             status="approved",
             risk_level=risk_level,
             warnings=warnings,
+            risk_reason=risk_reason,
+            rollback_summary=rollback_summary,
         )
 
     def pre_action(self, tool: Tool, args: dict) -> None:
@@ -144,19 +152,45 @@ class SafetyLayer:
 
     def classify_risk(self, tool_name: str, args: dict) -> RiskLevel:
         """Classify a tool call as normal or high risk."""
+        return self.describe_risk(tool_name, args)[0]
+
+    def describe_risk(self, tool_name: str, args: dict) -> tuple[RiskLevel, str | None]:
+        """Classify a tool call and explain why it was considered risky."""
         if tool_name == "shell_execute":
             command = str(args.get("command", ""))
             for pattern in self.HIGH_RISK_COMMANDS:
                 if pattern.search(command):
-                    return RiskLevel.HIGH
+                    return (
+                        RiskLevel.HIGH,
+                        f"Command matches a high-risk pattern: {pattern.pattern}",
+                    )
 
         for file_path in self._risk_sensitive_paths(tool_name, args):
             normalized = self._normalize_display_path(file_path)
             for pattern in self.HIGH_RISK_FILE_PATTERNS:
                 if pattern.search(normalized):
-                    return RiskLevel.HIGH
+                    return (
+                        RiskLevel.HIGH,
+                        f"Path appears sensitive: {normalized}",
+                    )
 
-        return RiskLevel.NORMAL
+        return RiskLevel.NORMAL, None
+
+    def describe_rollback(self, tool: Tool, args: dict) -> str | None:
+        """Explain whether rollback will be available after a successful action."""
+        targets = self._modification_targets(tool, args)
+        if not targets:
+            return "Rollback is not available for this action."
+
+        summaries: list[str] = []
+        for raw_path in targets:
+            resolved = self._boundary.validate_path(raw_path)
+            display_path = self._normalize_display_path(raw_path)
+            if resolved.exists():
+                summaries.append(f"Rollback available: {display_path} will be backed up.")
+            else:
+                summaries.append(f"Rollback available: {display_path} can be removed with undo.")
+        return "\n".join(summaries)
 
     def _validate_arguments(self, tool: Tool, args: dict) -> list[str]:
         warnings: list[str] = []

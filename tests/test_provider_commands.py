@@ -425,7 +425,7 @@ class TestProvidersTest:
 
         assert result.success is True
         assert "legacy fallback" in result.body
-        assert "Run /providers test and /set to refresh live discovery." in result.body
+        assert "Run /providers test to refresh discovery" in result.body
 
     def test_test_failure(
         self,
@@ -489,7 +489,7 @@ class TestProvidersTest:
         with patch.object(registry, "create_provider", side_effect=ValueError("no key")):
             result = handler.execute(["openai"])
         assert result.success is False
-        assert "Failed to create" in result.message
+        assert "Cannot test provider 'openai'" in result.message
 
     def test_help_text(
         self,

@@ -32,6 +32,7 @@ When the user issues `/agent approve`, approval mode switches to autonomous for 
 - Standard actions (file writes, shell commands, tests, git commits) are auto-approved
 - High-risk actions still require explicit approval
 - If an agent task is currently paused on approval, the pending action resumes in autonomous mode
+- Choosing `Approve all` from an inline approval prompt has the same effect as `/agent approve`
 - To switch back, set `safety.approval_mode` to `balanced` (for example via `/config safety.approval_mode balanced`)
 
 ### Future Modes (Extensible)
@@ -50,8 +51,6 @@ When a tool call requires approval, the system displays an inline prompt:
 
 ```
 🔧 patch_apply: src/main.py
-   Replace: "def old_function():"
-   With:    "def new_function():"
 
    [Enter] Approve  |  [d] Deny  |  [v] View full diff
 ```
@@ -59,6 +58,14 @@ When a tool call requires approval, the system displays an inline prompt:
 - **Enter (default)**: Approve and execute the tool call
 - **d**: Deny the action. The agent receives a `denied` status and re-plans.
 - **v**: Show a full preview of the change before deciding
+- **Approve all**: Switch approval mode to autonomous for this shell and future sessions, then run the pending action
+
+Preview builders are tool-specific. The first lines always show the highest-signal context available:
+- target path or command
+- working directory or staged files when applicable
+- high-risk warnings and why the action was flagged
+- whether the action will create or overwrite a file
+- whether undo will be available after a successful run
 
 For shell commands:
 ```
@@ -78,6 +85,8 @@ When autonomous mode is active, the prompt is skipped for standard actions. The 
 ⚠ shell_execute: rm -rf /tmp/data (HIGH RISK — approval required)
    [Enter] Approve  |  [d] Deny
 ```
+
+High-risk actions never inherit autonomous approval. The prompt always returns for those cases, even if the operator previously chose `Approve all`.
 
 ---
 
@@ -129,10 +138,10 @@ class WorkspaceBoundary:
 
 ### Outside-Workspace Access
 
-If the agent or user explicitly needs to access a path outside the workspace:
+If the agent or user targets a path outside the workspace:
 1. The Safety Layer blocks the action with a clear message
-2. The user can explicitly approve the out-of-workspace access for that specific action
-3. The approval does not persist — each out-of-workspace access requires individual approval
+2. The blocked action is surfaced as a recovery event to the agent
+3. The user must change the workspace or adjust the command; there is no approval override for escaping the workspace root
 
 ---
 
@@ -263,6 +272,12 @@ class RollbackManager:
         """Return the rollback log for review."""
 ```
 
+User-facing rollback surfaces:
+- successful file-modifying tool results can surface `Undo available: N change(s). Use /agent undo.`
+- `/agent undo` reverts the most recent rollback entry for the current session
+- `/agent undo-all` reverts every rollback entry for the current session
+- rollback commands are rejected while an agent task is still active
+
 ### Rollback Rules
 
 1. Backups are per-session. When a session ends, rollback data is retained for a configurable period (default: 24 hours)
@@ -293,7 +308,8 @@ class SafetyLayer:
         3. Check approval mode
         4. Prompt user if needed
         5. Create backup if approved
-        Returns ApprovalResult (approved/denied/blocked).
+        Returns ApprovalResult (approved/needs_approval/blocked) with
+        risk reason and rollback summary for the shell preview surface.
         """
 
     def pre_action(self, tool: Tool, args: dict) -> None:
@@ -310,6 +326,7 @@ class SafetyLayer:
 
 class ApprovalManager:
     def __init__(self, mode: str = "balanced"):
+        self._default_mode = mode
         self._mode = mode  # "balanced" | "autonomous"
 
     def needs_approval(self, tool: Tool, risk_level: RiskLevel) -> bool:
@@ -322,11 +339,19 @@ class ApprovalManager:
             return False  # Never for reads
         return True  # Default: ask
 
-    def set_autonomous(self) -> None:
-        """Switch to autonomous mode for the current task."""
+    def set_autonomous(self, *, persist_default: bool = True) -> None:
+        """Switch to autonomous mode for the current task and default state."""
         self._mode = "autonomous"
+        if persist_default:
+            self._default_mode = "autonomous"
+
+    def set_balanced(self, *, persist_default: bool = True) -> None:
+        """Switch to balanced mode for the current task and default state."""
+        self._mode = "balanced"
+        if persist_default:
+            self._default_mode = "balanced"
 
     def reset(self) -> None:
-        """Reset to default balanced mode."""
-        self._mode = "balanced"
+        """Reset the task-scoped state to the configured default mode."""
+        self._mode = self._default_mode
 ```

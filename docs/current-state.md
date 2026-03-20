@@ -186,9 +186,9 @@ After implementing a component:
 | `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, CLI-wide default-target model selection flow, and remote readiness provenance documented |
 | `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, named runtime phases, persisted task-state snapshots, and readiness-aware agent entry requirements documented |
 | `[x]` | `docs/tool-system.md` | Complete |
-| `[x]` | `docs/safety-and-permissions.md` | 2026-03-19 — approval persistence, risk/rollback preview context, explicit workspace-boundary blocking, and `/agent undo` rollback surfaces documented |
+| `[x]` | `docs/safety-and-permissions.md` | 2026-03-20 — approval persistence, risk/rollback preview context, explicit workspace-boundary blocking, `/agent undo` rollback surfaces, and current approval prompt actions (`Approve`, `Deny`, `View details`, `Approve all`) documented |
 | `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage, explicit startup repair warnings, and interactive `/config` editing documented |
-| `[x]` | `docs/cli-and-ux.md` | 2026-03-19 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, and renderer-backed command-result presentation documented |
+| `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |
 | `[x]` | `docs/roadmap.md` | Complete |

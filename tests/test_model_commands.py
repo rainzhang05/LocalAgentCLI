@@ -17,6 +17,7 @@ from localagentcli.commands.models import (
     ModelsSearchHandler,
     ModelsUseHandler,
     _parse_name_version,
+    build_model_selection_options,
 )
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.hf_catalog import HubModelChoice
@@ -203,8 +204,20 @@ class TestModelsList:
         handler = ModelsListHandler(registry)
         result = handler.execute([])
         assert result.success is True
+        assert "Readiness" in result.message
+        assert "agent no [verified]" in result.message
         assert "codellama-7b" in result.message
         assert "mistral-7b" in result.message
+
+    def test_selection_options_include_readiness(self, registry: ModelRegistry):
+        registry.register(_make_entry())
+
+        options = build_model_selection_options(registry)
+
+        assert len(options) == 1
+        assert "gguf" in options[0].description
+        assert "tools: no [verified]" in options[0].description
+        assert "reasoning: no [unknown]" in options[0].description
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +500,9 @@ class TestModelsInspect:
         assert "codellama-7b" in result.message
         assert "gguf" in result.message
         assert "Version" in result.message
+        assert "Tool use: no [verified]" in result.message
+        assert "Reasoning: no [unknown]" in result.message
+        assert "Streaming: yes [verified]" in result.message
 
     def test_inspect_not_found(self, registry: ModelRegistry):
         handler = ModelsInspectHandler(registry)

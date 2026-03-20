@@ -135,7 +135,13 @@ class ShellUI:
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
-        agent_cmd.register(self._router, lambda: self._agent_controller, self._config)
+        agent_cmd.register(
+            self._router,
+            lambda: self._agent_controller,
+            self._config,
+            undo_last=self._undo_last_agent_change,
+            undo_all=self._undo_all_agent_changes,
+        )
         providers_cmd.register(
             self._router,
             self._provider_registry,
@@ -251,12 +257,15 @@ class ShellUI:
                         f"{agent_controller.last_compaction_count} messages"
                     )
                 if dispatch.stream is not None:
+                    self._stream_renderer.render_status(
+                        f"Agent route: {_humanize_route(dispatch.triage.outcome)}."
+                    )
                     self._stream_renderer.render_stream(dispatch.stream)
                 elif dispatch.events is not None:
                     self._drain_agent_events(dispatch.events)
             except KeyboardInterrupt:
                 model.cancel()
-                agent_controller.stop()
+                agent_controller.stop("Agent task interrupted.")
                 self._stream_renderer.render_warning("Agent task interrupted.")
             except Exception as exc:
                 agent_controller.stop()
@@ -487,6 +496,11 @@ class ShellUI:
     def _status_snapshot(self) -> status_cmd.StatusSnapshot:
         """Build the current shell-status snapshot for toolbar and /status views."""
         session = self._session_manager.current
+        task_state = (
+            session.metadata.get("agent_task_state", {})
+            if isinstance(session.metadata.get("agent_task_state", {}), dict)
+            else {}
+        )
         approval_mode = str(
             session.metadata.get(
                 "approval_mode",
@@ -500,6 +514,11 @@ class ShellUI:
             session_name=session.name or "(unsaved)",
             approval_mode=approval_mode,
             message_count=len(session.history),
+            agent_route=str(task_state.get("route", "") or ""),
+            agent_phase=str(task_state.get("phase", "") or ""),
+            agent_step=self._format_agent_step(task_state),
+            agent_pending_tool=str(task_state.get("pending_tool", "") or ""),
+            rollback_count=int(task_state.get("rollback_count", 0) or 0),
         )
 
     def _prompt_toolbar_text(self) -> str:
@@ -588,6 +607,7 @@ class ShellUI:
             self._session_manager.current.workspace,
             self._session_manager.current.provider,
             self._session_manager.current.model,
+            self._session_manager.get_effective_config("safety.approval_mode") or "balanced",
             id(model.backend),
         )
         if self._agent_controller is not None and self._agent_controller_key == key:
@@ -635,7 +655,7 @@ class ShellUI:
                 elif decision == "deny":
                     self._drain_agent_events(self._agent_controller.deny_action())
                 else:
-                    self._agent_controller.stop()
+                    self._agent_controller.stop("Agent task stopped during approval prompt.")
                     self._stream_renderer.render_warning("Agent task stopped.")
                 return
 
@@ -691,26 +711,66 @@ class ShellUI:
     def _format_tool_preview(self, event: ToolCallRequested) -> str:
         """Render a detailed preview of a pending tool call."""
         arguments = dict(event.arguments)
-        prefix = ""
-        if event.risk_level == "high":
-            prefix = "HIGH RISK\n"
-        if event.warnings:
-            prefix = prefix + "\n".join(event.warnings) + "\n\n"
+        header = self._tool_preview_header(event)
         if event.tool_name == "patch_apply":
-            return prefix + (
-                f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n"
+            return header + (
                 f"Replace:\n{arguments.get('old_text', '')}\n\n"
                 f"With:\n{arguments.get('new_text', '')}"
             )
         if event.tool_name == "file_write":
             content = str(arguments.get("content", ""))
             preview = content[:500] + ("..." if len(content) > 500 else "")
-            return prefix + f"{event.tool_name}: {arguments.get('path', '(unknown)')}\n\n{preview}"
-        return prefix + json.dumps(
+            path = str(arguments.get("path", "(unknown)"))
+            action = (
+                "overwrite existing file" if self._preview_path_exists(path) else "create new file"
+            )
+            return header + f"Action: {action}\n\nContent preview:\n{preview}"
+        if event.tool_name == "shell_execute":
+            return header + (
+                f"Command:\n{arguments.get('command', '')}\n\n"
+                f"Working directory: {arguments.get('working_dir', '.')}"
+            )
+        if event.tool_name == "test_execute":
+            framework = arguments.get("framework", "(auto-detect)")
+            path = arguments.get("path", ".")
+            extra_args = arguments.get("args", "")
+            lines = [header.rstrip(), f"Framework: {framework}", f"Target: {path}"]
+            if extra_args:
+                lines.append(f"Args: {extra_args}")
+            return "\n".join(lines)
+        if event.tool_name == "git_commit":
+            files = arguments.get("files") or []
+            staged = ", ".join(files) if isinstance(files, list) and files else "all staged changes"
+            return header + (f"Commit message: {arguments.get('message', '')}\nFiles: {staged}")
+        return header + json.dumps(
             {"tool": event.tool_name, "arguments": arguments},
             indent=2,
             ensure_ascii=False,
         )
+
+    def _tool_preview_header(self, event: ToolCallRequested) -> str:
+        """Build the common high-signal header for a pending tool preview."""
+        arguments = dict(event.arguments)
+        lines = [f"Tool: {event.tool_name}"]
+        if "path" in arguments:
+            lines.append(f"Target: {arguments.get('path', '(unknown)')}")
+        if event.risk_level == "high":
+            lines.append("Risk: HIGH RISK")
+        if event.risk_reason:
+            lines.append(f"Why flagged: {event.risk_reason}")
+        if event.warnings:
+            lines.append("Warnings:")
+            lines.extend(f"- {warning}" for warning in event.warnings)
+        if event.rollback_summary:
+            lines.append(event.rollback_summary)
+        return "\n".join(lines) + "\n\n"
+
+    def _preview_path_exists(self, raw_path: str) -> bool:
+        """Check whether a preview path currently exists inside the workspace."""
+        try:
+            return (self._workspace_root() / raw_path).resolve().exists()
+        except Exception:
+            return False
 
     def _handle_agent_resume(self, result: CommandResult) -> None:
         """Resume a paused agent task after an /agent command."""
@@ -726,6 +786,36 @@ class ShellUI:
             return
         self._drain_agent_events(events)
 
+    def _undo_last_agent_change(self) -> tuple[str, str | None]:
+        """Undo the most recent rollback entry for the current session."""
+        if self._agent_controller is not None and self._agent_controller.has_active_task:
+            raise RuntimeError("Stop the active agent task before undoing changes.")
+        manager = self._rollback_manager()
+        entry = manager.undo_last()
+        self._refresh_agent_rollback_state(manager)
+        body = (
+            f"Tool: {entry.tool}\n"
+            f"Path: {entry.file_path}\n"
+            f"Action: {entry.action}\n"
+            f"Summary: {entry.summary}"
+        )
+        return f"Reverted last agent change: {Path(entry.file_path).name}", body
+
+    def _undo_all_agent_changes(self) -> tuple[str, str | None]:
+        """Undo every rollback entry for the current session."""
+        if self._agent_controller is not None and self._agent_controller.has_active_task:
+            raise RuntimeError("Stop the active agent task before undoing changes.")
+        manager = self._rollback_manager()
+        undone = manager.undo_all()
+        self._refresh_agent_rollback_state(manager)
+        if not undone:
+            raise ValueError("No rollback history is available for this session.")
+        lines = [
+            f"{index}. {entry.action} {entry.file_path} ({entry.tool})"
+            for index, entry in enumerate(undone, start=1)
+        ]
+        return f"Reverted {len(undone)} agent change(s).", "\n".join(lines)
+
     def _stop_agent_task_with_confirmation(self) -> bool:
         """Stop an active agent task before mode or session changes."""
         if self._agent_controller is None or not self._agent_controller.has_active_task:
@@ -738,13 +828,35 @@ class ShellUI:
             return False
         if not stop:
             return False
-        self._agent_controller.stop()
+        self._agent_controller.stop("Agent task stopped before switching modes.")
         self._stream_renderer.render_warning("Agent task stopped.")
         return True
 
     def _workspace_root(self) -> Path:
         """Resolve the current session workspace to an absolute path."""
         return Path(self._session_manager.current.workspace).expanduser().resolve()
+
+    def _rollback_manager(self) -> RollbackManager:
+        """Return the rollback manager for the current session."""
+        return RollbackManager(self._session_manager.current.id, self._storage.cache_dir)
+
+    def _refresh_agent_rollback_state(self, manager: RollbackManager) -> None:
+        """Keep status surfaces aligned after manual rollback commands."""
+        task_state = self._session_manager.current.metadata.get("agent_task_state", {})
+        if not isinstance(task_state, dict):
+            task_state = {}
+        task_state["rollback_count"] = len(manager.get_history())
+        self._session_manager.current.touch()
+        task_state["updated_at"] = self._session_manager.current.updated_at.isoformat()
+        self._session_manager.current.metadata["agent_task_state"] = task_state
+
+    def _format_agent_step(self, task_state: dict[str, object]) -> str:
+        """Render the current or last agent step for status views."""
+        step_index = task_state.get("step_index")
+        step_description = str(task_state.get("step_description", "") or "")
+        if isinstance(step_index, int) and step_description:
+            return f"{step_index}. {step_description}"
+        return step_description
 
     def _active_target_label(self) -> str:
         """Describe the active local model or remote provider for the status header."""
@@ -853,3 +965,12 @@ class ShellUI:
             sync_workspace_instruction(self._session_manager.current)
         except Exception:
             return
+
+
+def _humanize_route(route: str) -> str:
+    mapping = {
+        "direct_answer": "direct answer",
+        "single_step_task": "single-step task",
+        "multi_step_task": "multi-step task",
+    }
+    return mapping.get(route, route.replace("_", " "))

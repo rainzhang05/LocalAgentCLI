@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Phase 7 hardening remains complete, and the workspace refinement phases now include Phase 3 agent visibility, approvals, and recovery: agent mode carries a visible route plus one runtime phase at a time, prompt-toolbar and `/status` snapshots include agent task state and undo availability, approval previews are tool-specific and rollback-aware, autonomous approvals persist correctly across tasks, and stop/timeout outcomes no longer masquerade as generic failures.)
+> **Last updated**: 2026-03-19 (Agent task state is now visible through route and phase surfaces, prompt-toolbar and `/status` snapshots include pending-task and undo details, approval previews are tool-specific and rollback-aware, autonomous approvals persist correctly across tasks, and stop/timeout outcomes render distinctly from failures.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from localagentcli.commands.providers import resolve_remote_model_readiness
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
+from localagentcli.models.readiness import (
+    build_target_readiness,
+    default_local_capability_provenance,
+    format_capability_brief,
+    selection_state_label,
+)
 from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.manager import SessionManager
@@ -99,7 +106,7 @@ class ModeAgentHandler(CommandHandler):
             try:
                 runtime = self._provider_registry.create_provider(session.provider)
                 runtime.set_active_model(session.model)
-                models = runtime.list_models()
+                readiness = resolve_remote_model_readiness(runtime, session.model)
             except Exception as exc:
                 return CommandResult.error(
                     f"Cannot enter agent mode: failed to inspect provider "
@@ -111,18 +118,18 @@ class ModeAgentHandler(CommandHandler):
                         runtime.close()
                 except Exception:
                     pass
-
-            selected_model = session.model
-            matching = next((item for item in models if item.id == selected_model), None)
-            capabilities = (
-                matching.capabilities
-                if matching is not None
-                else getattr(runtime, "capabilities", lambda: {"tool_use": False})()
-            )
-            if not bool(capabilities.get("tool_use", False)):
+            tool_use = readiness.capabilities["tool_use"]
+            if readiness.selection_state in {"legacy_fallback", "unknown"}:
+                return CommandResult.error(
+                    "Cannot enter agent mode: the active provider model "
+                    f"({session.model}) is {selection_state_label(readiness.selection_state)}. "
+                    "Run /providers test, then /set to choose a live-discovered model."
+                )
+            if not tool_use.supported:
                 return CommandResult.error(
                     "Cannot enter agent mode: the active provider "
-                    f"model ({selected_model}) does not support tool use. "
+                    f"model ({session.model}) reports "
+                    f"{format_capability_brief('tool use', tool_use)} - {tool_use.reason} "
                     "Use /set to switch to a tool-capable provider."
                 )
         elif session.model:
@@ -132,10 +139,19 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     f"Cannot enter agent mode: model '{session.model}' is not installed."
                 )
-            if not bool(entry.capabilities.get("tool_use", False)):
+            readiness = build_target_readiness(
+                kind="local",
+                selection_state="local",
+                capabilities=entry.capabilities,
+                capability_provenance=entry.capability_provenance,
+                default_builder=default_local_capability_provenance,
+            )
+            tool_use = readiness.capabilities["tool_use"]
+            if not tool_use.supported:
                 return CommandResult.error(
                     "Cannot enter agent mode: the active model "
-                    f"({session.model}) does not support tool use. "
+                    f"({session.model}) reports "
+                    f"{format_capability_brief('tool use', tool_use)} - {tool_use.reason} "
                     "Use /set to switch to a tool-capable target."
                 )
 

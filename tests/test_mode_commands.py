@@ -138,3 +138,4 @@ class TestModeCommands:
 
         assert not result.success
         assert "legacy fallback" in result.message
+        assert "API-discovered model" in result.message

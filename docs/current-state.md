@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-19 (Target readiness now carries capability-confidence tiers across local models and remote providers, `/set`, `/models`, and `/providers` surfaces explain what the CLI believes and why, agent-mode gating rejects untrusted provider fallback states explicitly, and startup default-target repairs warn instead of silently switching targets.)
+> **Last updated**: 2026-03-20 (Phase 5 consistency hardening completed: command/error recovery wording, fallback guidance, idle status layout stability, and approval preview truncation labels are now aligned across runtime, tests, and docs.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -153,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-19 — 775 tests total across unit, component, integration, and CLI coverage, now including regressions for readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 85.16% coverage |
+| `[x]` | Unit tests | 2026-03-20 — 782 tests total across unit, component, integration, and CLI coverage, including regressions for readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 85.10% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

@@ -116,6 +116,10 @@ Remote providers can advertise their available models:
 - **Anthropic**: `GET /v1/models` returns the models accessible to the current API key
 - **Generic REST**: Attempts `GET /models` (or a configured models endpoint); optional legacy fallback to an older stored `default_model` remains only for backwards compatibility with pre-existing provider configs
 - Provider instances are always bound to one active remote model id. Capability checks (`tool_use`, `reasoning`) are evaluated against that active model, not just the provider type.
+- Discovered models also carry readiness metadata:
+  - `selection_state = "api_discovered"` when the provider returned the model live from its discovery API
+  - `selection_state = "legacy_fallback"` when discovery failed and the provider had to reuse its stored `default_model`
+  - `capability_provenance` explains whether a capability claim is inferred, configured, or only a legacy fallback
 
 ```python
 class RemoteProvider(ABC):
@@ -127,6 +131,16 @@ class RemoteProvider(ABC):
     def get_model_capabilities(self, model_name: str) -> dict:
         """Return capabilities for a specific model (tool_use, reasoning, streaming)."""
 ```
+
+### Capability Confidence Rules
+
+Remote model readiness uses provider-specific provenance:
+
+- OpenAI-compatible and Anthropic models discovered from the provider API keep the existing capability booleans, but their tiers are marked `inferred`
+- Generic REST models discovered from the provider API keep the configured capability booleans, and their tiers are marked `configured`
+- Any model returned only from the older provider `default_model` fallback keeps its existing booleans, but every tier is marked `legacy_fallback`
+
+This keeps the runtime APIs stable while making it explicit when the CLI is relying on heuristics, configured flags, or compatibility-only fallback data.
 
 ---
 
@@ -172,6 +186,7 @@ Shared provider requirements:
 - Streaming requests must surface normalized `error` and `done` chunks instead of leaking raw transport exceptions into the shell.
 - Provider HTTP clients must be closed when the active provider changes or the shell exits.
 - New provider configs should not depend on provider-level `default_model` values; that field is legacy compatibility only.
+- Agent-mode gating should trust only models whose tool-use readiness is backed by `verified`, `inferred`, or `configured` provenance.
 
 ---
 

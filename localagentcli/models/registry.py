@@ -8,6 +8,8 @@ from pathlib import Path
 
 from filelock import FileLock
 
+from localagentcli.models.readiness import default_local_capability_provenance
+
 
 @dataclass
 class ModelEntry:
@@ -25,6 +27,7 @@ class ModelEntry:
             "streaming": True,
         }
     )
+    capability_provenance: dict = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -36,25 +39,31 @@ class ModelEntry:
             "path": self.path,
             "size_bytes": self.size_bytes,
             "capabilities": self.capabilities,
+            "capability_provenance": self.capability_provenance,
             "metadata": self.metadata,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> ModelEntry:
         """Deserialize from a dict."""
+        capabilities = data.get(
+            "capabilities",
+            {
+                "tool_use": False,
+                "reasoning": False,
+                "streaming": True,
+            },
+        )
         return cls(
             name=data.get("name", ""),
             version=data.get("version", "v1"),
             format=data.get("format", ""),
             path=data.get("path", ""),
             size_bytes=data.get("size_bytes", 0),
-            capabilities=data.get(
-                "capabilities",
-                {
-                    "tool_use": False,
-                    "reasoning": False,
-                    "streaming": True,
-                },
+            capabilities=capabilities,
+            capability_provenance=data.get(
+                "capability_provenance",
+                default_local_capability_provenance(capabilities),
             ),
             metadata=data.get("metadata", {}),
         )

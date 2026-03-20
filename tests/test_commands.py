@@ -56,7 +56,7 @@ def _make_router(config, session_manager, tmp_path=None):
         registry = ProviderRegistry(config, km)
         model_registry = ModelRegistry(tmp_path / "registry.json")
         hf_token_cmd.register(router, km)
-        providers_cmd.register(router, registry, km, session_manager, console)
+        providers_cmd.register(router, registry, km, session_manager, config, console)
         set_cmd.register(
             router,
             model_registry,

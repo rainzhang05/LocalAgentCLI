@@ -43,6 +43,24 @@ class TestSessionManagerNewSession:
         assert session.provider == ""
         assert config.get("model.active_model") == "fallback@v1"
 
+    def test_new_session_records_default_target_repair_warning(self, storage, config):
+        config.set("provider.active_provider", "")
+        config.set("model.active_model", "missing@v1")
+        manager = SessionManager(
+            storage.sessions_dir,
+            config,
+            default_target_resolver=lambda provider, model: ("", "fallback@v1"),
+        )
+
+        manager.new_session()
+
+        warning = manager.consume_default_target_warning()
+        assert warning == (
+            "Default target repaired: missing@v1 was unavailable, so LocalAgentCLI "
+            "switched to fallback@v1."
+        )
+        assert manager.consume_default_target_warning() == ""
+
 
 class TestSessionManagerSaveLoad:
     """Tests for saving and loading sessions."""

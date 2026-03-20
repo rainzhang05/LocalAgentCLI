@@ -11,7 +11,7 @@ from rich.text import Text
 
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
-from localagentcli.models.registry import ModelEntry
+from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.shell.prompt import (
     ACTION_PROMPT_TOOLBAR,
     COMMAND_MENU_HEIGHT,
@@ -648,6 +648,35 @@ class TestShellUIRun:
             mock_dispatch.return_value = CommandResult.ok("Setup complete.")
             ui._run_first_time_setup()
             mock_dispatch.assert_called_with("setup")
+
+    def test_run_renders_default_target_repair_warning_on_startup(
+        self, config, storage, tmp_path: Path
+    ):
+        config.set("provider.active_provider", "")
+        config.set("model.active_model", "missing@v1")
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        ModelRegistry(storage.registry_path).register(
+            ModelEntry(
+                name="fallback",
+                version="v1",
+                format="gguf",
+                path=str(model_dir),
+            )
+        )
+
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._stream_renderer = MagicMock()
+        ui._prompt_session = MagicMock()
+        ui._prompt_session.prompt.side_effect = ["/exit"]
+
+        ui.run()
+
+        ui._stream_renderer.render_warning.assert_any_call(
+            "Default target repaired: missing@v1 was unavailable, so LocalAgentCLI "
+            "switched to fallback@v1."
+        )
 
 
 class TestShellUIModelResolution:

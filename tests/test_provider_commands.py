@@ -16,7 +16,7 @@ from localagentcli.commands.providers import (
     ProvidersUseHandler,
 )
 from localagentcli.config.manager import ConfigManager
-from localagentcli.providers.base import ConnectionTestResult
+from localagentcli.providers.base import ConnectionTestResult, RemoteModelInfo
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import (
     ProviderEntry,
@@ -95,7 +95,39 @@ class TestProvidersList:
         result = handler.execute([])
         assert result.success is True
         assert "openai" in result.message
-        assert "openai" in result.message
+        assert "model unselected" in result.message
+
+    def test_list_shows_selected_model_readiness(
+        self,
+        registry: ProviderRegistry,
+        config: ConfigManager,
+        session_manager: SessionManager,
+    ):
+        _add_openai(registry)
+        session_manager.current.provider = "openai"
+        session_manager.current.model = "gpt-4o"
+        handler = ProvidersListHandler(registry, session_manager, config)
+        mock_provider = MagicMock()
+        mock_provider.list_models.return_value = [
+            RemoteModelInfo(
+                id="gpt-4o",
+                name="GPT-4o",
+                capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+                capability_provenance={
+                    "tool_use": {"tier": "inferred", "reason": "Provider semantics."},
+                    "reasoning": {"tier": "inferred", "reason": "Provider semantics."},
+                    "streaming": {"tier": "inferred", "reason": "Provider semantics."},
+                },
+                selection_state="api_discovered",
+            )
+        ]
+
+        with patch.object(registry, "create_provider", return_value=mock_provider):
+            result = handler.execute([])
+
+        assert result.success is True
+        assert "gpt-4o" in result.message
+        assert "api discovered" in result.message
 
     def test_list_shows_active_marker(self, registry: ProviderRegistry):
         _add_openai(registry)
@@ -268,6 +300,31 @@ class TestProvidersUse:
         assert result.success is True
         assert session_manager.current.provider == "openai"
         assert session_manager.current.model == "gpt-4o"
+        assert "auto-selected" in result.message
+
+    def test_use_legacy_fallback_message(
+        self,
+        registry: ProviderRegistry,
+        session_manager: SessionManager,
+    ):
+        _add_openai(registry)
+        handler = ProvidersUseHandler(registry, session_manager)
+        mock_provider = MagicMock()
+        mock_provider.list_models.return_value = [
+            RemoteModelInfo(
+                id="gpt-4o",
+                name="GPT-4o",
+                capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+                capability_provenance={},
+                selection_state="legacy_fallback",
+            )
+        ]
+
+        with patch.object(registry, "create_provider", return_value=mock_provider):
+            result = handler.execute(["openai"])
+
+        assert result.success is True
+        assert "legacy fallback model: gpt-4o" in result.message
 
     def test_use_no_name(
         self,
@@ -309,15 +366,66 @@ class TestProvidersTest:
         session_manager: SessionManager,
     ):
         _add_openai(registry)
+        session_manager.current.provider = "openai"
+        session_manager.current.model = "gpt-4o"
         handler = ProvidersTestHandler(registry, session_manager)
         mock_provider = MagicMock()
         mock_provider.test_connection.return_value = ConnectionTestResult(
             success=True, message="Connected.", latency_ms=50.0
         )
+        mock_provider.list_models.return_value = [
+            RemoteModelInfo(
+                id="gpt-4o",
+                name="GPT-4o",
+                capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+                capability_provenance={
+                    "tool_use": {"tier": "inferred", "reason": "Provider semantics."},
+                    "reasoning": {"tier": "inferred", "reason": "Provider semantics."},
+                    "streaming": {"tier": "inferred", "reason": "Provider semantics."},
+                },
+                selection_state="api_discovered",
+            )
+        ]
         with patch.object(registry, "create_provider", return_value=mock_provider):
             result = handler.execute(["openai"])
         assert result.success is True
         assert "50ms" in result.message
+        assert "Model discovery: api discovered (1 model(s))." in result.body
+        assert "Current target: gpt-4o [api discovered]." in result.body
+
+    def test_test_reports_legacy_fallback(
+        self,
+        registry: ProviderRegistry,
+        session_manager: SessionManager,
+    ):
+        _add_openai(registry)
+        session_manager.current.provider = "openai"
+        session_manager.current.model = "gpt-4o"
+        handler = ProvidersTestHandler(registry, session_manager)
+        mock_provider = MagicMock()
+        mock_provider.test_connection.return_value = ConnectionTestResult(
+            success=True, message="Connected.", latency_ms=20.0
+        )
+        mock_provider.list_models.return_value = [
+            RemoteModelInfo(
+                id="gpt-4o",
+                name="GPT-4o",
+                capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+                capability_provenance={
+                    "tool_use": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                    "reasoning": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                    "streaming": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                },
+                selection_state="legacy_fallback",
+            )
+        ]
+
+        with patch.object(registry, "create_provider", return_value=mock_provider):
+            result = handler.execute(["openai"])
+
+        assert result.success is True
+        assert "legacy fallback" in result.body
+        assert "Run /providers test and /set to refresh live discovery." in result.body
 
     def test_test_failure(
         self,

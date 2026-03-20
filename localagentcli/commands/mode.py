@@ -29,7 +29,9 @@ class ModeParentHandler(CommandHandler):
     """Parent handler that shows subcommand help."""
 
     def execute(self, args: list[str]) -> CommandResult:
-        return CommandResult.error("/mode requires a subcommand: chat, agent")
+        return CommandResult.error(
+            "/mode requires a subcommand: chat, agent. Use /help mode for details."
+        )
 
     def describe(self) -> CommandSpec:
         return CommandSpec(

@@ -177,7 +177,8 @@ class SetHandler(CommandHandler):
                 pass
         if not model_options:
             return CommandResult.error(
-                f"No models available from provider '{entry.name}'. Check /providers test."
+                f"No models available from provider '{entry.name}'. "
+                "Run /providers test to refresh discovery."
             )
 
         model_selection = self._selector(
@@ -202,7 +203,14 @@ class SetHandler(CommandHandler):
             f"(model: {model_selection.value}"
             f"{', ' + state if state else ''})."
         )
-        return CommandResult.ok(message, presentation="success")
+        body = None
+        if state == "legacy fallback":
+            body = (
+                "This model comes from provider fallback metadata. "
+                "Run /providers test to refresh discovery, then use /set to choose an "
+                "API-discovered model."
+            )
+        return CommandResult.ok(message, presentation="success", body=body)
 
     def _persist_target(self, provider_name: str, model_name: str) -> None:
         """Persist the selected target as the CLI default."""

@@ -85,16 +85,27 @@ def format_status_report(snapshot: StatusSnapshot) -> str:
         f"  Approval:      {snapshot.approval_mode}",
         f"  Messages:      {snapshot.message_count}",
     ]
-    if snapshot.agent_route:
-        lines.append(f"  Agent route:   {_humanize_route(snapshot.agent_route)}")
-    if snapshot.agent_phase:
-        lines.append(f"  Agent phase:   {_humanize_phase(snapshot.agent_phase)}")
-    if snapshot.agent_step:
-        lines.append(f"  Agent step:    {snapshot.agent_step}")
-    if snapshot.agent_pending_tool:
-        lines.append(f"  Pending tool:  {snapshot.agent_pending_tool}")
-    if snapshot.rollback_count:
+    if snapshot.mode == "agent":
+        route = _humanize_route(snapshot.agent_route) if snapshot.agent_route else "idle"
+        phase = _humanize_phase(snapshot.agent_phase) if snapshot.agent_phase else "idle"
+        step = snapshot.agent_step or "(none)"
+        pending_tool = snapshot.agent_pending_tool or "(none)"
+        lines.append(f"  Agent route:   {route}")
+        lines.append(f"  Agent phase:   {phase}")
+        lines.append(f"  Agent step:    {step}")
+        lines.append(f"  Pending tool:  {pending_tool}")
         lines.append(f"  Undo ready:    {snapshot.rollback_count} change(s)")
+    else:
+        if snapshot.agent_route:
+            lines.append(f"  Agent route:   {_humanize_route(snapshot.agent_route)}")
+        if snapshot.agent_phase:
+            lines.append(f"  Agent phase:   {_humanize_phase(snapshot.agent_phase)}")
+        if snapshot.agent_step:
+            lines.append(f"  Agent step:    {snapshot.agent_step}")
+        if snapshot.agent_pending_tool:
+            lines.append(f"  Pending tool:  {snapshot.agent_pending_tool}")
+        if snapshot.rollback_count:
+            lines.append(f"  Undo ready:    {snapshot.rollback_count} change(s)")
     return "\n".join(lines)
 
 
@@ -215,7 +226,7 @@ def _humanize_phase(phase: str) -> str:
 
 def _agent_toolbar_label(snapshot: StatusSnapshot) -> str:
     if not snapshot.agent_route and not snapshot.agent_phase:
-        return ""
+        return "idle" if snapshot.mode == "agent" else ""
 
     parts: list[str] = []
     if snapshot.agent_route:

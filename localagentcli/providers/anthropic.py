@@ -15,6 +15,10 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.readiness import (
+    inferred_remote_capability_provenance,
+    legacy_fallback_capability_provenance,
+)
 from localagentcli.providers.base import (
     ConnectionTestResult,
     RemoteModelInfo,
@@ -192,11 +196,17 @@ class AnthropicProvider(RemoteProvider):
                 model_id = model_data.get("id", "")
                 if not model_id:
                     continue
+                capabilities = self._capabilities_for_model(model_id)
                 models.append(
                     RemoteModelInfo(
                         id=model_id,
                         name=model_data.get("display_name") or model_data.get("name") or model_id,
-                        capabilities=self._capabilities_for_model(model_id),
+                        capabilities=capabilities,
+                        capability_provenance=inferred_remote_capability_provenance(
+                            capabilities,
+                            provider_label="Anthropic",
+                        ),
+                        selection_state="api_discovered",
                     )
                 )
             if models:
@@ -204,11 +214,14 @@ class AnthropicProvider(RemoteProvider):
         except Exception:
             logger.debug("Failed to list models from %s", self._name)
         if self._default_model:
+            capabilities = self._capabilities_for_model(self._default_model)
             return [
                 RemoteModelInfo(
                     id=self._default_model,
                     name=self._default_model,
-                    capabilities=self._capabilities_for_model(self._default_model),
+                    capabilities=capabilities,
+                    capability_provenance=legacy_fallback_capability_provenance(capabilities),
+                    selection_state="legacy_fallback",
                 )
             ]
         return []

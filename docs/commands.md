@@ -292,7 +292,15 @@ class CommandRouter:
             return self._commands[subcommand_name].execute(parts[2:])
         if command_name in self._commands:
             return self._commands[command_name].execute(parts[1:])
-        return CommandResult.error(f"Unknown command: /{command_name}")
+        suggestion = self._suggest_command(command_name)
+        if suggestion:
+          return CommandResult.error(
+            f"Unknown command: /{command_name}. Did you mean /{suggestion}? "
+            "Use /help to see all commands."
+          )
+        return CommandResult.error(
+          f"Unknown command: /{command_name}. Use /help to see all commands."
+        )
 ```
 
 ### CommandHandler ABC

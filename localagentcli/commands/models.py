@@ -16,6 +16,12 @@ from localagentcli.models.hf_catalog import (
     HuggingFaceCatalog,
 )
 from localagentcli.models.installer import ModelInstaller, _fmt_size
+from localagentcli.models.readiness import (
+    build_target_readiness,
+    default_local_capability_provenance,
+    format_capability_brief,
+    format_capability_line,
+)
 from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import SelectionOption, select_option, supports_interactive_prompt
@@ -215,13 +221,20 @@ class ModelsListHandler(CommandHandler):
             )
 
         lines = ["Installed models:", ""]
-        lines.append(f"  {'Name':<25s} {'Version':<10s} {'Format':<12s} {'Size':<12s} {'Backend'}")
-        lines.append(f"  {'─' * 25} {'─' * 10} {'─' * 12} {'─' * 12} {'─' * 12}")
+        lines.append(
+            f"  {'Name':<25s} {'Version':<10s} {'Format':<12s} {'Size':<12s} "
+            f"{'Backend':<12s} Readiness"
+        )
+        lines.append(f"  {'─' * 25} {'─' * 10} {'─' * 12} {'─' * 12} {'─' * 12} {'─' * 18}")
         for entry in entries:
             backend = entry.metadata.get("backend", entry.format)
+            readiness = _local_model_readiness(entry)
+            tool_use = readiness.capabilities["tool_use"]
+            readiness_label = f"agent {'yes' if tool_use.supported else 'no'} [{tool_use.tier}]"
             lines.append(
                 f"  {entry.name:<25s} {entry.version:<10s} "
-                f"{entry.format:<12s} {_fmt_size(entry.size_bytes):<12s} {backend}"
+                f"{entry.format:<12s} {_fmt_size(entry.size_bytes):<12s} "
+                f"{backend:<12s} {readiness_label}"
             )
         return CommandResult.ok("\n".join(lines))
 
@@ -472,9 +485,14 @@ class ModelsInspectHandler(CommandHandler):
         lines.append(f"  Format:       {entry.format}")
         lines.append(f"  Path:         {entry.path}")
         lines.append(f"  Size:         {_fmt_size(entry.size_bytes)}")
-        lines.append(f"  Tool use:     {entry.capabilities.get('tool_use', False)}")
-        lines.append(f"  Reasoning:    {entry.capabilities.get('reasoning', False)}")
-        lines.append(f"  Streaming:    {entry.capabilities.get('streaming', True)}")
+        readiness = _local_model_readiness(entry)
+        lines.append(f"  {format_capability_line('Tool use', readiness.capabilities['tool_use'])}")
+        lines.append(
+            "  " + format_capability_line("Reasoning", readiness.capabilities["reasoning"])
+        )
+        lines.append(
+            "  " + format_capability_line("Streaming", readiness.capabilities["streaming"])
+        )
 
         if entry.metadata:
             lines.append("")
@@ -557,11 +575,16 @@ def build_model_selection_options(registry: ModelRegistry) -> list[SelectionOpti
     for entry in registry.list_models():
         label = f"{entry.name}@{entry.version}"
         repo = str(entry.metadata.get("repo", ""))
+        readiness = _local_model_readiness(entry)
         options.append(
             SelectionOption(
                 value=label,
                 label=label,
-                description=f"{entry.format} • {_fmt_size(entry.size_bytes)}",
+                description=(
+                    f"{entry.format} • {_fmt_size(entry.size_bytes)} • "
+                    f"{format_capability_brief('tools', readiness.capabilities['tool_use'])} • "
+                    f"{format_capability_brief('reasoning', readiness.capabilities['reasoning'])}"
+                ),
                 aliases=(entry.name, entry.version, repo),
             )
         )
@@ -579,6 +602,18 @@ def _select_installed_model_option(
     if not options:
         return None
     return select_option(message, options, default=default)
+
+
+def _local_model_readiness(entry: ModelEntry):
+    """Build readiness details for one installed local model."""
+    return build_target_readiness(
+        kind="local",
+        selection_state="local",
+        capabilities=entry.capabilities,
+        capability_provenance=entry.capability_provenance,
+        default_builder=default_local_capability_provenance,
+        guidance="Local models can chat immediately, but agent mode still requires tool support.",
+    )
 
 
 def _backend_options() -> list[SelectionOption]:

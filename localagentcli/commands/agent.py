@@ -16,7 +16,10 @@ class AgentParentHandler(CommandHandler):
     """Parent handler that shows subcommand help."""
 
     def execute(self, args: list[str]) -> CommandResult:
-        return CommandResult.error("/agent requires a subcommand: approve, deny, undo, undo-all")
+        return CommandResult.error(
+            "/agent requires a subcommand: approve, deny, undo, undo-all. "
+            "Use /help agent for details."
+        )
 
     def describe(self) -> CommandSpec:
         return CommandSpec(

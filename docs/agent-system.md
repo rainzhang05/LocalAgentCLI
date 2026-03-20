@@ -79,6 +79,8 @@ In agent mode, user input first goes through an internal triage pass that uses t
 2. **`single_step_task`**: one concrete action gets a single synthesized step and executes without a separate planner round-trip
 3. **`multi_step_task`**: complex or staged work uses the planner and full iterative agent loop
 
+The selected route is surfaced immediately in the shell activity stream and persisted in session metadata so the prompt toolbar and `/status` can describe the current or last task without re-parsing history.
+
 The loop continues until the task is complete, fails, or the user intervenes.
 
 ### Core Principles
@@ -88,6 +90,23 @@ The loop continues until the task is complete, fails, or the user intervenes.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
+6. **Task-state visibility**: Agent route, phase, current step, pending approval, approval mode, and rollback availability are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
+
+### Runtime Phase Contract
+
+Planned agent work carries one visible phase at a time. The current phase is rendered in the activity stream and persisted with the task snapshot.
+
+| Phase | Meaning |
+|---|---|
+| `planning` | The controller is triaging or building the initial task plan |
+| `executing` | The agent is actively running or streaming the next step |
+| `waiting_approval` | A tool call is paused for explicit approval |
+| `replanning` | The planner is revising the remaining plan after a denial or repeated failure |
+| `recovering` | The loop is handling a blocked, denied, cancelled, or failed tool result before continuing |
+| `stopped` | The task ended because the user explicitly stopped it |
+| `timed_out` | The task ended because the inactivity timeout fired |
+| `completed` | The task finished successfully |
+| `failed` | The task exhausted recovery and terminated unsuccessfully |
 
 ### Agent Loop
 
@@ -123,12 +142,14 @@ The loop continues until the task is complete, fails, or the user intervenes.
 - The agent receives the user's input text
 - It builds the effective model context from pinned instructions, repository instructions, compacted history, and recent turns
 - It classifies the request as `direct_answer`, `single_step_task`, or `multi_step_task`
+- The chosen route is recorded in session metadata before execution begins so the shell can surface it immediately
 - It examines the current workspace state only when the resulting task path requires it
 
 #### 2. Generate Plan
 - `single_step_task`: the controller synthesizes one executable step locally and begins execution immediately
 - `multi_step_task`: the planner generates the minimum number of structured steps needed for the task
 - Each step describes the action, the tool(s) to use, and the expected outcome
+- The visible phase moves from `planning` to `executing` once the plan is ready
 - The plan is displayed before or as execution begins
 - There is no separate plan-review pause; only tool approvals can pause execution
 - Before an approval prompt is shown, the renderer flushes any pending secondary detail so reasoning and warnings do not appear mid-prompt
@@ -137,6 +158,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 - The agent selects the next step from the plan
 - It constructs the tool call(s) needed for the step
 - Tool calls are routed through the Safety Layer for approval
+- If approval is required, the visible phase becomes `waiting_approval` until the user approves, denies, or cancels the prompt
 - The tool executes and returns a `ToolResult`
 - Multiple tools may be batched in a single step if they are independent
 
@@ -144,6 +166,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 - The agent examines the tool output
 - It checks for errors or unexpected results
 - The observation is displayed inline in the activity log
+- Successful modifying actions update rollback history immediately, and the shell surfaces a concise undo affordance once that history exists
 
 #### 5. Update Plan
 - Based on the observation, the agent may:
@@ -152,6 +175,8 @@ The loop continues until the task is complete, fails, or the user intervenes.
   - Add new steps
   - Retry the current step (with modifications)
   - Abort the task (with explanation)
+- Recovery after denials, blocked actions, cancelled tools, and timeouts is surfaced as `recovering`
+- Revisions to the remaining plan are surfaced as `replanning`
 - Plan updates are displayed to the user
 
 ### Agent Capabilities
@@ -164,6 +189,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 | No fixed step limit | There is no hard limit on the number of steps. System safeguards (timeout, user interrupt) apply instead |
 | Subtask decomposition | Complex steps are broken into smaller sub-steps |
 | Direct-answer fast path | Simple prompts in agent mode can bypass planning entirely while still using full session context |
+| Task-state persistence | Route, phase, step, pending tool, approval mode, and rollback count are persisted for the toolbar and `/status` |
 
 ### AgentController
 
@@ -191,23 +217,27 @@ class AgentController:
         """Compatibility wrapper for planned execution paths.
 
         Yields AgentEvent objects for the UI to render:
+        - TaskRouted: triage route selected
+        - PhaseChanged: high-level state transition
         - PlanGenerated: initial plan
         - StepStarted: beginning a step
         - ToolCallRequested: tool call pending approval
         - ToolCallResult: tool output
         - PlanUpdated: plan was modified
         - TaskComplete: task finished
+        - TaskStopped: task stopped by user or cancelled prompt
+        - TaskTimedOut: inactivity timeout fired
         - TaskFailed: task could not be completed
         """
 
     def stop(self) -> None:
-        """Stop the running agent loop. Preserves current state."""
+        """Stop the running agent loop and record a non-failure stop state."""
 
     def approve_action(self) -> None:
         """Approve the pending tool call."""
 
     def deny_action(self) -> None:
-        """Deny the pending tool call. Agent re-plans."""
+        """Deny the pending tool call. Agent enters recovery and may re-plan."""
 ```
 
 ### AgentLoop
@@ -250,7 +280,7 @@ class PlanStep:
 class TaskPlan:
     task: str
     steps: list[PlanStep]
-    status: str  # "planning", "executing", "completed", "failed"
+    status: str  # "planning", "executing", "completed", "failed", "stopped", "timed_out"
 
     def next_step(self) -> PlanStep | None:
         """Return the next pending step, or None if all are done."""
@@ -276,6 +306,16 @@ The agent loop communicates with the Shell UI via `AgentEvent` objects:
 class AgentEvent:
     type: str  # Event type identifier
 
+class TaskRouted(AgentEvent):
+    route: str  # "direct_answer" | "single_step_task" | "multi_step_task"
+    reason: str
+
+class PhaseChanged(AgentEvent):
+    phase: str
+    summary: str
+    step_index: int | None
+    step_description: str | None
+
 class PlanGenerated(AgentEvent):
     plan: TaskPlan
 
@@ -286,10 +326,13 @@ class ToolCallRequested(AgentEvent):
     tool_name: str
     arguments: dict
     requires_approval: bool
+    risk_reason: str | None
+    rollback_summary: str | None
 
 class ToolCallResult(AgentEvent):
     tool_name: str
     result: ToolResult
+    rollback_entries: int
 
 class ReasoningOutput(AgentEvent):
     text: str
@@ -302,19 +345,29 @@ class TaskComplete(AgentEvent):
     summary: str
     plan: TaskPlan
 
+class TaskStopped(AgentEvent):
+    reason: str
+    plan: TaskPlan | None
+
+class TaskTimedOut(AgentEvent):
+    reason: str
+    plan: TaskPlan
+
 class TaskFailed(AgentEvent):
     reason: str
     plan: TaskPlan
 ```
 
 Rendering rules:
-- `PlanGenerated`, `PlanUpdated`, `StepStarted`, and `ToolCallResult` use the shared status/activity grammar in the shell renderer
+- `TaskRouted`, `PhaseChanged`, `PlanGenerated`, `PlanUpdated`, `StepStarted`, and `ToolCallResult` use the shared status/activity grammar in the shell renderer
 - `ReasoningOutput` is treated as secondary detail and flows into the dimmed `Details` lane instead of a dedicated reasoning panel
-- `ToolCallRequested` renders a concise inline summary in the primary lane, while supporting warnings are shown through the quieter `Details` lane before approval is requested
+- `ToolCallRequested` renders a concise inline summary in the primary lane, while risk reasons, rollback availability, and supporting warnings are shown through the quieter `Details` lane before approval is requested
+- Successful file-modifying `ToolCallResult` events can surface `Undo available: N change(s). Use /agent undo.` without interrupting the main flow
 - `TaskComplete` renders a quiet success line followed by the final summary body
-- `TaskFailed` renders a failure line without changing the persisted task/session semantics
+- `TaskStopped` and `TaskTimedOut` render warning-style non-failure outcomes
+- `TaskFailed` renders a failure line
 
-Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They stream normalized `StreamChunk` events directly and are persisted in session history with metadata marking the response as `agent_task="direct_answer"` and `fast_path=True`.
+Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They stream normalized `StreamChunk` events directly, but the controller still records route and phase in `agent_task_state` before streaming starts and persists the final response with metadata marking `agent_task="direct_answer"` and `fast_path=True`.
 
 ---
 
@@ -339,6 +392,6 @@ Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They 
 Even though there is no fixed step limit, the system protects against runaway agents:
 
 1. **User interrupt (Ctrl+C)**: Immediately stops the current task and returns control to the prompt.
-2. **Inactivity timeout**: If the agent has not made progress for a configurable duration, the task fails with a clear notification.
+2. **Inactivity timeout**: If the agent has not made progress for a configurable duration, the task ends with `TaskTimedOut` and a clear warning.
 3. **Resource limits**: If a single tool call exceeds resource limits (e.g., shell command timeout), it is killed and the agent is notified.
-4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it replans once around the failure and eventually terminates with `TaskFailed` if progress still cannot be made.
+4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it enters recovery, replans once around the failure, and eventually terminates with `TaskFailed` if progress still cannot be made.

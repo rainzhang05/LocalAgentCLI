@@ -8,12 +8,16 @@ from unittest.mock import MagicMock
 from rich.panel import Panel
 
 from localagentcli.agents.events import (
+    PhaseChanged,
     PlanGenerated,
     PlanUpdated,
     ReasoningOutput,
     StepStarted,
     TaskComplete,
     TaskFailed,
+    TaskRouted,
+    TaskStopped,
+    TaskTimedOut,
     ToolCallRequested,
     ToolCallResult,
 )
@@ -207,6 +211,24 @@ class TestStreamRendererActivity:
 
 
 class TestStreamRendererAgentEvents:
+    def test_task_routed_renders_status(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_agent_event(TaskRouted(route="multi_step_task", reason="complex"))
+
+        assert "Agent route: multi-step task." in console.print.call_args.args[0]
+
+    def test_phase_changed_renders_status(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_agent_event(
+            PhaseChanged(phase="replanning", summary="Replanning after failures.")
+        )
+
+        assert "Replanning after failures." in console.print.call_args.args[0]
+
     def test_plan_generated_renders_panel(self):
         console = MagicMock()
         renderer = StreamRenderer(console)
@@ -266,6 +288,21 @@ class TestStreamRendererAgentEvents:
 
         assert "Tool failed" in console.print.call_args.args[0]
 
+    def test_tool_result_renders_undo_affordance_for_file_changes(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        result = ToolResult.success("Patched app.py", files_changed=["app.py"])
+
+        renderer.render_agent_event(
+            ToolCallResult(tool_name="patch_apply", result=result, rollback_entries=2)
+        )
+
+        assert "Patched app.py" in console.print.call_args_list[0].args[0]
+        assert (
+            "Undo available: 2 change(s). Use /agent undo."
+            in console.print.call_args_list[1].args[0]
+        )
+
     def test_reasoning_output_uses_details_lane(self):
         console = MagicMock()
         renderer = StreamRenderer(console)
@@ -296,6 +333,25 @@ class TestStreamRendererAgentEvents:
         renderer.render_agent_event(TaskFailed(reason="bad news", plan=plan))
 
         assert "bad news" in console.print.call_args.args[0]
+
+    def test_task_stopped_renders_warning(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_agent_event(TaskStopped(reason="Task stopped by user."))
+
+        assert "Task stopped by user." in console.print.call_args.args[0]
+
+    def test_task_timed_out_renders_warning(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        plan = TaskPlan(task="task")
+
+        renderer.render_agent_event(
+            TaskTimedOut(reason="Agent task timed out due to inactivity.", plan=plan)
+        )
+
+        assert "timed out due to inactivity" in console.print.call_args.args[0]
 
     def test_tool_summary_limits_output(self):
         renderer = StreamRenderer(MagicMock())

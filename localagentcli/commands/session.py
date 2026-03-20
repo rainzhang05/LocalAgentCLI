@@ -142,7 +142,10 @@ class SessionParentHandler(CommandHandler):
     """Parent handler that shows subcommand help."""
 
     def execute(self, args: list[str]) -> CommandResult:
-        return CommandResult.error("/session requires a subcommand: new, save, load, list, clear")
+        return CommandResult.error(
+            "/session requires a subcommand: new, save, load, list, clear. "
+            "Use /help session for details."
+        )
 
     def describe(self) -> CommandSpec:
         return CommandSpec(

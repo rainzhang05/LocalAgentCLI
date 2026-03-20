@@ -92,4 +92,5 @@ This file defines mandatory rules for AI agents (Claude, Codex, Copilot, or any 
 - **The docs are the spec.** If it's not in the docs, don't build it.
 - **No guessing.** If the docs are ambiguous, ask for clarification rather than making assumptions.
 - **Consistency over cleverness.** Follow existing patterns even if you think of a "better" way.
+- **Keep repo docs product-local.** Do not write external workspace-phase or reference-provenance notes into LocalAgentCLI-owned docs.
 - **Update docs/current-state.md.** This is non-negotiable. Every implementation session ends with an updated current-state.md.

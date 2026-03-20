@@ -57,7 +57,7 @@ After implementing a component:
 | `[x]` | `/providers remove` command | 2026-03-18 |
 | `[x]` | `/providers use` command | 2026-03-19 — retained as a hidden compatibility alias behind `/set`, now explicitly states whether it auto-bound a live-discovered model or only a legacy fallback |
 | `[x]` | `/set` target-selection command | 2026-03-19 — unified picker for local models and provider models, with provider model selection starting empty instead of prefilled and picker descriptions now surfacing readiness tiers and discovery state; legacy-fallback provider selections now add explicit post-selection guidance to refresh discovery and pick an API-discovered model |
-| `[x]` | `/providers test` command | 2026-03-19 — now reports both connectivity and whether model discovery succeeded live or fell back to legacy provider defaults, with standardized fallback guidance phrasing and clearer provider-creation failure context |
+| `[x]` | `/providers test` command | 2026-03-19 — now reports both connectivity and whether model discovery succeeded live or fell back to legacy provider defaults, with standardized fallback guidance phrasing and clearer provider-creation failure context; `/providers` parent-command errors now include explicit `/help providers` recovery guidance |
 | `[x]` | SSE streaming support | 2026-03-19 — normalized chunk pipeline now preserves final text, reasoning, tool calls, notifications, errors, and done events consistently across providers |
 | `[x]` | Model abstraction layer | 2026-03-19 — `generate()` now collects the same normalized stream pipeline used by `stream_generate()` |
 
@@ -96,7 +96,7 @@ After implementing a component:
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |
 | `[x]` | `/mode chat` command | 2026-03-19 — mode changes now use shared success/warning presentation for normal switches and cancelled stop-confirmation paths |
-| `[x]` | `/mode agent` command | 2026-03-19 — mode switching implemented in Phase 4, now activates the Phase 5 agent workflow, uses shared success/status presentation for readiness guidance, and rejects untrusted remote fallback states explicitly |
+| `[x]` | `/mode agent` command | 2026-03-19 — mode switching implemented in Phase 4, now activates the Phase 5 agent workflow, uses shared success/status presentation for readiness guidance, rejects untrusted remote fallback states explicitly, and returns parent-command subcommand errors with explicit `/help mode` recovery guidance |
 | `[x]` | Status header display | 2026-03-19 — replaced by a persistent prompt-time status toolbar showing mode, active target, workspace, and a short hint; `/status` uses the same snapshot data in expanded form |
 | `[x]` | Input history (up/down arrows) | 2026-03-18 — prompt history is session-backed and persisted via session metadata |
 | `[x]` | Tab completion for commands | 2026-03-18 — live slash-command menu, typed filtering, arrow-key navigation, and Tab acceptance via prompt-toolkit |

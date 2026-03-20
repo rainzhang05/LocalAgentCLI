@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from difflib import get_close_matches
 from typing import Literal
 
 CommandPresentation = Literal["plain", "status", "success", "warning", "error"]
@@ -115,7 +116,7 @@ class CommandRouter:
         """
         parts = input_line.strip().split()
         if not parts:
-            return CommandResult.error("Empty command.")
+            return CommandResult.error("Command is empty. Use /help to see available commands.")
 
         command_name = parts[0]
 
@@ -133,9 +134,29 @@ class CommandRouter:
         subcommands = [name for name in self._commands if name.startswith(f"{command_name} ")]
         if subcommands:
             subs = ", ".join(name.split(" ", 1)[1] for name in sorted(subcommands))
-            return CommandResult.error(f"/{command_name} requires a subcommand: {subs}")
+            return CommandResult.error(
+                f"/{command_name} requires a subcommand: {subs}. "
+                f"Use /help {command_name} for details."
+            )
 
-        return CommandResult.error(f"Unknown command: /{command_name}")
+        suggestion = self._suggest_command(command_name)
+        if suggestion:
+            return CommandResult.error(
+                f"Unknown command: /{command_name}. Did you mean /{suggestion}? "
+                "Use /help to see all commands."
+            )
+        return CommandResult.error(
+            f"Unknown command: /{command_name}. Use /help to see all commands."
+        )
+
+    def _suggest_command(self, command_name: str) -> str | None:
+        """Return the closest command name for user-facing suggestions."""
+        roots = sorted({name.split(" ", 1)[0] for name in self._commands})
+        root_match = get_close_matches(command_name, roots, n=1, cutoff=0.6)
+        if root_match:
+            return root_match[0]
+        full_matches = get_close_matches(command_name, sorted(self._commands), n=1, cutoff=0.7)
+        return full_matches[0] if full_matches else None
 
     def get_commands(self) -> dict[str, CommandHandler]:
         """Return the command registry."""

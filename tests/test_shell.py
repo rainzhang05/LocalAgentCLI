@@ -872,8 +872,27 @@ class TestShellUIHelpers:
 
         preview = ui._format_tool_preview(event)
 
+        assert "Action: patch existing file" in preview
         assert "Replace" in preview
         assert "With" in preview
+
+    def test_format_tool_preview_for_patch_apply_truncates_large_blocks(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        event = ToolCallRequested(
+            tool_name="patch_apply",
+            arguments={
+                "path": "file.py",
+                "old_text": "a" * 700,
+                "new_text": "b" * 700,
+            },
+            requires_approval=True,
+        )
+
+        preview = ui._format_tool_preview(event)
+
+        assert "Replace (truncated):" in preview
+        assert "With (truncated):" in preview
+        assert preview.endswith("...")
 
     def test_format_tool_preview_truncates_file_write(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -885,6 +904,7 @@ class TestShellUIHelpers:
 
         preview = ui._format_tool_preview(event)
 
+        assert "Content preview (truncated):" in preview
         assert preview.endswith("...")
 
     def test_format_tool_preview_for_shell_execute_includes_command_and_cwd(
@@ -908,6 +928,32 @@ class TestShellUIHelpers:
         assert "pytest -q" in preview
         assert "Working directory: src" in preview
         assert "Rollback is not available" in preview
+
+    def test_format_tool_preview_for_shell_execute_truncates_long_command(
+        self,
+        config,
+        storage,
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        event = ToolCallRequested(
+            tool_name="shell_execute",
+            arguments={"command": "x" * 700, "working_dir": "src"},
+            requires_approval=True,
+        )
+
+        preview = ui._format_tool_preview(event)
+
+        assert "Command (truncated):" in preview
+        assert preview.split("Command (truncated):\n", 1)[1].startswith("x")
+        assert "Working directory: src" in preview
+
+    def test_truncate_preview_text_reports_truncation(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+
+        preview, truncated = ui._truncate_preview_text("a" * 20, limit=10)
+
+        assert truncated is True
+        assert preview == ("a" * 10) + "..."
 
     def test_format_tool_preview_for_git_commit_includes_message_and_files(self, config, storage):
         ui = ShellUI(config=config, storage=storage)

@@ -17,6 +17,7 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.models.backends.base import GenerationResult, StreamChunk
+from localagentcli.session.instructions import build_conversation_model_messages
 from localagentcli.session.state import Session
 from localagentcli.tools import create_default_tool_registry
 
@@ -226,7 +227,9 @@ class TestAgentController:
         assert controller._session.history[-1].metadata["fast_path"] is True
         assert controller.task_state["phase"] == "completed"
 
-    def test_build_context_messages_includes_workspace_agents_instruction(self, tmp_path: Path):
+    def test_build_conversation_model_messages_includes_workspace_agents_instruction(
+        self, tmp_path: Path
+    ):
         model = FakeAgentModel([GenerationResult(text='{"steps":[{"description":"noop"}]}')])
         session = _make_session(tmp_path)
         session.metadata["workspace_instruction"] = "Follow AGENTS.md exactly."
@@ -237,7 +240,7 @@ class TestAgentController:
             tool_registry=create_default_tool_registry(tmp_path),
         )
 
-        messages = controller._build_context_messages()
+        messages = build_conversation_model_messages(controller._session)
 
         assert messages[0].role == "system"
         assert "Follow AGENTS.md exactly." in messages[0].content

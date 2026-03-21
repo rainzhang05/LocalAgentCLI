@@ -22,6 +22,7 @@ class TestDefaultConfig:
         assert "generation" in DEFAULT_CONFIG
         assert "timeouts" in DEFAULT_CONFIG
         assert "providers" in DEFAULT_CONFIG
+        assert "sessions" in DEFAULT_CONFIG
 
     def test_default_mode_is_agent(self):
         assert DEFAULT_CONFIG["general"]["default_mode"] == "agent"
@@ -77,6 +78,23 @@ class TestValidateConfigValue:
         ok, msg = validate_config_value("generation.temperature", "notanumber")
         assert not ok
 
+    def test_valid_bool_sessions_autosave(self):
+        ok, msg = validate_config_value("sessions.autosave_named", True)
+        assert ok
+        assert msg == ""
+
+    def test_bool_coercion_from_string(self):
+        ok, msg = validate_config_value("sessions.autosave_named", "true")
+        assert ok
+
+    def test_sessions_debounce_positive(self):
+        ok, msg = validate_config_value("sessions.autosave_debounce_seconds", 3)
+        assert ok
+
+    def test_sessions_debounce_zero_invalid(self):
+        ok, msg = validate_config_value("sessions.autosave_debounce_seconds", 0)
+        assert not ok
+
     def test_unknown_key(self):
         ok, msg = validate_config_value("nonexistent.key", "value")
         assert not ok
@@ -122,3 +140,7 @@ class TestCoerceValue:
 
     def test_bad_coercion_returns_original(self):
         assert coerce_value("generation.temperature", "bad") == "bad"
+
+    def test_coerce_string_to_bool(self):
+        assert coerce_value("sessions.autosave_named", "true") is True
+        assert coerce_value("sessions.autosave_named", "false") is False

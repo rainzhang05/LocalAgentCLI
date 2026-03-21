@@ -110,6 +110,7 @@ Quicksort is a divide-and-conquer sorting algorithm...
 **Behavior:**
 - Secondary entries are shown by default in dim styling so they remain visible without competing with the final answer
 - The renderer prints pending detail before the first primary answer text, and flushes any later-arriving detail once at the next safe boundary such as task completion or an approval prompt
+- Neutral status lines (`render_status` / activity-style messages) may be batched across rapid agent events: queued secondary detail is emitted once per flush, then consecutive status lines print together (duplicate back-to-back lines collapse to one). A flush runs at boundaries such as success/warning/error lines, plan panels, tool-call rows, stream completion, approval prompts, and the end of each agent event pass from the shell
 - The on-screen panel is capped to a rolling window of recent secondary entries during active generation
 - Full normalized secondary events are still preserved in session metadata even when the on-screen view is capped
 

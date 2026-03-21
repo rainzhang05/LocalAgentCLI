@@ -365,6 +365,7 @@ class SessionExecutionRuntime:
         session = self._services.session_manager.current
         key = (
             session.id,
+            session.mode,
             session.workspace,
             session.provider,
             session.model,

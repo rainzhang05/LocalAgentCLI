@@ -189,6 +189,20 @@ class Message:
 - Restores mode, model, provider, workspace, history, and task state
 - If the referenced model is no longer installed, warns the user and clears the active model
 
+#### Fork
+
+Forking creates a new in-memory session from a saved JSON snapshot with a **new session id** while copying history, tasks, pinned instructions, and config overrides.
+
+- **CLI**: `localagentcli exec --fork <saved-name> ...` loads the forked session, runs the one-shot turn, then persists under the fork’s name (or `--save-session` when provided).
+- **Provenance** (stored on the forked session’s `metadata` and included when that session is saved):
+  - `fork_parent_name` — saved session name that was forked from
+  - `fork_parent_id` — UUID of the source session at fork time
+  - `forked_at` — ISO timestamp when the fork was created
+
+#### Headless `exec` session persistence
+
+For `localagentcli exec`, when a persistence target is in effect (`--session`, `--fork`, or `--save-session`), the current session is **written best-effort** to that name when the command exits, including after **Ctrl+C** (KeyboardInterrupt) or an error during the turn. If the final save fails (for example disk error), the error is swallowed so the process can still shut down; operators should verify the session file when durability matters.
+
 #### List
 
 - Command: `/session list`
@@ -332,6 +346,9 @@ class SessionManager:
 
     def load_session(self, name: str) -> Session:
         """Load a session from disk. Sets it as the current session."""
+
+    def fork_session(self, name: str, fork_name: str | None = None) -> Session:
+        """Fork a saved session: new id, optional name, fork lineage metadata."""
 
     def list_sessions(self) -> list[SessionSummary]:
         """List all saved sessions with summary info."""

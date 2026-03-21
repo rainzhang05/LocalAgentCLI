@@ -151,15 +151,12 @@ def _run_exec(
                 approval_policy=approval_policy,  # type: ignore[arg-type]
             )
         )
-        exit_code = _drain_exec_runtime_events(
+        return _drain_exec_runtime_events(
             runtime,
             output_console,
             error_console,
             json_mode=json_mode,
         )
-        if persisted_session_name:
-            services.session_manager.save_session(persisted_session_name)
-        return exit_code
     except KeyboardInterrupt:
         exit_code = 1
         for event in runtime.interrupt():
@@ -175,6 +172,11 @@ def _run_exec(
         _emit_exec_message(RuntimeMessage(kind="error", text=str(exc)), error_console)
         return 1
     finally:
+        if persisted_session_name:
+            try:
+                services.session_manager.save_session(persisted_session_name)
+            except Exception:
+                pass
         runtime.close()
 
 

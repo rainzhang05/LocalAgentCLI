@@ -177,12 +177,19 @@ localagentcli exec "Summarize the current repository status."
 ```
 
 **Behavior:**
-- Reuses the same runtime core that powers shell chat turns
+- Reuses the same submission/event runtime that powers shell turns
+- Supports both `--mode chat` and `--mode agent`
 - Streams the response immediately without starting the interactive prompt loop
 - Refreshes repository `AGENTS.md` instructions before the request, just like the shell
-- Keeps this first slice intentionally narrow: it is optimized for one chat-style turn rather than long-lived interactive agent workflows
-- Fails closed on flows that would require interactive approval, rather than silently widening autonomy
+- Supports `--json` for one runtime event per line on stdout
+- Supports `--session <name>` to resume a saved session and `--fork <name>` to branch from one before running
+- Supports `--approval-policy deny|auto` for headless approval handling
+- Fails closed by default on flows that would require interactive approval, rather than silently widening autonomy
 - Does not prompt to install optional backend dependencies; non-interactive callers must provision those up front
+
+**Output contract:**
+- In human mode, final assistant output is written to stdout while progress and warning messages stay on stderr
+- In JSON mode, runtime events are emitted as one JSON object per line on stdout
 
 ### Routing Rules
 

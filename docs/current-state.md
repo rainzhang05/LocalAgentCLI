@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-20 (Phase 5 consistency hardening completed: command/error recovery wording, fallback guidance, idle status layout stability, and approval preview truncation labels are now aligned across runtime, tests, and docs.)
+> **Last updated**: 2026-03-21 (Shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion refreshes are debounced during typing.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -26,7 +26,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-19 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and now exposes a persistent prompt-time status toolbar that can surface agent route/phase and undo availability alongside shared action/confirm prompts |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-21 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, debounces completion menu refreshes during typing when the toolkit app loop is available, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and exposes a persistent prompt-time status toolbar (local target label from registry metadata only, without repeated on-disk detection on each toolbar paint) that can surface agent route/phase and undo availability alongside shared action/confirm prompts |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations, and router-level unknown/invalid command errors now include consistent `/help` guidance plus close-match suggestions when available |
 | `[x]` | `/exit` command | 2026-03-17 |

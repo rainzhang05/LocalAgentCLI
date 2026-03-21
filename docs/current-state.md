@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Runtime-core extraction: shared `RuntimeServices` and `SessionExecutionRuntime`; `localagentcli exec` one-shot surface; shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
+> **Last updated**: 2026-03-21 (Submission/event runtime: `RuntimeServices`, `SessionExecutionRuntime`, `SessionRuntime`, append-only runtime event logs, dynamic tool routing, expanded `localagentcli exec` modes and saved-session resume/fork; shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -25,8 +25,8 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-21 — entry bootstrap now supports both the interactive shell and a one-shot `localagentcli exec` surface that reuses the shared runtime core instead of constructing a separate non-interactive stack |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-21 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, debounces completion menu refreshes during typing when the toolkit app loop is available, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, exposes a persistent prompt-time status toolbar (local target label from registry metadata only, without repeated on-disk detection on each toolbar paint) that can surface agent route/phase and undo availability alongside shared action/confirm prompts, and now delegates model/controller wiring through shared runtime services rather than owning the full execution composition itself |
+| `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-21 — entry bootstrap now supports the interactive shell plus a richer `localagentcli exec` surface with `chat`/`agent` modes, JSON event output, headless approval policy, and saved-session resume/fork flows, all reusing the shared runtime stack |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-21 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, debounces completion menu refreshes during typing when the toolkit app loop is available, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, exposes a persistent prompt-time status toolbar (local target label from registry metadata only, without repeated on-disk detection on each toolbar paint) that can surface agent route/phase and undo availability alongside shared action/confirm prompts, and now consumes the shared submission/event runtime rather than directly orchestrating turns itself |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations, and router-level unknown/invalid command errors now include consistent `/help` guidance plus close-match suggestions when available |
 | `[x]` | `/exit` command | 2026-03-17 |
@@ -36,7 +36,7 @@ After implementing a component:
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-17 |
 | `[x]` | Session state dataclass | 2026-03-17 |
-| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-19 — invalid startup default targets are now repaired to the next valid model/provider target with one explicit warning naming the old and replacement targets |
+| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — invalid startup default targets are repaired to the next valid model/provider target with one explicit warning naming the old and replacement targets, and headless exec can now resume or fork saved sessions before running a turn |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
 | `[x]` | Logger (file-based, leveled) | 2026-03-17 |
 
@@ -108,7 +108,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Tool base class (ABC) | 2026-03-18 |
-| `[x]` | Tool registry | 2026-03-18 |
+| `[x]` | Tool registry | 2026-03-21 — runtime now builds tool inventory through `ToolRouter`, which can merge built-in tools with callback-backed dynamic tool definitions without changing the agent loop contract |
 | `[x]` | `file_read` tool | 2026-03-18 |
 | `[x]` | `file_search` tool | 2026-03-18 |
 | `[x]` | `directory_list` tool | 2026-03-18 |
@@ -153,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-21 — 794 tests total across unit, component, integration, and CLI coverage, now including runtime-core, session-change lifecycle, and one-shot entrypoint regressions alongside readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 84.88% coverage |
+| `[x]` | Unit tests | 2026-03-21 — 799 tests total across unit, component, integration, and CLI coverage, now including submission/event runtime, saved-session exec resume/fork, append-only runtime event logging, dynamic tool-router coverage, session-change lifecycle, and one-shot entrypoint regressions alongside readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 83.74% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

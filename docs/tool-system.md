@@ -28,7 +28,7 @@ Every tool’s `parameters_schema` must follow a small JSON Schema subset checke
 
 ### Parallel read-only batches
 
-When the model returns **two or more** tool calls in one assistant turn, `AgentLoop` may run them concurrently **only if every call** in that batch is read-only (`Tool.is_read_only` is true), passes safety checks without requiring approval, and is not blocked. In that case the loop emits all `ToolCallRequested` events first (in model call order), then executes tools on a bounded thread pool, then emits `ToolCallResult` events and `role="tool"` messages in the same order. If any call in the batch is not eligible (for example a write tool, an unknown tool, a parse error, or a call that needs approval including high-risk reads), the **entire** batch is handled sequentially with the usual interleaved request, execute, and result flow.
+When the model returns **two or more** tool calls in one assistant turn, `AgentLoop` may run them concurrently **only if every call** in that batch is read-only (`Tool.is_read_only` is true), passes safety checks without requiring approval, and is not blocked. In that case the loop emits all `ToolCallRequested` events first (in model call order), then executes tools on a bounded thread pool (up to 16 workers per batch, independent of host CPU count so I/O-bound tools still overlap on single-CPU machines), then emits `ToolCallResult` events and `role="tool"` messages in the same order. If any call in the batch is not eligible (for example a write tool, an unknown tool, a parse error, or a call that needs approval including high-risk reads), the **entire** batch is handled sequentially with the usual interleaved request, execute, and result flow.
 
 ---
 

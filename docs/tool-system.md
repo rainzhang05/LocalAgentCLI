@@ -10,6 +10,12 @@ Tools are discrete operations that the agent can invoke during task execution. E
 
 All tool executions are routed through the Safety Layer before running.
 
+The runtime now builds turn-scoped tool inventory through `ToolRouter`, which
+can merge:
+- built-in Python tools
+- callback-backed dynamic tools
+- MCP-backed stdio tools discovered from configured `mcp_servers`
+
 ---
 
 ## Core Tools
@@ -132,7 +138,10 @@ class ToolResult:
 
 ## Tool Registration
 
-Tools are registered with a `ToolRegistry` at startup. The registry provides tool metadata to the model (for function calling) and dispatches tool calls to the correct implementation.
+Built-in tools are still registered through `ToolRegistry`, but runtime-facing
+surfaces now assemble the final per-turn inventory through `ToolRouter`. The
+router provides tool metadata to the model and dispatches tool calls to the
+correct built-in, dynamic, or MCP-backed implementation.
 
 ### ToolRegistry
 

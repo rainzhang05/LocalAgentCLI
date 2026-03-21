@@ -14,6 +14,7 @@ from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import AgentEvent
 from localagentcli.config.manager import ConfigManager
+from localagentcli.mcp import McpManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import (
     ModelBackend,
@@ -78,6 +79,7 @@ class RuntimeServices:
     model_installer: ModelInstaller
     session_manager: SessionManager
     dynamic_tool_specs: list[DynamicToolSpec]
+    mcp_manager: McpManager | None
 
     @classmethod
     def create(
@@ -136,6 +138,7 @@ class RuntimeServices:
             model_installer=model_installer,
             session_manager=session_manager,
             dynamic_tool_specs=[],
+            mcp_manager=McpManager.from_config(config.get("mcp_servers", {})),
         )
 
     def parse_name_version(self, model_name: str) -> tuple[str, str | None]:
@@ -208,10 +211,13 @@ class RuntimeServices:
 
     def build_tool_router(self, workspace_root: Path) -> ToolRouter:
         """Build the runtime tool router for the current turn."""
+        dynamic_tools = list(self.dynamic_tool_specs)
+        if self.mcp_manager is not None:
+            dynamic_tools.extend(self.mcp_manager.build_dynamic_tool_specs())
         return ToolRouter(
             workspace_root=workspace_root,
             builtins=create_default_tool_registry(workspace_root),
-            dynamic_tools=self.dynamic_tool_specs,
+            dynamic_tools=dynamic_tools,
         )
 
 
@@ -412,6 +418,10 @@ class SessionExecutionRuntime:
                     self._services.session_manager.current.id,
                     self._services.storage.cache_dir,
                 ),
+                sandbox_mode=self._services.session_manager.get_effective_config(
+                    "safety.sandbox_mode"
+                )
+                or "workspace-write",
             ),
             rollback_storage=self._services.storage.cache_dir,
             context_limit=self.context_limit(),
@@ -445,6 +455,8 @@ class SessionExecutionRuntime:
             self._agent_controller.stop()
             self._agent_controller = None
             self._agent_controller_key = None
+        if self._services.mcp_manager is not None:
+            self._services.mcp_manager.close()
 
     def _get_active_provider(self, provider_name: str) -> RemoteProvider | None:
         """Get the active provider, caching the instance."""

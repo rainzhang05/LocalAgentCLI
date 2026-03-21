@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from localagentcli.safety.boundary import WorkspaceBoundary
+from localagentcli.tools.schema import validate_function_parameters_schema
 
 
 class _ToolErrorDescriptor:
@@ -141,6 +142,7 @@ class Tool(ABC):
     def __init__(self, workspace_root: Path):
         self._workspace_root = workspace_root.resolve()
         self._boundary = WorkspaceBoundary(self._workspace_root)
+        self._parameters_schema_validated = False
 
     @property
     @abstractmethod
@@ -171,6 +173,13 @@ class Tool(ABC):
 
     def definition(self) -> dict:
         """Return the model-facing tool definition."""
+        if not self._parameters_schema_validated:
+            issues = validate_function_parameters_schema(self.parameters_schema)
+            if issues:
+                raise ValueError(
+                    f"Tool {self.name!r} has invalid parameters_schema: {'; '.join(issues)}"
+                )
+            self._parameters_schema_validated = True
         return {
             "name": self.name,
             "description": self.description,

@@ -38,6 +38,7 @@ from localagentcli.session.manager import SessionManager
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
 from localagentcli.tools import create_default_tool_registry
+from localagentcli.tools.router import DynamicToolSpec, ToolRouter
 
 RuntimeMessageKind = Literal["info", "status", "warning", "error", "success"]
 
@@ -76,6 +77,7 @@ class RuntimeServices:
     hardware_detector: HardwareDetector
     model_installer: ModelInstaller
     session_manager: SessionManager
+    dynamic_tool_specs: list[DynamicToolSpec]
 
     @classmethod
     def create(
@@ -133,6 +135,7 @@ class RuntimeServices:
             hardware_detector=hardware_detector,
             model_installer=model_installer,
             session_manager=session_manager,
+            dynamic_tool_specs=[],
         )
 
     def parse_name_version(self, model_name: str) -> tuple[str, str | None]:
@@ -198,6 +201,18 @@ class RuntimeServices:
                 return f"{session.model} ({entry.format})"
             return session.model
         return "(none)"
+
+    def register_dynamic_tool(self, spec: DynamicToolSpec) -> None:
+        """Register one runtime-visible dynamic tool specification."""
+        self.dynamic_tool_specs.append(spec)
+
+    def build_tool_router(self, workspace_root: Path) -> ToolRouter:
+        """Build the runtime tool router for the current turn."""
+        return ToolRouter(
+            workspace_root=workspace_root,
+            builtins=create_default_tool_registry(workspace_root),
+            dynamic_tools=self.dynamic_tool_specs,
+        )
 
 
 class SessionExecutionRuntime:
@@ -388,7 +403,7 @@ class SessionExecutionRuntime:
         self._agent_controller = AgentController(
             model=model,
             session=self._services.session_manager.current,
-            tool_registry=create_default_tool_registry(self.workspace_root()),
+            tool_registry=self._services.build_tool_router(self.workspace_root()),
             approval=approval,
             safety=SafetyLayer(
                 approval,

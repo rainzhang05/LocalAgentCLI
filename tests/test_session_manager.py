@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
@@ -201,3 +202,71 @@ class TestSessionManagerConfigOverrides:
     def test_effective_config_falls_back_to_global(self, session_manager):
         result = session_manager.get_effective_config("generation.temperature")
         assert result == 0.7  # Default from config
+
+
+class TestSessionFormatVersion:
+    """Session JSON format_version on save/load."""
+
+    def test_save_writes_format_version(self, session_manager):
+        session_manager.save_session("v1")
+        raw = json.loads((session_manager._dir / "v1.json").read_text(encoding="utf-8"))
+        assert raw.get("format_version") == 1
+
+    def test_load_legacy_without_format_version(self, session_manager, storage):
+        legacy = {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "name": "legacy",
+            "mode": "agent",
+            "model": "",
+            "provider": "",
+            "workspace": ".",
+            "history": [],
+            "tasks": [],
+            "pinned_instructions": [],
+            "config_overrides": {},
+            "created_at": "2025-01-15T10:29:55",
+            "updated_at": "2025-01-15T10:29:55",
+            "metadata": {},
+        }
+        path = storage.sessions_dir / "legacy.json"
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        session_manager.load_session("legacy")
+        session_manager.save_session("legacy")
+
+        roundtrip = json.loads(path.read_text(encoding="utf-8"))
+        assert roundtrip.get("format_version") == 1
+
+
+class TestSessionNamedAutosave:
+    """Debounced named-session autosave."""
+
+    def test_flush_persists_when_autosave_enabled(self, session_manager, config):
+        config.set("sessions.autosave_named", True)
+        session_manager.save_session("autosave")
+        session_manager.current.history.append(
+            Message(role="user", content="after", timestamp=datetime.now())
+        )
+        session_manager.flush_named_autosave()
+
+        session_manager.cancel_named_autosave_timer()
+        session_manager.load_session("autosave")
+        assert len(session_manager.current.history) == 1
+        assert session_manager.current.history[0].content == "after"
+
+    def test_flush_skips_when_autosave_disabled(self, session_manager, config):
+        config.set("sessions.autosave_named", False)
+        session_manager.save_session("noauto")
+        session_manager.current.history.append(
+            Message(role="user", content="volatile", timestamp=datetime.now())
+        )
+        session_manager.flush_named_autosave()
+
+        session_manager.cancel_named_autosave_timer()
+        session_manager.load_session("noauto")
+        assert session_manager.current.history == []
+
+    def test_schedule_no_op_without_name(self, session_manager, config):
+        config.set("sessions.autosave_named", True)
+        session_manager.schedule_named_autosave()
+        session_manager.cancel_named_autosave_timer()

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from localagentcli.models.backends.base import ModelMessage
 from localagentcli.session.state import Message, Session
 
 AGENTS_FILENAME = "AGENTS.md"
@@ -93,6 +94,32 @@ def build_instruction_messages(session: Session) -> list[Message]:
         Message(role="system", content=instruction, timestamp=timestamp)
         for instruction in build_system_instructions(session)
     ]
+
+
+def build_conversation_model_messages(session: Session) -> list[ModelMessage]:
+    """Assemble model input: workspace + pinned instructions, then non-system history.
+
+    History entries with role ``system`` are folded into the leading system message
+    in order (after workspace and pinned text). Other roles are passed through.
+    """
+    system_parts = build_system_instructions(session)
+    conversation: list[ModelMessage] = []
+
+    for message in session.history:
+        if message.role == "system":
+            system_parts.append(message.content)
+            continue
+        conversation.append(
+            ModelMessage(
+                role=message.role,
+                content=message.content,
+                metadata=dict(message.metadata),
+            )
+        )
+
+    if system_parts:
+        return [ModelMessage(role="system", content="\n\n".join(system_parts)), *conversation]
+    return conversation
 
 
 def _instruction_search_root(workspace: str) -> Path | None:

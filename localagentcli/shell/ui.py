@@ -31,7 +31,17 @@ from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.registry import ModelEntry
-from localagentcli.runtime import RuntimeMessage, RuntimeServices, SessionExecutionRuntime
+from localagentcli.runtime import (
+    ApprovalDecisionOp,
+    InterruptOp,
+    RuntimeEvent,
+    RuntimeMessage,
+    RuntimeServices,
+    SessionEventLog,
+    SessionExecutionRuntime,
+    SessionRuntime,
+    UserTurnOp,
+)
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.shell.prompt import (
     SelectionOption,
@@ -67,11 +77,12 @@ class ShellUI:
         self._model_installer = self._services.model_installer
         self._session_manager = self._services.session_manager
         self._stream_renderer = StreamRenderer(self._console)
-        self._runtime = SessionExecutionRuntime(
+        self._execution_runtime = SessionExecutionRuntime(
             services=self._services,
             emit=self._emit_runtime_message,
             confirm_backend_install=self._confirm_backend_install,
         )
+        self._runtime = self._build_session_runtime()
         self._agent_controller: AgentController | None = None
         self._awaiting_idle_exit_confirmation = False
 
@@ -83,6 +94,15 @@ class ShellUI:
             toolbar_provider=self._prompt_toolbar_text,
         )
         self._sync_workspace_instruction()
+
+    def _build_session_runtime(self) -> SessionRuntime:
+        """Create a submission/event runtime for the current session."""
+        event_log = SessionEventLog(
+            self._storage.cache_dir / "runtime-events",
+            self._session_manager.current.id,
+        )
+        self._session_manager.current.metadata["runtime_event_log"] = str(event_log.path)
+        return SessionRuntime(self._execution_runtime, event_log=event_log)
 
     def _register_commands(self) -> None:
         """Register all command handlers."""
@@ -173,6 +193,12 @@ class ShellUI:
                     action = result.data.get("action") if result.data else None
                     if action == "session_changed":
                         self._runtime.close()
+                        self._execution_runtime = SessionExecutionRuntime(
+                            services=self._services,
+                            emit=self._emit_runtime_message,
+                            confirm_backend_install=self._confirm_backend_install,
+                        )
+                        self._runtime = self._build_session_runtime()
                         self._agent_controller = None
                         self._rebuild_prompt_session()
                         self._sync_workspace_instruction()
@@ -199,37 +225,31 @@ class ShellUI:
     def _handle_plain_text(self, text: str) -> None:
         """Handle plain text input according to the current session mode."""
         try:
-            turn = self._runtime.dispatch_text(text)
-            self._agent_controller = turn.controller if turn is not None else None
-            if turn is None:
-                return
-
-            if turn.compaction_count:
-                self._stream_renderer.render_activity(
-                    f"Context compacted: summarized {turn.compaction_count} messages"
+            self._runtime.submit(
+                UserTurnOp(
+                    prompt=text,
+                    mode=self._session_manager.current.mode,  # explicit surface mode
+                    approval_policy="shell",
                 )
-
-            if turn.mode == "agent":
-                if turn.stream is not None and turn.route:
-                    self._stream_renderer.render_status(
-                        f"Agent route: {_humanize_route(turn.route)}."
-                    )
-                    self._stream_renderer.render_stream(turn.stream)
-                elif turn.events is not None:
-                    self._drain_agent_events(turn.events)
-                return
-
-            if turn.stream is not None:
-                self._stream_renderer.render_stream(turn.stream)
+            )
+            self._drain_runtime_events()
         except KeyboardInterrupt:
-            model = self._resolve_active_model()
-            if model is not None:
-                model.cancel()
-            if self._session_manager.current.mode == "agent" and self._agent_controller is not None:
-                self._agent_controller.stop("Agent task interrupted.")
-                self._stream_renderer.render_warning("Agent task interrupted.")
-            else:
-                self._stream_renderer.render_warning("Generation interrupted.")
+            interrupted = False
+            for event in self._runtime.interrupt():
+                interrupted = True
+                self._handle_runtime_event(event)
+            if not interrupted:
+                model = self._resolve_active_model()
+                if model is not None:
+                    model.cancel()
+                if (
+                    self._session_manager.current.mode == "agent"
+                    and self._agent_controller is not None
+                ):
+                    self._agent_controller.stop("Agent task interrupted.")
+                    self._stream_renderer.render_warning("Agent task interrupted.")
+                else:
+                    self._stream_renderer.render_warning("Generation interrupted.")
         except Exception as exc:
             if self._session_manager.current.mode == "agent" and self._agent_controller is not None:
                 self._agent_controller.stop()
@@ -237,23 +257,23 @@ class ShellUI:
 
     def _resolve_active_model(self) -> ModelAbstractionLayer | None:
         """Resolve the active local backend or remote provider into a model abstraction."""
-        return self._runtime.resolve_active_model()
+        return self._execution_runtime.resolve_active_model()
 
     def _get_active_provider(self, provider_name: str):
         """Get the active provider, caching the instance."""
-        return self._runtime._get_active_provider(provider_name)
+        return self._execution_runtime._get_active_provider(provider_name)
 
     def _get_active_backend(self, model_name: str):
         """Get the active local model backend, loading it if needed."""
-        return self._runtime._get_active_backend(model_name)
+        return self._execution_runtime._get_active_backend(model_name)
 
     def _ensure_backend_dependencies(self, backend_name: str) -> bool:
         """Prompt to install missing optional backend dependencies when needed."""
-        return self._runtime._ensure_backend_dependencies(backend_name)
+        return self._execution_runtime._ensure_backend_dependencies(backend_name)
 
     def _create_backend(self, fmt: str):
         """Create the appropriate backend instance for a model format."""
-        return self._runtime._create_backend(fmt)
+        return self._execution_runtime._create_backend(fmt)
 
     def _display_welcome(self) -> None:
         """Show the welcome banner."""
@@ -358,20 +378,20 @@ class ShellUI:
 
     def _generation_options(self) -> dict[str, object]:
         """Build generation options from the effective configuration."""
-        return self._runtime.build_generation_options()
+        return self._execution_runtime.build_generation_options()
 
     def _context_limit(self) -> int:
         """Return the best-known context limit for the active target."""
-        return self._runtime.context_limit()
+        return self._execution_runtime.context_limit()
 
     def _get_or_create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Reuse the current agent controller when the target/session is unchanged."""
-        self._agent_controller = self._runtime.get_or_create_agent_controller(model)
+        self._agent_controller = self._execution_runtime.get_or_create_agent_controller(model)
         return self._agent_controller
 
     def _create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Build or replace the active agent controller for the current session."""
-        self._agent_controller = self._runtime.create_agent_controller(model)
+        self._agent_controller = self._execution_runtime.create_agent_controller(model)
         return self._agent_controller
 
     def _drain_agent_events(self, events) -> None:
@@ -393,6 +413,77 @@ class ShellUI:
                     self._stream_renderer.render_warning("Agent task stopped.")
                 return
         self._stream_renderer.flush_agent_event_tail()
+
+    def _drain_runtime_events(self) -> None:
+        """Drain typed runtime events until the current submission pauses or finishes."""
+        for event in self._runtime.iter_events():
+            self._handle_runtime_event(event)
+
+    def _handle_runtime_event(self, event: RuntimeEvent) -> None:
+        """Render and respond to one typed runtime event."""
+        self._agent_controller = self._runtime.active_agent_controller
+        if event.type == "stream_chunk":
+            chunk = event.data
+            if chunk is not None:
+                self._stream_renderer.render_chunk(chunk)
+            return
+        if event.type == "route_selected":
+            route = ""
+            if isinstance(event.data, dict):
+                route = str(event.data.get("route", "") or "")
+            if route:
+                self._stream_renderer.render_status(f"Agent route: {_humanize_route(route)}.")
+            return
+        if event.type == "agent_event":
+            event_type = str(getattr(event.data, "type", "") or "")
+            if event_type in {
+                "task_routed",
+                "task_complete",
+                "task_failed",
+                "task_stopped",
+                "task_timed_out",
+            }:
+                return
+            if event.data is not None:
+                self._stream_renderer.render_agent_event(event.data)
+            return
+        if event.type == "approval_requested":
+            requested = event.data
+            if isinstance(requested, ToolCallRequested):
+                decision = self._prompt_for_tool_approval(requested)
+                if decision == "approve":
+                    self._runtime.submit(ApprovalDecisionOp("approve"))
+                elif decision == "approve_all":
+                    self._runtime.submit(ApprovalDecisionOp("approve_all", autonomous=True))
+                elif decision == "deny":
+                    self._runtime.submit(ApprovalDecisionOp("deny"))
+                else:
+                    self._runtime.submit(InterruptOp())
+                    self._stream_renderer.render_warning("Agent task stopped.")
+                self._drain_runtime_events()
+            return
+        if event.type == "turn_completed":
+            if (
+                isinstance(event.data, dict)
+                and event.data.get("mode") == "agent"
+                and event.message.strip()
+            ):
+                self._stream_renderer.render_success("Task completed.")
+                self._stream_renderer.flush_pending_details()
+                self._console.print(event.message)
+            return
+        if event.type == "turn_failed":
+            self._stream_renderer.render_error(event.message or "Turn failed.")
+            return
+        if event.type == "turn_interrupted":
+            self._stream_renderer.render_warning(event.message or "Turn interrupted.")
+            return
+        if event.type == "warning":
+            self._stream_renderer.render_warning(event.message)
+            return
+        if event.type == "error":
+            self._stream_renderer.render_error(event.message)
+            return
 
     def _prompt_for_tool_approval(self, event: ToolCallRequested) -> str:
         """Prompt inline for approval of a pending tool call."""
@@ -529,17 +620,17 @@ class ShellUI:
 
     def _handle_agent_resume(self, result: CommandResult) -> None:
         """Resume a paused agent task after an /agent command."""
-        if self._agent_controller is None:
+        if self._runtime.active_submission_id is None:
             return
         decision = result.data.get("decision") if result.data else None
         autonomous = bool(result.data.get("autonomous")) if result.data else False
         if decision == "approve":
-            events = self._agent_controller.approve_action(autonomous=autonomous)
+            self._runtime.submit(ApprovalDecisionOp("approve", autonomous=autonomous))
         elif decision == "deny":
-            events = self._agent_controller.deny_action()
+            self._runtime.submit(ApprovalDecisionOp("deny"))
         else:
             return
-        self._drain_agent_events(events)
+        self._drain_runtime_events()
 
     def _undo_last_agent_change(self) -> tuple[str, str | None]:
         """Undo the most recent rollback entry for the current session."""
@@ -589,7 +680,7 @@ class ShellUI:
 
     def _workspace_root(self) -> Path:
         """Resolve the current session workspace to an absolute path."""
-        return self._runtime.workspace_root()
+        return self._execution_runtime.workspace_root()
 
     def _rollback_manager(self) -> RollbackManager:
         """Return the rollback manager for the current session."""
@@ -615,7 +706,7 @@ class ShellUI:
 
     def _active_target_label(self) -> str:
         """Describe the active local model or remote provider for the status header."""
-        return self._runtime.active_target_label()
+        return self._execution_runtime.active_target_label()
 
     def _session_prompt_history(self) -> list[str]:
         """Load persisted prompt history from the current session metadata."""
@@ -668,7 +759,7 @@ class ShellUI:
 
     def _sync_workspace_instruction(self) -> None:
         """Cache repository-level AGENTS.md instructions for the active session."""
-        self._runtime.sync_workspace_instruction()
+        self._execution_runtime.sync_workspace_instruction()
 
     def _emit_runtime_message(self, message: RuntimeMessage) -> None:
         """Render runtime-owned user-visible messages through shell surfaces."""

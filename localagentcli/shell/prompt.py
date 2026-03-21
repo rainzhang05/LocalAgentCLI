@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -19,6 +20,8 @@ from localagentcli.commands.router import CommandRouter, CommandSpec
 
 MAX_INPUT_HISTORY = 1000
 COMMAND_MENU_HEIGHT = 10
+# Briefly coalesce completion refreshes so each keystroke does not restart the menu.
+COMPLETION_MENU_REFRESH_DEBOUNCE_SEC = 0.04
 CHOICE_MENU_HEIGHT = 8
 TEXT_PROMPT_TOOLBAR = "Enter accepts. Ctrl+C cancels."
 SECRET_PROMPT_TOOLBAR = "Input is hidden. Enter accepts. Ctrl+C cancels."
@@ -356,12 +359,38 @@ def _wire_live_completion_menu(
     session: PromptSession,
     refresher: Callable[[object], None],
 ) -> None:
-    """Refresh the completion menu on every text edit."""
+    """Refresh the completion menu after short idle gaps to limit redraw churn."""
 
-    def _refresh(_event) -> None:
+    pending_handle: list[object | None] = [None]
+
+    def _flush() -> None:
+        pending_handle[0] = None
         refresher(session.default_buffer)
 
-    session.default_buffer.on_text_changed += _refresh
+    def _on_text_changed(_buffer) -> None:
+        app = get_app_or_none()
+        loop = app.loop if app is not None else None
+        if loop is None or COMPLETION_MENU_REFRESH_DEBOUNCE_SEC <= 0:
+            refresher(session.default_buffer)
+            return
+        is_closed = getattr(loop, "is_closed", None)
+        if callable(is_closed) and is_closed():
+            refresher(session.default_buffer)
+            return
+
+        existing = pending_handle[0]
+        if existing is not None:
+            cancel = getattr(existing, "cancel", None)
+            if callable(cancel):
+                cancel()
+            pending_handle[0] = None
+
+        pending_handle[0] = loop.call_later(
+            COMPLETION_MENU_REFRESH_DEBOUNCE_SEC,
+            _flush,
+        )
+
+    session.default_buffer.on_text_changed += _on_text_changed
 
 
 def _refresh_command_completion(buffer, router: CommandRouter) -> None:

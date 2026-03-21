@@ -34,6 +34,7 @@ LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/
 
 **Update behavior**:
 - The toolbar is rendered by `prompt_toolkit` instead of being printed into scrollback before each prompt.
+- The active local target label is derived from the model registry only (format suffix), not from repeated on-disk re-detection, so toolbar refreshes stay lightweight while loading a model or running `/models` flows still repairs registry metadata through the existing load paths.
 - `/status` uses the same status snapshot data and formatting family, so the compact toolbar and expanded report cannot drift.
 - This is the strongest non-full-screen status surface currently used by the CLI. A full-screen TUI remains intentionally out of scope.
 
@@ -49,7 +50,7 @@ The input prompt where the user types:
 - Single `>` character followed by a space
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
-- Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it.
+- Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it. Completion list refreshes are debounced briefly while typing so the menu does not restart on every keystroke when a prompt-toolkit application loop is active.
 - The slash-command menu respects command visibility. Non-executable parent groups stay hidden, while executable commands such as `/hf-token` remain available so users can revisit them later.
 - The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.

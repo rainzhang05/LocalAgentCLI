@@ -41,6 +41,11 @@ The approval mode system should be designed to support additional modes in the f
 - **Strict**: Require approval for all actions including reads
 - **Custom**: Per-tool approval settings
 
+For non-interactive `localagentcli exec` runs, approval handling is selected
+explicitly with `--approval-policy`. The current headless options are:
+- `deny`: reject approval-requiring actions and let the agent recover or fail
+- `auto`: auto-submit approval responses without prompting
+
 ---
 
 ## Approval UX

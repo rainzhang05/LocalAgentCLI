@@ -259,7 +259,13 @@ class AgentLoop:
         self._tools = tools
         self._safety = safety
 
-    def run(self, task: str, context: list[Message]) -> Iterator[AgentEvent]:
+    def run(
+        self,
+        task: str,
+        context: list[ModelMessage],
+        ...,
+        session: Session | None = None,
+    ) -> Iterator[AgentEvent]:
         """Execute the agent loop until completion or interruption.
 
         1. Receive a synthesized or planned TaskPlan
@@ -269,6 +275,8 @@ class AgentLoop:
         5. Repeat until the plan completes or fails
         """
 ```
+
+**Runtime task status in step prompts:** When `AgentController` runs the loop, it passes the active `Session`. For each step, the first system message includes the usual task/plan/step instructions plus an **Agent task status (runtime):** block when `session.metadata["agent_task_state"]` exists, `session.mode == "agent"`, and the recorded task is **active**. The block lists fields such as route, phase, step index and description, pending tool (if any), approval mode, rollback count, and a truncated summary so the model sees up-to-date execution state alongside the transcript. Formatting lives in `localagentcli/session/task_context.py`.
 
 ### TaskPlan
 

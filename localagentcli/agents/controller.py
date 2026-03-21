@@ -220,6 +220,7 @@ class AgentController:
             generation_options=self._profile("step"),
             planning_options=self._profile("planning"),
             inactivity_timeout=self._inactivity_timeout(),
+            session=self._session,
         )
         return AgentDispatch(triage=triage, events=self._with_route_event(triage, self._drain()))
 

@@ -30,7 +30,7 @@ In chat mode, user input is sent directly to the model as a conversation message
 
 1. **Streaming responses**: All output is streamed token-by-token. There is no batch mode.
 2. **Session history**: The full conversation history is maintained and sent with each request (subject to context limits).
-3. **Context auto-compaction**: When conversation history approaches the model's context window, older messages are automatically summarized. The summary replaces the original messages while preserving key information.
+3. **Context auto-compaction**: When estimated context use approaches the effective window (including a reserved slice for the next model reply), older messages are automatically summarized. The summary replaces the original messages while preserving key information. Details: [session-and-config.md](session-and-config.md#context-management).
 4. **Pinned instructions**: Users can pin system-level instructions that survive compaction. Pinned instructions are always included at the top of the context.
 5. **Repository instructions**: If the active workspace belongs to a repository whose root contains `AGENTS.md`, that file is automatically loaded and prepended to the system prompt as the default repository instruction set.
 6. **Secondary output display**: If the model emits reasoning/thinking, tool-call metadata, provider notifications, or similar secondary events, they are rendered separately from the primary assistant response and preserved in session metadata.

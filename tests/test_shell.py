@@ -786,6 +786,30 @@ class TestShellUIRun:
             "switched to fallback@v1."
         )
 
+    def test_session_change_resets_runtime_state(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._prompt_session = MagicMock()
+        ui._prompt_session.prompt.side_effect = ["/session load demo", "/exit"]
+        ui._runtime = MagicMock()
+        ui._agent_controller = MagicMock()
+        ui._rebuild_prompt_session = MagicMock()
+        ui._sync_workspace_instruction = MagicMock()
+        ui._render_default_target_warning = MagicMock()
+
+        with patch.object(ui._router, "dispatch") as mock_dispatch:
+            mock_dispatch.side_effect = [
+                CommandResult.ok("loaded", data={"action": "session_changed"}),
+                CommandResult.ok("exit", data={"action": "exit"}),
+            ]
+            ui.run()
+
+        assert ui._runtime.close.call_count == 2
+        assert ui._agent_controller is None
+        ui._rebuild_prompt_session.assert_called_once()
+        assert ui._sync_workspace_instruction.call_count >= 2
+        assert ui._render_default_target_warning.call_count >= 1
+
 
 class TestShellUIModelResolution:
     def test_resolve_active_model_uses_provider_backend(self, config, storage):

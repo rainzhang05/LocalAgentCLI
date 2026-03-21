@@ -2,7 +2,7 @@
 
 ## Overview
 
-LocalAgentCLI is a production-grade, local-first AI CLI providing a unified interactive shell plus a shared execution core for local models (Hugging Face, direct downloads) and remote models (API providers). It delivers a modern agentic CLI experience with full transparency, strict safety controls, consistent cross-platform behavior, and zero manual configuration requirement.
+LocalAgentCLI is a production-grade, local-first AI CLI providing a unified interactive shell plus a shared submission/event runtime for local models (Hugging Face, direct downloads) and remote models (API providers). It delivers a modern agentic CLI experience with full transparency, strict safety controls, consistent cross-platform behavior, and zero manual configuration requirement.
 
 ---
 
@@ -16,7 +16,9 @@ LocalAgentCLI is a production-grade, local-first AI CLI providing a unified inte
 ├─────────────────────────────────┤
 │        Command Router           │  ← Slash commands vs. plain text dispatch
 ├─────────────────────────────────┤
-│ Runtime Services & Execution    │  ← Shared session/config/model/tool wiring
+│ Runtime Services & Session Core │  ← Shared session/config/model/tool wiring
+├─────────────────────────────────┤
+│ Submission / Event Protocol     │  ← Shared ops, approvals, stream events
 ├─────────────────────────────────┤
 │       Session Manager           │  ← State, history, context compaction
 ├─────────────────────────────────┤
@@ -55,6 +57,12 @@ Each layer communicates only with its immediate neighbors. No layer may bypass t
 - Builds shared generation options, context limits, tool registries, and safety wiring
 - Exposes reusable chat-turn and agent-dispatch entrypoints for both the interactive shell and non-interactive surfaces
 - Keeps controller reuse and model/provider caching out of the prompt loop
+
+### Submission / Event Protocol
+- Accepts typed runtime operations such as user turns, approval decisions, interrupts, and shutdown
+- Emits a shared event stream for streamed text, agent activity, approval requests, completion, failure, and interruption
+- Persists append-only runtime event logs per session for stronger continuity and debugging
+- Allows interactive and headless surfaces to consume the same execution flow without duplicating turn orchestration
 
 ### Command Router
 - Maintains a registry of all slash commands
@@ -129,10 +137,13 @@ Each backend must:
 ```
 localagentcli/
 ├── __init__.py
-├── __main__.py              # Entry point: interactive shell + one-shot exec surface
+├── __main__.py              # Entry point: interactive shell + headless exec surface
 ├── runtime/
 │   ├── __init__.py
-│   └── core.py              # Shared runtime services and execution helpers
+│   ├── core.py              # Shared runtime services and execution helpers
+│   ├── protocol.py          # Submission and event protocol
+│   ├── session_runtime.py   # Session-bound submission/event runtime
+│   └── event_log.py         # Append-only runtime event logs
 ├── shell/
 │   ├── __init__.py
 │   ├── ui.py                # ShellUI — input loop, rendering, status header
@@ -218,6 +229,7 @@ localagentcli/
 ## Concurrency Model
 
 - **One task per shell**: Each shell instance runs a single active task at a time. The agent loop, model generation, and tool execution are sequential within a session.
+- **One active turn per session runtime**: Interactive and headless surfaces both serialize submissions through one active turn at a time per session runtime.
 - **Multiple shells allowed**: Users may run multiple `localagentcli` instances simultaneously. Each instance operates independently with its own session state.
 - **No shared mutable state**: Instances share only the filesystem (`~/.localagent/`). File-level locking must be used when writing to shared resources (config, registry, logs).
 

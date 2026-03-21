@@ -103,6 +103,20 @@ class TestSessionManagerSaveLoad:
         session_manager.save_session("counted")
         assert session_manager.current.metadata["message_count"] == 1
 
+    def test_fork_session_creates_new_id_and_preserves_history(self, session_manager):
+        session_manager.current.history.append(
+            Message(role="user", content="hello", timestamp=datetime.now())
+        )
+        session_manager.save_session("base")
+        base_id = session_manager.current.id
+
+        forked = session_manager.fork_session("base", "forked")
+
+        assert forked.id != base_id
+        assert forked.name == "forked"
+        assert len(forked.history) == 1
+        assert forked.history[0].content == "hello"
+
 
 class TestSessionManagerList:
     """Tests for listing sessions."""

@@ -182,6 +182,7 @@ localagentcli exec "Summarize the current repository status."
 - Refreshes repository `AGENTS.md` instructions before the request, just like the shell
 - Keeps this first slice intentionally narrow: it is optimized for one chat-style turn rather than long-lived interactive agent workflows
 - Fails closed on flows that would require interactive approval, rather than silently widening autonomy
+- Does not prompt to install optional backend dependencies; non-interactive callers must provision those up front
 
 ### Routing Rules
 

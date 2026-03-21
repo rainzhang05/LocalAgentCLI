@@ -272,7 +272,7 @@ class ContextCompactor:
 4. **Important steps retained**: In agent mode, tool call results and key observations are flagged as important and are included in summaries with higher detail
 5. **Transparency**: When compaction occurs, the user sees an inline activity log message: `"Context compacted: summarized N messages"`
 
-**Regression coverage:** Pytest covers compaction on chat input and on agent-mode dispatch when history exceeds the configured threshold (including a direct-answer path after compaction).
+**Regression coverage:** Pytest covers compaction on chat input and on agent-mode dispatch when history exceeds the configured threshold, including direct-answer and multi-step `handle_task` paths after compaction (`tests/test_compaction_integration.py`).
 
 ### Persistent Summaries
 

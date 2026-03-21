@@ -199,3 +199,88 @@ class TestMain:
 
         session_manager.fork_session.assert_called_once_with("saved")
         session_manager.save_session.assert_called_once_with("saved_fork")
+
+    @patch("localagentcli.__main__.SessionRuntime")
+    @patch("localagentcli.__main__.SessionExecutionRuntime")
+    @patch("localagentcli.__main__.SessionEventLog")
+    @patch("localagentcli.__main__.RuntimeServices")
+    @patch("localagentcli.__main__.ConfigManager")
+    @patch("localagentcli.__main__.StorageManager")
+    def test_main_exec_saves_session_on_keyboard_interrupt(
+        self,
+        mock_storage_cls,
+        mock_config_cls,
+        mock_services_cls,
+        mock_event_log_cls,
+        mock_runtime_cls,
+        mock_session_runtime_cls,
+    ):
+        mock_storage = MagicMock()
+        mock_storage.config_path.exists.return_value = True
+        mock_storage_cls.return_value = mock_storage
+        mock_config_cls.return_value = MagicMock()
+
+        session_manager = MagicMock()
+        session_manager.current.id = "session-1"
+        services = MagicMock()
+        services.session_manager = session_manager
+        mock_services_cls.create.return_value = services
+
+        exec_runtime = MagicMock()
+        mock_runtime_cls.return_value = exec_runtime
+
+        session_runtime = MagicMock()
+
+        def _raise_interrupt():
+            raise KeyboardInterrupt()
+            yield  # pragma: no cover
+
+        session_runtime.iter_events.return_value = _raise_interrupt()
+        session_runtime.interrupt.return_value = iter(())
+        mock_session_runtime_cls.return_value = session_runtime
+
+        result = main(["exec", "--session", "saved", "hello"])
+
+        assert result == 1
+        session_manager.load_session.assert_called_once_with("saved")
+        session_manager.save_session.assert_called_once_with("saved")
+        session_runtime.close.assert_called_once()
+
+    @patch("localagentcli.__main__.SessionRuntime")
+    @patch("localagentcli.__main__.SessionExecutionRuntime")
+    @patch("localagentcli.__main__.SessionEventLog")
+    @patch("localagentcli.__main__.RuntimeServices")
+    @patch("localagentcli.__main__.ConfigManager")
+    @patch("localagentcli.__main__.StorageManager")
+    def test_main_exec_saves_session_when_sync_raises(
+        self,
+        mock_storage_cls,
+        mock_config_cls,
+        mock_services_cls,
+        mock_event_log_cls,
+        mock_runtime_cls,
+        mock_session_runtime_cls,
+    ):
+        mock_storage = MagicMock()
+        mock_storage.config_path.exists.return_value = True
+        mock_storage_cls.return_value = mock_storage
+        mock_config_cls.return_value = MagicMock()
+
+        session_manager = MagicMock()
+        session_manager.current.id = "session-1"
+        services = MagicMock()
+        services.session_manager = session_manager
+        mock_services_cls.create.return_value = services
+
+        exec_runtime = MagicMock()
+        exec_runtime.sync_workspace_instruction.side_effect = RuntimeError("sync failed")
+        mock_runtime_cls.return_value = exec_runtime
+
+        session_runtime = MagicMock()
+        mock_session_runtime_cls.return_value = session_runtime
+
+        result = main(["exec", "--session", "saved", "hello"])
+
+        assert result == 1
+        session_manager.save_session.assert_called_once_with("saved")
+        session_runtime.close.assert_called_once()

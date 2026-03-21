@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Submission/event runtime: `RuntimeServices`, `SessionExecutionRuntime`, `SessionRuntime`, append-only runtime event logs, dynamic tool routing, expanded `localagentcli exec` modes and saved-session resume/fork; shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
+> **Last updated**: 2026-03-21 (Submission/event runtime: `RuntimeServices`, `SessionExecutionRuntime`, `SessionRuntime`, append-only runtime event logs, MCP-backed dynamic tool discovery, explicit sandbox mode, dynamic tool routing, expanded `localagentcli exec` modes and saved-session resume/fork; shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -34,7 +34,7 @@ After implementing a component:
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
-| `[x]` | Config defaults and validation | 2026-03-17 |
+| `[x]` | Config defaults and validation | 2026-03-21 — sandbox mode is now first-class in config, and MCP server definitions can be provided through `mcp_servers` tables for runtime tool discovery |
 | `[x]` | Session state dataclass | 2026-03-17 |
 | `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — invalid startup default targets are repaired to the next valid model/provider target with one explicit warning naming the old and replacement targets, and headless exec can now resume or fork saved sessions before running a turn |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
@@ -108,7 +108,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Tool base class (ABC) | 2026-03-18 |
-| `[x]` | Tool registry | 2026-03-21 — runtime now builds tool inventory through `ToolRouter`, which can merge built-in tools with callback-backed dynamic tool definitions without changing the agent loop contract |
+| `[x]` | Tool registry | 2026-03-21 — runtime now builds tool inventory through `ToolRouter`, which can merge built-in tools with callback-backed dynamic tool definitions and MCP-backed stdio tools without changing the agent loop contract |
 | `[x]` | `file_read` tool | 2026-03-18 |
 | `[x]` | `file_search` tool | 2026-03-18 |
 | `[x]` | `directory_list` tool | 2026-03-18 |
@@ -135,7 +135,7 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | Safety layer (central gate) | 2026-03-19 — `localagentcli/safety/layer.py` now validates boundaries, classifies risk, explains why high-risk actions were flagged, describes rollback availability up front, applies approval policy, and records rollback history around successful tool execution |
+| `[x]` | Safety layer (central gate) | 2026-03-21 — `localagentcli/safety/layer.py` validates boundaries, classifies risk, explains why high-risk actions were flagged, describes rollback availability up front, applies approval policy, records rollback history around successful tool execution, and now enforces runtime sandbox posture such as `read-only` for side-effecting tools |
 | `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
 | `[x]` | Approval manager (autonomous mode) | 2026-03-19 — autonomous mode auto-approves standard actions, persists correctly across future tasks, and still pauses high-risk operations for explicit approval |
 | `[x]` | Approval UX (inline prompts) | 2026-03-20 — inline prompts flush pending renderer detail before blocking for input, use the shared action-prompt surface for approve/deny/details/approve-all, and render tool-specific previews with target, risk, warning, overwrite/create, and rollback context, plus explicit truncation labels for long preview sections |
@@ -153,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-21 — 799 tests total across unit, component, integration, and CLI coverage, now including submission/event runtime, saved-session exec resume/fork, append-only runtime event logging, dynamic tool-router coverage, session-change lifecycle, and one-shot entrypoint regressions alongside readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 83.74% coverage |
+| `[x]` | Unit tests | 2026-03-21 — 800 tests total across unit, component, integration, and CLI coverage, now including submission/event runtime, saved-session exec resume/fork, append-only runtime event logging, dynamic tool-router coverage, MCP-backed tool discovery, session-change lifecycle, and one-shot entrypoint regressions alongside readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 83.80% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

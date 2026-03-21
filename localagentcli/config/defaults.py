@@ -33,6 +33,10 @@ DEFAULT_CONFIG: dict = {
     },
     "providers": {},
     "mcp_servers": {},
+    "sessions": {
+        "autosave_named": False,
+        "autosave_debounce_seconds": 2,
+    },
 }
 
 # Schema: maps dotted key -> (expected_type, optional_validator)
@@ -53,6 +57,8 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "timeouts.shell_command": (int, lambda v: v > 0),
     "timeouts.model_response": (int, lambda v: v > 0),
     "timeouts.inactivity": (int, lambda v: v > 0),
+    "sessions.autosave_named": (bool, None),
+    "sessions.autosave_debounce_seconds": (int, lambda v: v > 0),
 }
 
 
@@ -74,7 +80,15 @@ def validate_config_value(key: str, value: Any) -> tuple[bool, str]:
     expected_type, validator = CONFIG_SCHEMA[key]
 
     # Attempt type coercion from string input
-    if isinstance(value, str) and expected_type is not str:
+    if isinstance(value, str) and expected_type is bool:
+        lower = value.strip().lower()
+        if lower in ("true", "1", "yes", "on"):
+            value = True
+        elif lower in ("false", "0", "no", "off"):
+            value = False
+        else:
+            return False, f"'{key}' expects bool, got '{value}'"
+    elif isinstance(value, str) and expected_type is not str:
         try:
             if expected_type is float:
                 value = float(value)
@@ -102,6 +116,13 @@ def coerce_value(key: str, value: Any) -> Any:
 
     expected_type, _ = CONFIG_SCHEMA[key]
 
+    if isinstance(value, str) and expected_type is bool:
+        lower = value.strip().lower()
+        if lower in ("true", "1", "yes", "on"):
+            return True
+        if lower in ("false", "0", "no", "off"):
+            return False
+        return value
     if isinstance(value, str) and expected_type is not str:
         try:
             if expected_type is float:

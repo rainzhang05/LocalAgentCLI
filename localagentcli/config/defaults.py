@@ -19,6 +19,7 @@ DEFAULT_CONFIG: dict = {
     },
     "safety": {
         "approval_mode": "balanced",
+        "sandbox_mode": "workspace-write",
     },
     "generation": {
         "temperature": 0.7,
@@ -31,6 +32,7 @@ DEFAULT_CONFIG: dict = {
         "inactivity": 600,
     },
     "providers": {},
+    "mcp_servers": {},
 }
 
 # Schema: maps dotted key -> (expected_type, optional_validator)
@@ -41,6 +43,10 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "model.active_model": (str, None),
     "provider.active_provider": (str, None),
     "safety.approval_mode": (str, lambda v: v in ("balanced", "autonomous")),
+    "safety.sandbox_mode": (
+        str,
+        lambda v: v in ("workspace-write", "read-only", "danger-full-access"),
+    ),
     "generation.temperature": (float, lambda v: 0.0 <= v <= 2.0),
     "generation.max_tokens": (int, lambda v: v > 0),
     "generation.top_p": (float, lambda v: 0.0 <= v <= 1.0),

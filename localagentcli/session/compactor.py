@@ -7,6 +7,18 @@ from datetime import datetime
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage
 from localagentcli.session.state import Message
+from localagentcli.session.tokens import estimate_tokens_for_messages
+
+
+def _default_generation_headroom(context_limit: int) -> int:
+    """Reserve part of the window for the next model output before compacting.
+
+    Capped at one quarter of the context limit so tiny windows (tests, small models)
+    still get a usable budget; never exceeds 2048 tokens.
+    """
+    eighth = max(context_limit // 8, 128)
+    quarter_cap = max(context_limit // 4, 1)
+    return min(eighth, quarter_cap, 2048)
 
 
 class ContextCompactor:
@@ -18,11 +30,16 @@ class ContextCompactor:
         context_limit: int,
         threshold: float = 0.75,
         keep_recent: int = 10,
+        generation_headroom_tokens: int | None = None,
     ):
         self._model = model
         self._context_limit = max(context_limit, 1)
         self._threshold = threshold
         self._keep_recent = keep_recent
+        if generation_headroom_tokens is None:
+            self._generation_headroom = _default_generation_headroom(self._context_limit)
+        else:
+            self._generation_headroom = max(generation_headroom_tokens, 0)
         self._last_compacted_count = 0
 
     @property
@@ -32,7 +49,8 @@ class ContextCompactor:
 
     def needs_compaction(self, messages: list[Message]) -> bool:
         """Return True when the history exceeds the configured threshold."""
-        return self.estimate_tokens(messages) >= int(self._context_limit * self._threshold)
+        effective = max(self._context_limit - self._generation_headroom, 1)
+        return self.estimate_tokens(messages) >= int(effective * self._threshold)
 
     def compact(self, messages: list[Message], pinned: list[str]) -> list[Message]:
         """Replace older messages with a summary while keeping recent turns verbatim."""
@@ -61,11 +79,8 @@ class ContextCompactor:
         ]
 
     def estimate_tokens(self, messages: list[Message]) -> int:
-        """Estimate token count using a conservative text-length heuristic."""
-        total_chars = 0
-        for message in messages:
-            total_chars += len(message.role) + len(message.content) + 8
-        return max(total_chars // 4, 0)
+        """Estimate tokens with a UTF-8 byte ceiling heuristic (coarse lower bound)."""
+        return estimate_tokens_for_messages(messages)
 
     def _summarize_messages(self, messages: list[Message], pinned: list[str]) -> str:
         """Summarize old messages with the active model and fall back if needed."""

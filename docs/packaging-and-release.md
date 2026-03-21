@@ -46,7 +46,13 @@ This keeps the install aligned with the latest local wheel without waiting for a
 localagentcli
 ```
 
-The primary command launches the interactive shell. No subcommands are needed at the CLI level — all functionality is accessed through slash commands inside the shell. The package also exposes `localagent` as a compatibility alias.
+The primary command launches the interactive shell. The package also exposes a small non-interactive surface for one-shot requests:
+
+```bash
+localagentcli exec "Explain the latest test failures."
+```
+
+The package also exposes `localagent` as a compatibility alias.
 
 ### Entry Point Configuration
 
@@ -60,20 +66,17 @@ localagent = "localagentcli.__main__:main"
 ```python
 # localagentcli/__main__.py
 
-def main():
-    """Entry point for the localagent CLI."""
-    from localagentcli.shell.ui import ShellUI
-    from localagentcli.config.manager import ConfigManager
-    from localagentcli.storage.manager import StorageManager
+def main(argv=None):
+    """Launch the interactive shell or a one-shot non-interactive turn."""
+    args = _parse_args([] if argv is None else list(argv))
+    storage, config, first_run = _bootstrap_application()
 
-    storage = StorageManager()
-    storage.initialize()
+    if args.command == "exec":
+        return _run_exec(" ".join(args.prompt).strip(), config, storage)
 
-    config = ConfigManager(storage.config_path)
-    config.load()
-
-    shell = ShellUI(config=config, storage=storage)
+    shell = ShellUI(config=config, storage=storage, first_run=first_run)
     shell.run()
+    return 0
 
 if __name__ == "__main__":
     main()
@@ -233,6 +236,7 @@ These flows must be tested end-to-end and must pass before any release:
 1. **Install → Launch → Setup**
    - `pipx install localagentcli` completes without errors
    - `localagentcli` launches the interactive shell
+   - `localagentcli exec "hello"` runs a one-shot request through the shared runtime without entering the prompt loop
    - First-run `/setup` wizard completes successfully in interactive terminals
    - First-run `/setup` falls back to current/default values without prompting when stdin is non-interactive, so packaged smoke tests and piped launches do not fail with `EOFError`
    - Config file is created with valid defaults

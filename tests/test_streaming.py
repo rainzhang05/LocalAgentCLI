@@ -76,6 +76,7 @@ class TestStreamRendererRenderChunk:
                 text="[WARNING] Near memory limit", kind="notification", importance="primary"
             )
         )
+        renderer.flush_pending_details()
 
         console.print.assert_called_once_with("ℹ [WARNING] Near memory limit")
         assert list(renderer._secondary_entries) == []
@@ -198,6 +199,7 @@ class TestStreamRendererActivity:
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_activity("Context compacted")
+        renderer.flush_pending_details()
         console.print.assert_called_once_with("ℹ Context compacted")
 
     def test_render_success_falls_back_to_ascii_when_console_encoding_is_limited(self):
@@ -210,12 +212,39 @@ class TestStreamRendererActivity:
         console.print.assert_called_once_with("[green]OK Saved.[/green]")
 
 
+class TestStreamRendererStatusCoalescing:
+    def test_consecutive_status_lines_coalesce_to_one_print(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        renderer.render_agent_event(TaskRouted(route="direct_answer", reason=""))
+        renderer.render_agent_event(PhaseChanged(phase="planning", summary="Planning next."))
+        renderer.flush_agent_event_tail()
+
+        assert console.print.call_count == 1
+        combined = console.print.call_args_list[0].args[0]
+        assert "direct answer" in combined
+        assert "Planning next." in combined
+
+    def test_coalesced_status_drops_consecutive_duplicates(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+        renderer.render_status("same")
+        renderer.render_status("same")
+        renderer.render_status("same")
+        renderer.flush_pending_details()
+
+        assert console.print.call_count == 1
+        printed = console.print.call_args.args[0]
+        assert printed.count("same") == 1
+
+
 class TestStreamRendererAgentEvents:
     def test_task_routed_renders_status(self):
         console = MagicMock()
         renderer = StreamRenderer(console)
 
         renderer.render_agent_event(TaskRouted(route="multi_step_task", reason="complex"))
+        renderer.flush_agent_event_tail()
 
         assert "Agent route: multi-step task." in console.print.call_args.args[0]
 
@@ -226,6 +255,7 @@ class TestStreamRendererAgentEvents:
         renderer.render_agent_event(
             PhaseChanged(phase="replanning", summary="Replanning after failures.")
         )
+        renderer.flush_agent_event_tail()
 
         assert "Replanning after failures." in console.print.call_args.args[0]
 
@@ -257,6 +287,7 @@ class TestStreamRendererAgentEvents:
         renderer = StreamRenderer(console)
 
         renderer.render_agent_event(StepStarted(step=PlanStep(index=2, description="Run tests")))
+        renderer.flush_agent_event_tail()
 
         assert "Step 2 started" in console.print.call_args.args[0]
 
@@ -309,6 +340,7 @@ class TestStreamRendererAgentEvents:
 
         renderer.render_agent_event(ReasoningOutput(text="Because it helps"))
         renderer.render_agent_event(StepStarted(step=PlanStep(index=2, description="Run tests")))
+        renderer.flush_agent_event_tail()
 
         panel_arg = console.print.call_args_list[0].args[0]
         assert isinstance(panel_arg, Panel)

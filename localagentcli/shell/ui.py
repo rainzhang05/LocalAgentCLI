@@ -31,7 +31,6 @@ from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.registry import ModelEntry
-from localagentcli.providers.base import RemoteProvider
 from localagentcli.runtime import RuntimeMessage, RuntimeServices, SessionExecutionRuntime
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.shell.prompt import (
@@ -173,8 +172,8 @@ class ShellUI:
 
                     action = result.data.get("action") if result.data else None
                     if action == "session_changed":
+                        self._runtime.close()
                         self._agent_controller = None
-                        self._agent_controller_key = None
                         self._rebuild_prompt_session()
                         self._sync_workspace_instruction()
                         self._render_default_target_warning()
@@ -247,48 +246,6 @@ class ShellUI:
     def _get_active_backend(self, model_name: str):
         """Get the active local model backend, loading it if needed."""
         return self._runtime._get_active_backend(model_name)
-
-    def _resolve_default_target(self, provider_name: str, model_name: str) -> tuple[str, str]:
-        """Validate configured defaults and choose a fallback target when needed."""
-        if provider_name:
-            if self._provider_registry.get(provider_name) is not None and model_name:
-                return provider_name, model_name
-            return self._fallback_target()
-
-        if model_name:
-            name, version = self._parse_name_version(model_name)
-            if self._refresh_model_entry(name, version) is not None:
-                return "", model_name
-            return self._fallback_target()
-
-        return "", ""
-
-    def _fallback_target(self) -> tuple[str, str]:
-        """Choose a best-effort replacement target when the configured default is invalid."""
-        installed_models = self._model_registry.list_models()
-        if installed_models:
-            entry = installed_models[0]
-            return "", f"{entry.name}@{entry.version}"
-
-        for provider_entry in self._provider_registry.list_providers():
-            runtime: RemoteProvider | None = None
-            try:
-                runtime = self._provider_registry.create_provider(provider_entry.name)
-                models = runtime.list_models()
-            except Exception:
-                models = []
-            finally:
-                if runtime is not None:
-                    try:
-                        runtime.close()
-                    except Exception:
-                        pass
-            if models:
-                selected = models[0].id or models[0].name
-                if selected:
-                    return provider_entry.name, selected
-
-        return "", ""
 
     def _ensure_backend_dependencies(self, backend_name: str) -> bool:
         """Prompt to install missing optional backend dependencies when needed."""

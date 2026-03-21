@@ -72,7 +72,9 @@ jobs:
           python -m pipx install --force dist/*.whl
           PIPX_BIN_DIR="$(python -m pipx environment --value PIPX_BIN_DIR)"
           printf "/exit\n" | "$PIPX_BIN_DIR/localagentcli"
-          python -m pipx uninstall localagentcli
+          # Uninstall from a directory without ./localagentcli/ — pipx treats existing paths as
+          # filesystem targets, and the package source layout shadows the distribution name.
+          (cd /tmp && python -m pipx uninstall localagentcli)
 
   publish-testpypi:
     if: github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi'

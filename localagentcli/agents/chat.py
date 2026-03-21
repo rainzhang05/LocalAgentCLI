@@ -9,6 +9,7 @@ from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage, StreamChunk
 from localagentcli.session.compactor import ContextCompactor
 from localagentcli.session.instructions import (
+    build_conversation_model_messages,
     build_instruction_messages,
     build_system_instructions,
 )
@@ -55,7 +56,7 @@ class ChatController:
         self._session.touch()
         self.compact_if_needed()
 
-        messages = self._build_messages()
+        messages = build_conversation_model_messages(self._session)
         options = dict(self._generation_config)
         if generation_options:
             options.update(generation_options)
@@ -98,27 +99,6 @@ class ChatController:
         """Remove a pinned instruction by index."""
         del self._session.pinned_instructions[index]
         self._session.touch()
-
-    def _build_messages(self) -> list[ModelMessage]:
-        """Build the model input with pinned instructions and session history."""
-        system_parts = build_system_instructions(self._session)
-        conversation: list[ModelMessage] = []
-
-        for message in self._session.history:
-            if message.role == "system":
-                system_parts.append(message.content)
-                continue
-            conversation.append(
-                ModelMessage(
-                    role=message.role,
-                    content=message.content,
-                    metadata=dict(message.metadata),
-                )
-            )
-
-        if system_parts:
-            return [ModelMessage(role="system", content="\n\n".join(system_parts)), *conversation]
-        return conversation
 
     def _messages_for_token_estimation(self) -> list[Message]:
         """Build the full context that counts against the model window."""

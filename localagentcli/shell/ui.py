@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 from rich.console import Console
 from rich.text import Text
 
 from localagentcli import __version__
-from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands import agent as agent_cmd
@@ -32,25 +30,10 @@ from localagentcli.commands import status as status_cmd
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
-from localagentcli.models.backends.base import (
-    ModelBackend,
-    backend_label,
-    backend_requirement_names,
-    check_backend_dependencies,
-    install_backend_dependencies,
-)
-from localagentcli.models.detector import HardwareDetector, ModelDetector
-from localagentcli.models.installer import ModelInstaller
-from localagentcli.models.registry import ModelEntry, ModelRegistry
+from localagentcli.models.registry import ModelEntry
 from localagentcli.providers.base import RemoteProvider
-from localagentcli.providers.keys import KeyManager
-from localagentcli.providers.registry import ProviderRegistry
-from localagentcli.safety.approval import ApprovalManager
-from localagentcli.safety.boundary import WorkspaceBoundary
-from localagentcli.safety.layer import SafetyLayer
+from localagentcli.runtime import RuntimeMessage, RuntimeServices, SessionExecutionRuntime
 from localagentcli.safety.rollback import RollbackManager
-from localagentcli.session.instructions import sync_workspace_instruction
-from localagentcli.session.manager import SessionManager
 from localagentcli.shell.prompt import (
     SelectionOption,
     confirm_choice,
@@ -59,9 +42,7 @@ from localagentcli.shell.prompt import (
     prompt_action,
 )
 from localagentcli.shell.streaming import StreamRenderer
-from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
-from localagentcli.tools import create_default_tool_registry
 
 
 class ShellUI:
@@ -77,38 +58,22 @@ class ShellUI:
         self._storage = storage
         self._first_run = first_run
         self._console = Console()
-
-        self._logger = Logger(
-            storage.logs_dir,
-            config.get("general.logging_level", "normal"),
-        )
-
-        self._key_manager = KeyManager(storage.secrets_dir)
-        hf_token_cmd.restore_hf_token_environment(self._key_manager)
-        self._provider_registry = ProviderRegistry(config, self._key_manager)
-        self._model_registry = ModelRegistry(storage.registry_path)
-        self._model_detector = ModelDetector()
-        self._hardware_detector = HardwareDetector()
-        self._model_installer = ModelInstaller(
-            models_dir=storage.models_dir,
-            cache_dir=storage.cache_dir,
-            registry=self._model_registry,
-            detector=self._model_detector,
-            console=self._console,
-        )
-        self._session_manager = SessionManager(
-            storage.sessions_dir,
-            config,
-            default_target_resolver=self._resolve_default_target,
-        )
-        self._session_manager.new_session()
+        self._services = RuntimeServices.create(config, storage, self._console)
+        self._logger = self._services.logger
+        self._key_manager = self._services.key_manager
+        self._provider_registry = self._services.provider_registry
+        self._model_registry = self._services.model_registry
+        self._model_detector = self._services.model_detector
+        self._hardware_detector = self._services.hardware_detector
+        self._model_installer = self._services.model_installer
+        self._session_manager = self._services.session_manager
         self._stream_renderer = StreamRenderer(self._console)
-        self._active_provider: RemoteProvider | None = None
-        self._active_provider_name = ""
-        self._active_backend: ModelBackend | None = None
-        self._active_backend_model = ""
+        self._runtime = SessionExecutionRuntime(
+            services=self._services,
+            emit=self._emit_runtime_message,
+            confirm_backend_install=self._confirm_backend_install,
+        )
         self._agent_controller: AgentController | None = None
-        self._agent_controller_key: tuple[object, ...] | None = None
         self._awaiting_idle_exit_confirmation = False
 
         self._router = CommandRouter()
@@ -234,150 +199,54 @@ class ShellUI:
 
     def _handle_plain_text(self, text: str) -> None:
         """Handle plain text input according to the current session mode."""
-        model = self._resolve_active_model()
-        if model is None:
-            self._console.print(
-                "[dim]No model connected. Use /setup, /set, or configure a "
-                "model/provider to start chatting.[/dim]"
-            )
-            return
-
-        session = self._session_manager.current
-        if session.mode == "agent":
-            if self._agent_controller is not None and self._agent_controller.has_active_task:
-                self._stream_renderer.render_error(
-                    "An agent task is already running. Press Ctrl+C to stop it before "
-                    "starting a new one."
-                )
-                return
-            agent_controller = self._get_or_create_agent_controller(model)
-
-            try:
-                dispatch = agent_controller.dispatch_input(text)
-                if agent_controller.last_compaction_count:
-                    self._stream_renderer.render_activity(
-                        "Context compacted: summarized "
-                        f"{agent_controller.last_compaction_count} messages"
-                    )
-                if dispatch.stream is not None:
-                    self._stream_renderer.render_status(
-                        f"Agent route: {_humanize_route(dispatch.triage.outcome)}."
-                    )
-                    self._stream_renderer.render_stream(dispatch.stream)
-                elif dispatch.events is not None:
-                    self._drain_agent_events(dispatch.events)
-            except KeyboardInterrupt:
-                model.cancel()
-                agent_controller.stop("Agent task interrupted.")
-                self._stream_renderer.render_warning("Agent task interrupted.")
-            except Exception as exc:
-                agent_controller.stop()
-                self._stream_renderer.render_error(str(exc))
-            return
-
-        chat_controller = ChatController(
-            model=model,
-            session=session,
-            context_limit=self._context_limit(),
-        )
-        chunks = chat_controller.handle_input(
-            text,
-            generation_options=self._generation_options(),
-        )
-        if chat_controller.last_compaction_count:
-            self._stream_renderer.render_activity(
-                f"Context compacted: summarized {chat_controller.last_compaction_count} messages"
-            )
-
         try:
-            self._stream_renderer.render_stream(chunks)
+            turn = self._runtime.dispatch_text(text)
+            self._agent_controller = turn.controller if turn is not None else None
+            if turn is None:
+                return
+
+            if turn.compaction_count:
+                self._stream_renderer.render_activity(
+                    f"Context compacted: summarized {turn.compaction_count} messages"
+                )
+
+            if turn.mode == "agent":
+                if turn.stream is not None and turn.route:
+                    self._stream_renderer.render_status(
+                        f"Agent route: {_humanize_route(turn.route)}."
+                    )
+                    self._stream_renderer.render_stream(turn.stream)
+                elif turn.events is not None:
+                    self._drain_agent_events(turn.events)
+                return
+
+            if turn.stream is not None:
+                self._stream_renderer.render_stream(turn.stream)
         except KeyboardInterrupt:
-            model.cancel()
-            self._stream_renderer.render_warning("Generation interrupted.")
+            model = self._resolve_active_model()
+            if model is not None:
+                model.cancel()
+            if self._session_manager.current.mode == "agent" and self._agent_controller is not None:
+                self._agent_controller.stop("Agent task interrupted.")
+                self._stream_renderer.render_warning("Agent task interrupted.")
+            else:
+                self._stream_renderer.render_warning("Generation interrupted.")
         except Exception as exc:
+            if self._session_manager.current.mode == "agent" and self._agent_controller is not None:
+                self._agent_controller.stop()
             self._stream_renderer.render_error(str(exc))
 
     def _resolve_active_model(self) -> ModelAbstractionLayer | None:
         """Resolve the active local backend or remote provider into a model abstraction."""
-        session = self._session_manager.current
-        backend: ModelBackend | None = None
+        return self._runtime.resolve_active_model()
 
-        if session.model and not session.provider:
-            backend = self._get_active_backend(session.model)
-            if backend is None:
-                self._console.print(
-                    f"[red]Failed to load model '{session.model}'. "
-                    "Check /models inspect for details.[/red]"
-                )
-                return None
-        elif session.provider:
-            if not session.model:
-                self._console.print(
-                    "[dim]No provider model selected. Use /set or /set default to choose one.[/dim]"
-                )
-                return None
-            backend = self._get_active_provider(session.provider)
-            if backend is None:
-                self._console.print(
-                    f"[red]Failed to connect to provider '{session.provider}'. "
-                    "Check /providers test.[/red]"
-                )
-                return None
-
-        if backend is None:
-            return None
-        return ModelAbstractionLayer(backend)
-
-    def _get_active_provider(self, provider_name: str) -> RemoteProvider | None:
+    def _get_active_provider(self, provider_name: str):
         """Get the active provider, caching the instance."""
-        if self._active_provider and self._active_provider_name == provider_name:
-            self._active_provider.set_active_model(self._session_manager.current.model or None)
-            return self._active_provider
-        try:
-            if self._active_provider is not None:
-                self._active_provider.close()
-            self._active_provider = self._provider_registry.create_provider(provider_name)
-            self._active_provider_name = provider_name
-            self._active_provider.set_active_model(self._session_manager.current.model or None)
-            return self._active_provider
-        except Exception:
-            if self._active_provider is not None:
-                self._active_provider.close()
-            self._active_provider = None
-            self._active_provider_name = ""
-            return None
+        return self._runtime._get_active_provider(provider_name)
 
-    def _get_active_backend(self, model_name: str) -> ModelBackend | None:
+    def _get_active_backend(self, model_name: str):
         """Get the active local model backend, loading it if needed."""
-        if self._active_backend and self._active_backend_model == model_name:
-            return self._active_backend
-
-        if self._active_backend is not None:
-            try:
-                self._active_backend.unload()
-            except Exception:
-                pass
-            self._active_backend = None
-            self._active_backend_model = ""
-
-        name, version = self._parse_name_version(model_name)
-        entry = self._refresh_model_entry(name, version)
-        if entry is None:
-            return None
-
-        try:
-            if not self._ensure_backend_dependencies(entry.format):
-                return None
-            backend = self._create_backend(entry.format)
-            backend.load(Path(entry.path))
-            self._active_backend = backend
-            self._active_backend_model = model_name
-            return backend
-        except Exception as exc:
-            self._logger.error("Failed to load model '%s': %s", model_name, exc)
-            self._active_backend = None
-            self._active_backend_model = ""
-            return None
+        return self._runtime._get_active_backend(model_name)
 
     def _resolve_default_target(self, provider_name: str, model_name: str) -> tuple[str, str]:
         """Validate configured defaults and choose a fallback target when needed."""
@@ -423,55 +292,11 @@ class ShellUI:
 
     def _ensure_backend_dependencies(self, backend_name: str) -> bool:
         """Prompt to install missing optional backend dependencies when needed."""
-        if backend_name == "mlx" and sys.platform != "darwin":
-            return True
+        return self._runtime._ensure_backend_dependencies(backend_name)
 
-        installed, _missing = check_backend_dependencies(backend_name)
-        if installed:
-            return True
-
-        label = backend_label(backend_name)
-        dependency_list = ", ".join(backend_requirement_names(backend_name))
-        should_install = confirm_choice(
-            f"The {label} backend requires {dependency_list}. Install it now?",
-            default=True,
-        )
-        if should_install is None:
-            self._stream_renderer.render_warning(f"{label} backend loading cancelled.")
-            return False
-
-        if not should_install:
-            self._stream_renderer.render_warning(
-                f"{label} backend dependencies were not installed."
-            )
-            return False
-
-        self._stream_renderer.render_status(f"Installing {label} backend dependencies...")
-        success, message = install_backend_dependencies(backend_name)
-        if not success:
-            self._stream_renderer.render_error(
-                f"Failed to install {label} backend dependencies: {message}"
-            )
-            return False
-
-        self._stream_renderer.render_success(f"{label} backend dependencies installed.")
-        return True
-
-    def _create_backend(self, fmt: str) -> ModelBackend:
+    def _create_backend(self, fmt: str):
         """Create the appropriate backend instance for a model format."""
-        if fmt == "mlx":
-            from localagentcli.models.backends.mlx import MLXBackend
-
-            return MLXBackend()
-        if fmt == "gguf":
-            from localagentcli.models.backends.gguf import GGUFBackend
-
-            return GGUFBackend()
-        if fmt == "safetensors":
-            from localagentcli.models.backends.safetensors import SafetensorsBackend
-
-            return SafetensorsBackend()
-        raise ValueError(f"Unknown model format: '{fmt}'")
+        return self._runtime._create_backend(fmt)
 
     def _display_welcome(self) -> None:
         """Show the welcome banner."""
@@ -568,86 +393,28 @@ class ShellUI:
                 path = self._session_manager.save_session()
                 self._console.print(f"Session saved to {path}")
 
-        if self._active_backend is not None:
-            try:
-                self._active_backend.unload()
-            except Exception:
-                pass
-
-        if self._active_provider is not None:
-            self._active_provider.close()
-
-        if self._agent_controller is not None:
-            self._agent_controller.stop()
+        self._runtime.close()
+        self._agent_controller = None
 
         self._logger.normal("Session ended")
         self._console.print("[dim]Goodbye.[/dim]")
 
     def _generation_options(self) -> dict[str, object]:
         """Build generation options from the effective configuration."""
-        options: dict[str, object] = {
-            "temperature": self._session_manager.get_effective_config("generation.temperature")
-            or 0.7,
-            "max_tokens": self._session_manager.get_effective_config("generation.max_tokens")
-            or 4096,
-            "top_p": self._session_manager.get_effective_config("generation.top_p") or 1.0,
-        }
-        session = self._session_manager.current
-        if session.provider and session.model:
-            options["model"] = session.model
-        return options
+        return self._runtime.build_generation_options()
 
     def _context_limit(self) -> int:
         """Return the best-known context limit for the active target."""
-        session = self._session_manager.current
-        if session.model and not session.provider:
-            name, version = self._parse_name_version(session.model)
-            entry = self._refresh_model_entry(name, version)
-            if entry is not None:
-                for key in ("context_length", "context_window", "n_ctx"):
-                    value = entry.metadata.get(key)
-                    if isinstance(value, int) and value > 0:
-                        return value
-        return 8192
+        return self._runtime.context_limit()
 
     def _get_or_create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Reuse the current agent controller when the target/session is unchanged."""
-        key = (
-            self._session_manager.current.id,
-            self._session_manager.current.workspace,
-            self._session_manager.current.provider,
-            self._session_manager.current.model,
-            self._session_manager.get_effective_config("safety.approval_mode") or "balanced",
-            id(model.backend),
-        )
-        if self._agent_controller is not None and self._agent_controller_key == key:
-            return self._agent_controller
-        self._agent_controller = self._create_agent_controller(model)
-        self._agent_controller_key = key
+        self._agent_controller = self._runtime.get_or_create_agent_controller(model)
         return self._agent_controller
 
     def _create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Build or replace the active agent controller for the current session."""
-        workspace_root = self._workspace_root()
-        approval = ApprovalManager(
-            self._session_manager.get_effective_config("safety.approval_mode") or "balanced"
-        )
-        self._agent_controller = AgentController(
-            model=model,
-            session=self._session_manager.current,
-            tool_registry=create_default_tool_registry(workspace_root),
-            approval=approval,
-            safety=SafetyLayer(
-                approval,
-                WorkspaceBoundary(workspace_root),
-                RollbackManager(self._session_manager.current.id, self._storage.cache_dir),
-            ),
-            rollback_storage=self._storage.cache_dir,
-            context_limit=self._context_limit(),
-            generation_config=self._generation_options(),
-            inactivity_timeout=self._session_manager.get_effective_config("timeouts.inactivity")
-            or 600,
-        )
+        self._agent_controller = self._runtime.create_agent_controller(model)
         return self._agent_controller
 
     def _drain_agent_events(self, events) -> None:
@@ -865,7 +632,7 @@ class ShellUI:
 
     def _workspace_root(self) -> Path:
         """Resolve the current session workspace to an absolute path."""
-        return Path(self._session_manager.current.workspace).expanduser().resolve()
+        return self._runtime.workspace_root()
 
     def _rollback_manager(self) -> RollbackManager:
         """Return the rollback manager for the current session."""
@@ -891,17 +658,7 @@ class ShellUI:
 
     def _active_target_label(self) -> str:
         """Describe the active local model or remote provider for the status header."""
-        session = self._session_manager.current
-        if session.provider:
-            model_name = session.model or "remote"
-            return f"{session.provider} ({model_name})"
-        if session.model:
-            name, version = self._parse_name_version(session.model)
-            entry = self._model_registry.get_model(name, version)
-            if entry is not None:
-                return f"{session.model} ({entry.format})"
-            return session.model
-        return "(none)"
+        return self._runtime.active_target_label()
 
     def _session_prompt_history(self) -> list[str]:
         """Load persisted prompt history from the current session metadata."""
@@ -937,49 +694,11 @@ class ShellUI:
 
     def _parse_name_version(self, model_name: str) -> tuple[str, str | None]:
         """Parse a stored model reference in name@version form."""
-        if "@" in model_name:
-            name, version = model_name.rsplit("@", 1)
-            return name, version
-        return model_name, None
+        return self._services.parse_name_version(model_name)
 
     def _refresh_model_entry(self, name: str, version: str | None) -> ModelEntry | None:
         """Re-detect a local model on disk and repair stale registry metadata."""
-        entry = self._model_registry.get_model(name, version)
-        if entry is None:
-            return None
-
-        model_path = Path(entry.path)
-        if not model_path.exists():
-            return entry
-
-        try:
-            detection = self._model_detector.detect(
-                model_path,
-                allow_unsupported_backend=True,
-            )
-        except Exception:
-            return entry
-
-        updates: dict[str, object] = {}
-        if detection.format != entry.format:
-            updates["format"] = detection.format
-
-        merged_metadata = dict(entry.metadata)
-        if merged_metadata.get("backend") != detection.backend:
-            merged_metadata["backend"] = detection.backend
-        for key, value in detection.metadata.items():
-            if merged_metadata.get(key) != value:
-                merged_metadata[key] = value
-        if merged_metadata != entry.metadata:
-            updates["metadata"] = merged_metadata
-
-        if updates:
-            try:
-                self._model_registry.update_version(entry.name, entry.version, updates)
-                entry = self._model_registry.get_model(name, version) or entry
-            except KeyError:
-                return entry
-        return entry
+        return self._services.refresh_model_entry(name, version)
 
     def _should_exit_after_idle_interrupt(self) -> bool:
         """Exit after two idle Ctrl+C presses with no other action in between."""
@@ -992,10 +711,32 @@ class ShellUI:
 
     def _sync_workspace_instruction(self) -> None:
         """Cache repository-level AGENTS.md instructions for the active session."""
-        try:
-            sync_workspace_instruction(self._session_manager.current)
-        except Exception:
-            return
+        self._runtime.sync_workspace_instruction()
+
+    def _emit_runtime_message(self, message: RuntimeMessage) -> None:
+        """Render runtime-owned user-visible messages through shell surfaces."""
+        if message.kind == "status":
+            self._stream_renderer.render_status(message.text)
+        elif message.kind == "success":
+            self._stream_renderer.render_success(message.text)
+        elif message.kind == "warning":
+            self._stream_renderer.render_warning(message.text)
+        elif message.kind == "error":
+            self._stream_renderer.render_error(message.text)
+        else:
+            self._console.print(f"[dim]{message.text}[/dim]")
+
+    def _confirm_backend_install(
+        self,
+        _backend_name: str,
+        label: str,
+        dependency_list: str,
+    ) -> bool | None:
+        """Prompt the user before installing missing backend dependencies."""
+        return confirm_choice(
+            f"The {label} backend requires {dependency_list}. Install it now?",
+            default=True,
+        )
 
 
 def _humanize_route(route: str) -> str:

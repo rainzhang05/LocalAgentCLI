@@ -26,6 +26,7 @@ from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.safety.layer import SafetyLayer
 from localagentcli.tools.base import ToolResult
 from localagentcli.tools.registry import ToolRegistry
+from localagentcli.tools.router import ToolRouter
 
 _STEP_PROMPT = (
     "You are LocalAgentCLI operating in agent mode. "
@@ -42,7 +43,7 @@ class AgentLoop:
     def __init__(
         self,
         model: ModelAbstractionLayer,
-        tools: ToolRegistry,
+        tools: ToolRegistry | ToolRouter,
         planner: TaskPlanner,
         safety: SafetyLayer,
         max_consecutive_errors: int = 5,

@@ -81,6 +81,19 @@ class SessionManager:
         self._current = session
         return session
 
+    def fork_session(self, name: str, fork_name: str | None = None) -> Session:
+        """Fork a saved session into a new in-memory session with a fresh id."""
+        source = self.load_session(name)
+        data = source.to_dict()
+        now = datetime.now()
+        data["id"] = str(uuid4())
+        data["name"] = fork_name or f"{name}_fork_{now.strftime('%Y%m%d_%H%M%S')}"
+        data["created_at"] = now.isoformat()
+        data["updated_at"] = now.isoformat()
+        forked = Session.from_dict(data)
+        self._current = forked
+        return forked
+
     def list_sessions(self) -> list[dict]:
         """List all saved sessions with summary info."""
         sessions: list[dict] = []

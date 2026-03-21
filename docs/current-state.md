@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
+> **Last updated**: 2026-03-21 (Runtime-core extraction: shared `RuntimeServices` and `SessionExecutionRuntime`; `localagentcli exec` one-shot surface; shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -25,8 +25,8 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-18 |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-21 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, debounces completion menu refreshes during typing when the toolkit app loop is available, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, and exposes a persistent prompt-time status toolbar (local target label from registry metadata only, without repeated on-disk detection on each toolbar paint) that can surface agent route/phase and undo availability alongside shared action/confirm prompts |
+| `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-21 — entry bootstrap now supports both the interactive shell and a one-shot `localagentcli exec` surface that reuses the shared runtime core instead of constructing a separate non-interactive stack |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-21 — prompt shows a live slash-command menu with arrow-key selection, keeps matching options visible while editing/backspacing across root and nested pickers, debounces completion menu refreshes during typing when the toolkit app loop is available, auto-loads repository-root `AGENTS.md` instructions, exits on consecutive idle `Ctrl+C` presses without a save prompt, exposes a persistent prompt-time status toolbar (local target label from registry metadata only, without repeated on-disk detection on each toolbar paint) that can surface agent route/phase and undo availability alongside shared action/confirm prompts, and now delegates model/controller wiring through shared runtime services rather than owning the full execution composition itself |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations, and router-level unknown/invalid command errors now include consistent `/help` guidance plus close-match suggestions when available |
 | `[x]` | `/exit` command | 2026-03-17 |
@@ -153,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-20 — 782 tests total across unit, component, integration, and CLI coverage, including regressions for readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 85.10% coverage |
+| `[x]` | Unit tests | 2026-03-21 — 792 tests total across unit, component, integration, and CLI coverage, now including runtime-core and one-shot entrypoint regressions alongside readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 84.46% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |

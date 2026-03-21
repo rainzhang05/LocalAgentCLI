@@ -84,6 +84,7 @@ class SessionManager:
     def fork_session(self, name: str, fork_name: str | None = None) -> Session:
         """Fork a saved session into a new in-memory session with a fresh id."""
         source = self.load_session(name)
+        parent_id = source.id
         data = source.to_dict()
         now = datetime.now()
         data["id"] = str(uuid4())
@@ -91,6 +92,9 @@ class SessionManager:
         data["created_at"] = now.isoformat()
         data["updated_at"] = now.isoformat()
         forked = Session.from_dict(data)
+        forked.metadata["fork_parent_name"] = name
+        forked.metadata["fork_parent_id"] = parent_id
+        forked.metadata["forked_at"] = now.isoformat()
         self._current = forked
         return forked
 

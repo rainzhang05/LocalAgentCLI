@@ -308,6 +308,8 @@ class SessionExecutionRuntime:
             model=model,
             session=self._services.session_manager.current,
             context_limit=self.context_limit(),
+            generation_config=self.build_generation_options(),
+            on_session_mutated=self._services.session_manager.schedule_named_autosave,
         )
         chunks = chat_controller.handle_input(
             text,
@@ -430,6 +432,7 @@ class SessionExecutionRuntime:
                 "timeouts.inactivity"
             )
             or 600,
+            on_session_mutated=self._services.session_manager.schedule_named_autosave,
         )
         return self._agent_controller
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-LocalAgentCLI is a production-grade, local-first AI CLI providing a unified interactive shell for local models (Hugging Face, direct downloads) and remote models (API providers). It delivers a modern agentic CLI experience with full transparency, strict safety controls, consistent cross-platform behavior, and zero manual configuration requirement.
+LocalAgentCLI is a production-grade, local-first AI CLI providing a unified interactive shell plus a shared execution core for local models (Hugging Face, direct downloads) and remote models (API providers). It delivers a modern agentic CLI experience with full transparency, strict safety controls, consistent cross-platform behavior, and zero manual configuration requirement.
 
 ---
 
@@ -10,9 +10,13 @@ LocalAgentCLI is a production-grade, local-first AI CLI providing a unified inte
 
 ```
 ┌─────────────────────────────────┐
-│          Shell UI               │  ← Input parsing, streaming output, activity rendering
+│          CLI Surfaces           │  ← Interactive shell, one-shot exec
+├─────────────────────────────────┤
+│            Shell UI             │  ← Prompt loop, activity rendering, approvals
 ├─────────────────────────────────┤
 │        Command Router           │  ← Slash commands vs. plain text dispatch
+├─────────────────────────────────┤
+│ Runtime Services & Execution    │  ← Shared session/config/model/tool wiring
 ├─────────────────────────────────┤
 │       Session Manager           │  ← State, history, context compaction
 ├─────────────────────────────────┤
@@ -20,7 +24,7 @@ LocalAgentCLI is a production-grade, local-first AI CLI providing a unified inte
 ├────────────────┬────────────────┤
 │ Local Backends │ Remote Provid. │  ← MLX / GGUF / Safetensors | OpenAI / Anthropic / REST
 ├────────────────┴────────────────┤
-│       Agent Controller          │  ← Chat mode / Agent mode execution
+│   Chat / Agent Controllers      │  ← Chat mode / Agent mode execution
 ├─────────────────────────────────┤
 │         Tool Runtime            │  ← file, shell, git, test tools
 ├─────────────────────────────────┤
@@ -38,12 +42,19 @@ Each layer communicates only with its immediate neighbors. No layer may bypass t
 
 ### Shell UI
 - Accepts user input from the terminal
-- Routes input: lines starting with `/` go to Command Router; all other text goes to the active model via Session Manager
+- Routes input: lines starting with `/` go to Command Router; all other text goes through the shared execution runtime for chat or agent handling
 - Renders streaming model output token-by-token
 - Displays inline activity logs (tool calls, approvals, errors)
 - Provides a scrollable reasoning panel when the model emits reasoning tokens
 - Handles interrupt signals (Ctrl+C) to cancel in-flight operations gracefully
 - Shows a persistent status header (active model, mode, workspace)
+
+### Runtime Services And Execution
+- Owns shared process-level services such as config, storage, registries, sessions, model installation helpers, and logging
+- Resolves the active backend or provider into the unified model abstraction
+- Builds shared generation options, context limits, tool registries, and safety wiring
+- Exposes reusable chat-turn and agent-dispatch entrypoints for both the interactive shell and non-interactive surfaces
+- Keeps controller reuse and model/provider caching out of the prompt loop
 
 ### Command Router
 - Maintains a registry of all slash commands
@@ -118,7 +129,10 @@ Each backend must:
 ```
 localagentcli/
 ├── __init__.py
-├── __main__.py              # Entry point: `localagentcli` command (`localagent` alias)
+├── __main__.py              # Entry point: interactive shell + one-shot exec surface
+├── runtime/
+│   ├── __init__.py
+│   └── core.py              # Shared runtime services and execution helpers
 ├── shell/
 │   ├── __init__.py
 │   ├── ui.py                # ShellUI — input loop, rendering, status header

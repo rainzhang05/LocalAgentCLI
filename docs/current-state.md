@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Submission/event runtime: `RuntimeServices`, `SessionExecutionRuntime`, `SessionRuntime`, append-only runtime event logs, MCP-backed dynamic tool discovery, explicit sandbox mode, dynamic tool routing, expanded `localagentcli exec` modes and saved-session resume/fork; shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
+> **Last updated**: 2026-03-21 (Phase 4 continuity: headless `exec` persists named sessions on interrupt/error; forked sessions record `fork_parent_*` / `forked_at` metadata. Plus submission/event runtime, append-only runtime event logs, MCP-backed dynamic tool discovery, explicit sandbox mode, dynamic tool routing, expanded `localagentcli exec` modes; shell responsiveness: toolbar target labeling, slash-command completion debounce, batched neutral status lines in `StreamRenderer`.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -36,7 +36,7 @@ After implementing a component:
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-21 — sandbox mode is now first-class in config, and MCP server definitions can be provided through `mcp_servers` tables for runtime tool discovery |
 | `[x]` | Session state dataclass | 2026-03-17 |
-| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — invalid startup default targets are repaired to the next valid model/provider target with one explicit warning naming the old and replacement targets, and headless exec can now resume or fork saved sessions before running a turn |
+| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — invalid startup default targets are repaired with one explicit warning; headless exec resumes or forks saved sessions; `fork_session` records fork lineage in metadata; exec persists to the named session on exit even after Ctrl+C or errors when `--session`, `--fork`, or `--save-session` applies |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
 | `[x]` | Logger (file-based, leveled) | 2026-03-17 |
 

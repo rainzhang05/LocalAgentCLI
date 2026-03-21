@@ -79,6 +79,17 @@ class TestSessionExecutionRuntime:
 
         assert first is second
 
+    def test_mode_change_invalidates_agent_controller_cache(self, config, storage):
+        runtime, _emitted = _make_runtime(config, storage)
+        model = MagicMock()
+        model.backend = object()
+
+        first = runtime.get_or_create_agent_controller(model)
+        runtime._services.session_manager.current.mode = "chat"
+        second = runtime.get_or_create_agent_controller(model)
+
+        assert first is not second
+
     def test_dispatch_agent_turn_returns_route_and_controller(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)
         runtime._services.session_manager.current.mode = "agent"

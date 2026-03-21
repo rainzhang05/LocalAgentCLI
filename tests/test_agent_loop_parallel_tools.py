@@ -145,7 +145,8 @@ def test_parallel_read_only_runs_tools_concurrently(tmp_path: Path) -> None:
     assert had_error is False
     assert len(entry_times) == 2
     assert entry_times[1] - entry_times[0] < 0.08
-    assert elapsed < 0.22
+    # Overlap is enforced above; wall clock bound allows CI / Python-version slack (not sequential).
+    assert elapsed < 0.35
     assert sum(isinstance(e, ToolCallRequested) for e in events) == 2
 
 

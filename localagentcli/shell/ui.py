@@ -895,7 +895,7 @@ class ShellUI:
             return f"{session.provider} ({model_name})"
         if session.model:
             name, version = self._parse_name_version(session.model)
-            entry = self._refresh_model_entry(name, version)
+            entry = self._model_registry.get_model(name, version)
             if entry is not None:
                 return f"{session.model} ({entry.format})"
             return session.model

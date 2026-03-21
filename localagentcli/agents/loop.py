@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +33,9 @@ from localagentcli.session.task_context import (
 from localagentcli.tools.base import Tool, ToolResult
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.router import ToolRouter
+
+# Bounded fan-out for read-only parallel batches (I/O-bound tools still benefit on 1-CPU hosts).
+_PARALLEL_READ_ONLY_MAX_WORKERS = 16
 
 _STEP_PROMPT = (
     "You are LocalAgentCLI operating in agent mode. "
@@ -307,7 +309,7 @@ class AgentLoop:
                 rollback_summary=decision.rollback_summary,
             )
 
-        max_workers = max(1, min(len(prepared), os.cpu_count() or 4))
+        max_workers = min(len(prepared), _PARALLEL_READ_ONLY_MAX_WORKERS)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(self._execute_tool_safely, tool, arguments)

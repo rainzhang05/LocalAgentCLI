@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from localagentcli.__main__ import main
+from localagentcli.models.backends.base import StreamChunk
 
 
 class TestMain:
@@ -72,8 +73,9 @@ class TestMain:
         _, kwargs = mock_ui_cls.call_args
         assert kwargs["first_run"] is False
 
-    @patch("localagentcli.__main__.StreamRenderer")
+    @patch("localagentcli.__main__.SessionRuntime")
     @patch("localagentcli.__main__.SessionExecutionRuntime")
+    @patch("localagentcli.__main__.SessionEventLog")
     @patch("localagentcli.__main__.RuntimeServices")
     @patch("localagentcli.__main__.ConfigManager")
     @patch("localagentcli.__main__.StorageManager")
@@ -82,8 +84,9 @@ class TestMain:
         mock_storage_cls,
         mock_config_cls,
         mock_services_cls,
+        mock_event_log_cls,
         mock_runtime_cls,
-        mock_renderer_cls,
+        mock_session_runtime_cls,
     ):
         mock_storage = MagicMock()
         mock_storage.config_path.exists.return_value = True
@@ -95,20 +98,104 @@ class TestMain:
         mock_services = MagicMock()
         mock_services_cls.create.return_value = mock_services
 
-        runtime = MagicMock()
-        runtime.run_chat_turn.return_value = SimpleNamespace(
-            stream=iter(["chunk"]),
-            compaction_count=0,
-        )
-        mock_runtime_cls.return_value = runtime
+        exec_runtime = MagicMock()
+        mock_runtime_cls.return_value = exec_runtime
 
-        renderer = MagicMock()
-        mock_renderer_cls.return_value = renderer
+        session_runtime = MagicMock()
+        session_runtime.iter_events.return_value = iter(
+            [
+                SimpleNamespace(
+                    type="stream_chunk",
+                    data=StreamChunk(text="chunk"),
+                    message="",
+                    to_dict=lambda: {"type": "stream_chunk"},
+                ),
+                SimpleNamespace(
+                    type="turn_completed",
+                    data={"final_text": "chunk"},
+                    message="chunk",
+                    to_dict=lambda: {"type": "turn_completed"},
+                ),
+            ]
+        )
+        mock_session_runtime_cls.return_value = session_runtime
 
         result = main(["exec", "hello", "world"])
 
         assert result == 0
-        runtime.sync_workspace_instruction.assert_called_once()
-        runtime.run_chat_turn.assert_called_once_with("hello world")
-        renderer.render_stream.assert_called_once()
-        runtime.close.assert_called_once()
+        exec_runtime.sync_workspace_instruction.assert_called_once()
+        session_runtime.submit.assert_called_once()
+        session_runtime.close.assert_called_once()
+
+    @patch("localagentcli.__main__.SessionRuntime")
+    @patch("localagentcli.__main__.SessionExecutionRuntime")
+    @patch("localagentcli.__main__.SessionEventLog")
+    @patch("localagentcli.__main__.RuntimeServices")
+    @patch("localagentcli.__main__.ConfigManager")
+    @patch("localagentcli.__main__.StorageManager")
+    def test_main_exec_loads_saved_session(
+        self,
+        mock_storage_cls,
+        mock_config_cls,
+        mock_services_cls,
+        mock_event_log_cls,
+        mock_runtime_cls,
+        mock_session_runtime_cls,
+    ):
+        mock_storage = MagicMock()
+        mock_storage.config_path.exists.return_value = True
+        mock_storage_cls.return_value = mock_storage
+        mock_config_cls.return_value = MagicMock()
+
+        session_manager = MagicMock()
+        session_manager.current.id = "session-1"
+        services = MagicMock()
+        services.session_manager = session_manager
+        mock_services_cls.create.return_value = services
+        mock_runtime_cls.return_value = MagicMock()
+
+        session_runtime = MagicMock()
+        session_runtime.iter_events.return_value = iter(())
+        mock_session_runtime_cls.return_value = session_runtime
+
+        main(["exec", "--session", "saved", "hello"])
+
+        session_manager.load_session.assert_called_once_with("saved")
+        session_manager.save_session.assert_called_once_with("saved")
+
+    @patch("localagentcli.__main__.SessionRuntime")
+    @patch("localagentcli.__main__.SessionExecutionRuntime")
+    @patch("localagentcli.__main__.SessionEventLog")
+    @patch("localagentcli.__main__.RuntimeServices")
+    @patch("localagentcli.__main__.ConfigManager")
+    @patch("localagentcli.__main__.StorageManager")
+    def test_main_exec_forks_session(
+        self,
+        mock_storage_cls,
+        mock_config_cls,
+        mock_services_cls,
+        mock_event_log_cls,
+        mock_runtime_cls,
+        mock_session_runtime_cls,
+    ):
+        mock_storage = MagicMock()
+        mock_storage.config_path.exists.return_value = True
+        mock_storage_cls.return_value = mock_storage
+        mock_config_cls.return_value = MagicMock()
+
+        session_manager = MagicMock()
+        session_manager.current.id = "session-1"
+        session_manager.fork_session.return_value = SimpleNamespace(name="saved_fork")
+        services = MagicMock()
+        services.session_manager = session_manager
+        mock_services_cls.create.return_value = services
+        mock_runtime_cls.return_value = MagicMock()
+
+        session_runtime = MagicMock()
+        session_runtime.iter_events.return_value = iter(())
+        mock_session_runtime_cls.return_value = session_runtime
+
+        main(["exec", "--fork", "saved", "hello"])
+
+        session_manager.fork_session.assert_called_once_with("saved")
+        session_manager.save_session.assert_called_once_with("saved_fork")

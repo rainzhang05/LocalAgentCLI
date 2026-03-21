@@ -13,6 +13,7 @@ from rich.text import Text
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.models.registry import ModelEntry, ModelRegistry
+from localagentcli.runtime import RuntimeTurn
 from localagentcli.shell import prompt as prompt_module
 from localagentcli.shell.prompt import (
     ACTION_PROMPT_TOOLBAR,
@@ -668,22 +669,19 @@ class TestShellUIRun:
     def test_agent_mode_plain_text_uses_agent_controller(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._session_manager.current.mode = "agent"
-        ui._resolve_active_model = MagicMock(return_value=MagicMock())
         ui._stream_renderer = MagicMock()
-
-        with patch("localagentcli.shell.ui.AgentController") as mock_controller_cls:
-            controller = MagicMock()
-            controller.dispatch_input.return_value = SimpleNamespace(
+        controller = MagicMock()
+        ui._runtime.dispatch_text = MagicMock(
+            return_value=RuntimeTurn(
+                mode="agent",
                 events=iter(["agent-event"]),
-                stream=None,
+                controller=controller,
             )
-            controller.last_compaction_count = 0
-            controller.has_active_task = False
-            mock_controller_cls.return_value = controller
+        )
 
-            ui._handle_plain_text("do something")
+        ui._handle_plain_text("do something")
 
-        controller.dispatch_input.assert_called_once_with("do something")
+        ui._runtime.dispatch_text.assert_called_once_with("do something")
         ui._stream_renderer.render_agent_event.assert_called_once_with("agent-event")
 
     def test_rebuild_prompt_session_uses_session_history(self, config, storage):
@@ -792,26 +790,22 @@ class TestShellUIRun:
 class TestShellUIModelResolution:
     def test_resolve_active_model_uses_provider_backend(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
-        ui._session_manager.current.provider = "openai"
-        ui._session_manager.current.model = "gpt-4o"
-        backend = MagicMock()
+        resolved = MagicMock()
+        ui._runtime.resolve_active_model = MagicMock(return_value=resolved)
 
-        with patch.object(ui, "_get_active_provider", return_value=backend):
-            model = ui._resolve_active_model()
+        model = ui._resolve_active_model()
 
-        assert model is not None
-        assert model.backend is backend
+        assert model is resolved
+        ui._runtime.resolve_active_model.assert_called_once()
 
     def test_resolve_active_model_reports_local_load_failure(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
-        ui._console = MagicMock()
-        ui._session_manager.current.model = "demo@v1"
+        ui._runtime.resolve_active_model = MagicMock(return_value=None)
 
-        with patch.object(ui, "_get_active_backend", return_value=None):
-            model = ui._resolve_active_model()
+        model = ui._resolve_active_model()
 
         assert model is None
-        assert "Failed to load model" in ui._console.print.call_args.args[0]
+        ui._runtime.resolve_active_model.assert_called_once()
 
     def test_ensure_backend_dependencies_installs_missing_packages(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -819,12 +813,12 @@ class TestShellUIModelResolution:
 
         with (
             patch(
-                "localagentcli.shell.ui.check_backend_dependencies",
+                "localagentcli.runtime.core.check_backend_dependencies",
                 return_value=(False, ["llama_cpp"]),
             ),
             patch("localagentcli.shell.ui.confirm_choice", return_value=True) as mock_confirm,
             patch(
-                "localagentcli.shell.ui.install_backend_dependencies",
+                "localagentcli.runtime.core.install_backend_dependencies",
                 return_value=(True, "installed"),
             ) as mock_install,
         ):
@@ -843,7 +837,7 @@ class TestShellUIModelResolution:
 
         with (
             patch(
-                "localagentcli.shell.ui.check_backend_dependencies",
+                "localagentcli.runtime.core.check_backend_dependencies",
                 return_value=(False, ["llama_cpp"]),
             ),
             patch(
@@ -1134,6 +1128,9 @@ class TestShellUIHelpers:
         ui._session_manager.current.mode = "chat"
         ui._resolve_active_model = MagicMock(return_value=model)
         ui._stream_renderer = MagicMock()
+        ui._runtime.dispatch_text = MagicMock(
+            return_value=RuntimeTurn(mode="chat", stream=iter(()))
+        )
         ui._stream_renderer.render_stream.side_effect = KeyboardInterrupt
 
         ui._handle_plain_text("hello")
@@ -1145,10 +1142,10 @@ class TestShellUIHelpers:
         ui = ShellUI(config=config, storage=storage)
         model = MagicMock()
         controller = MagicMock()
-        controller.dispatch_input.side_effect = KeyboardInterrupt
         ui._session_manager.current.mode = "agent"
         ui._resolve_active_model = MagicMock(return_value=model)
-        ui._get_or_create_agent_controller = MagicMock(return_value=controller)
+        ui._runtime.dispatch_text = MagicMock(side_effect=KeyboardInterrupt)
+        ui._agent_controller = controller
         ui._stream_renderer = MagicMock()
 
         ui._handle_plain_text("do something")

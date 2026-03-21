@@ -46,6 +46,12 @@ explicitly with `--approval-policy`. The current headless options are:
 - `deny`: reject approval-requiring actions and let the agent recover or fail
 - `auto`: auto-submit approval responses without prompting
 
+Runtime sandbox posture is controlled separately through `safety.sandbox_mode`:
+- `workspace-write`: the normal default posture
+- `read-only`: block side-effecting tools at the safety gate
+- `danger-full-access`: disable the additional sandbox-mode block, while still
+  preserving the normal approval and workspace-boundary rules
+
 ---
 
 ## Approval UX

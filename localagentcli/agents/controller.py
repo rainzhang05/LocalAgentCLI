@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +66,7 @@ class AgentController:
         context_limit: int = 8192,
         generation_config: dict[str, object] | None = None,
         inactivity_timeout: int | None = None,
+        on_session_mutated: Callable[[], None] | None = None,
     ):
         self._model = model
         self._session = session
@@ -91,6 +92,11 @@ class AgentController:
         self._last_compaction_count = 0
         self._last_triage: TaskTriage | None = None
         self._direct_stream_active = False
+        self._on_session_mutated = on_session_mutated
+
+    def _notify_autosave(self) -> None:
+        if self._on_session_mutated is not None:
+            self._on_session_mutated()
 
     @property
     def has_active_task(self) -> bool:
@@ -302,6 +308,7 @@ class AgentController:
             int(self._session.metadata.get("compaction_count", 0)) + 1
         )
         self._session.touch()
+        self._notify_autosave()
         return self._last_compaction_count
 
     def _with_route_event(
@@ -368,6 +375,7 @@ class AgentController:
         if isinstance(event, PlanGenerated):
             self._session.tasks.append(event.plan)
             self._session.touch()
+            self._notify_autosave()
             return
 
         if isinstance(event, StepStarted):
@@ -531,6 +539,7 @@ class AgentController:
         )
         self._session.touch()
         self.compact_if_needed()
+        self._notify_autosave()
 
     def _profile(self, phase: str) -> dict[str, object]:
         """Derive an internal generation profile for a specific agent phase."""
@@ -694,6 +703,7 @@ class AgentController:
         state["updated_at"] = datetime.now().isoformat()
         self._session.metadata["agent_task_state"] = state
         self._session.touch()
+        self._notify_autosave()
 
     def _messages_for_token_estimation(self) -> list[Message]:
         return [*build_instruction_messages(self._session), *self._session.history]

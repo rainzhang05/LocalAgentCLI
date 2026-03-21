@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Phase 4 continuity: headless `exec` persists named sessions on interrupt/error; forked sessions record `fork_parent_*` / `forked_at` metadata. Plus submission/event runtime, append-only runtime event logs, MCP-backed dynamic tool discovery, explicit sandbox mode, dynamic tool routing, expanded `localagentcli exec` modes; shell responsiveness: toolbar target labeling, slash-command completion debounce, batched neutral status lines in `StreamRenderer`.)
+> **Last updated**: 2026-03-21 (Phase 4: opt-in `[sessions]` named autosave with debounce + flush on shell drain/exit; session JSON `format_version`; headless exec persist-on-exit; fork lineage metadata. Plus runtime event logs, MCP tool discovery, sandbox mode, exec modes; shell toolbar and streaming polish.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -34,9 +34,9 @@ After implementing a component:
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
-| `[x]` | Config defaults and validation | 2026-03-21 — sandbox mode is now first-class in config, and MCP server definitions can be provided through `mcp_servers` tables for runtime tool discovery |
+| `[x]` | Config defaults and validation | 2026-03-21 — sandbox mode and `mcp_servers` tables; `[sessions].autosave_named` and `autosave_debounce_seconds` with bool/string coercion for autosave |
 | `[x]` | Session state dataclass | 2026-03-17 |
-| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — invalid startup default targets are repaired with one explicit warning; headless exec resumes or forks saved sessions; `fork_session` records fork lineage in metadata; exec persists to the named session on exit even after Ctrl+C or errors when `--session`, `--fork`, or `--save-session` applies |
+| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — default-target repair; exec resume/fork; fork lineage metadata; exec persist-on-exit; `format_version` on save; opt-in debounced named autosave and flush from shell drain/exit; chat/agent controllers notify the scheduler when wired from `SessionExecutionRuntime` |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
 | `[x]` | Logger (file-based, leveled) | 2026-03-17 |
 

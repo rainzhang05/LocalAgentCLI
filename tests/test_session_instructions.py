@@ -6,11 +6,12 @@ from datetime import datetime
 from pathlib import Path
 
 from localagentcli.session.instructions import (
+    build_conversation_model_messages,
     build_system_instructions,
     discover_workspace_instruction,
     sync_workspace_instruction,
 )
-from localagentcli.session.state import Session
+from localagentcli.session.state import Message, Session
 
 
 def _make_session(workspace: Path) -> Session:
@@ -64,3 +65,24 @@ def test_build_system_instructions_places_agents_before_pinned(tmp_path: Path):
         "Follow AGENTS.md.",
         "Keep answers concise.",
     ]
+
+
+def test_build_conversation_model_messages_merges_system_layers(tmp_path: Path):
+    session = _make_session(tmp_path)
+    session.metadata["workspace_instruction"] = "Repo line."
+    session.pinned_instructions.append("Pinned line.")
+    now = session.created_at
+    session.history.append(Message(role="system", content="History system.", timestamp=now))
+    session.history.append(Message(role="user", content="Hi", timestamp=now))
+
+    messages = build_conversation_model_messages(session)
+
+    assert len(messages) == 2
+    assert messages[0].role == "system"
+    assert messages[0].content.split("\n\n") == [
+        "Repo line.",
+        "Pinned line.",
+        "History system.",
+    ]
+    assert messages[1].role == "user"
+    assert messages[1].content == "Hi"

@@ -66,6 +66,10 @@ inactivity = 600                # Seconds of agent inactivity before pause
 # command = "python"
 # args = ["server.py"]
 # cwd = "/path/to/project"
+
+[sessions]
+autosave_named = false              # When true, debounce-save named sessions during interactive chat/agent work
+autosave_debounce_seconds = 2       # Minimum quiet period before writing (seconds); must be > 0
 ```
 
 ### Configurable Fields
@@ -85,6 +89,8 @@ inactivity = 600                # Seconds of agent inactivity before pause
 | `timeouts.shell_command` | int | `120` | Shell command timeout (seconds) |
 | `timeouts.model_response` | int | `300` | Model response timeout (seconds) |
 | `timeouts.inactivity` | int | `600` | Agent inactivity timeout (seconds) |
+| `sessions.autosave_named` | bool | `false` | When `true`, the interactive shell debounce-saves the current session to its saved name after chat/agent mutations (only applies when the session already has a name from `/session save`) |
+| `sessions.autosave_debounce_seconds` | int | `2` | Debounce interval for named autosaves; must be greater than zero |
 
 ### ConfigManager
 
@@ -203,6 +209,18 @@ Forking creates a new in-memory session from a saved JSON snapshot with a **new 
 
 For `localagentcli exec`, when a persistence target is in effect (`--session`, `--fork`, or `--save-session`), the current session is **written best-effort** to that name when the command exits, including after **Ctrl+C** (KeyboardInterrupt) or an error during the turn. If the final save fails (for example disk error), the error is swallowed so the process can still shut down; operators should verify the session file when durability matters.
 
+#### Named session autosave (interactive)
+
+When `sessions.autosave_named` is `true` in config (session overrides apply), the shell **schedules** a debounced write to the session’s saved file name after meaningful chat or agent updates (for example user messages, assistant replies, compaction, agent task state changes). The debounce window is `sessions.autosave_debounce_seconds`. After each drained runtime submission (including approval pauses), a **flush** runs so pending debounced saves are applied before the next prompt. On exit, a flush runs so in-flight autosaves are not lost.
+
+- **Unnamed sessions** (never saved with a name) are never autosaved; use `/session save` first.
+- **Failures** during autosave are ignored (best-effort); interactive use continues.
+- Default is **`false`** so disk writes stay opt-in.
+
+#### Session file format version
+
+Saved session JSON includes `format_version` (currently `1`) for forward compatibility. Older files without this field still load; the next save writes the current version.
+
 #### List
 
 - Command: `/session list`
@@ -298,6 +316,7 @@ When a session is saved, the system generates a final summary of the session for
 
 ```json
 {
+  "format_version": 1,
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "refactor-auth",
   "mode": "agent",

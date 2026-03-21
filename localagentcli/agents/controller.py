@@ -31,6 +31,7 @@ from localagentcli.safety.layer import SafetyLayer
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.compactor import ContextCompactor
 from localagentcli.session.instructions import (
+    build_conversation_model_messages,
     build_instruction_messages,
     build_system_instructions,
 )
@@ -146,7 +147,7 @@ class AgentController:
             raise RuntimeError("An agent task is already running.")
 
         self._append_user_input(task_input)
-        context = self._build_context_messages()
+        context = build_conversation_model_messages(self._session)
         triage = self._triage.classify(
             task_input,
             context,
@@ -692,24 +693,6 @@ class AgentController:
         state["updated_at"] = datetime.now().isoformat()
         self._session.metadata["agent_task_state"] = state
         self._session.touch()
-
-    def _build_context_messages(self) -> list[ModelMessage]:
-        system_parts = build_system_instructions(self._session)
-        conversation: list[ModelMessage] = []
-        for message in self._session.history:
-            if message.role == "system":
-                system_parts.append(message.content)
-                continue
-            conversation.append(
-                ModelMessage(
-                    role=message.role,
-                    content=message.content,
-                    metadata=dict(message.metadata),
-                )
-            )
-        if system_parts:
-            return [ModelMessage(role="system", content="\n\n".join(system_parts)), *conversation]
-        return conversation
 
     def _messages_for_token_estimation(self) -> list[Message]:
         return [*build_instruction_messages(self._session), *self._session.history]

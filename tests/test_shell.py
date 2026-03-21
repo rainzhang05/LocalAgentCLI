@@ -13,7 +13,7 @@ from rich.text import Text
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.models.registry import ModelEntry, ModelRegistry
-from localagentcli.runtime import RuntimeTurn
+from localagentcli.runtime import ApprovalDecisionOp, RuntimeEvent
 from localagentcli.shell import prompt as prompt_module
 from localagentcli.shell.prompt import (
     ACTION_PROMPT_TOOLBAR,
@@ -671,17 +671,25 @@ class TestShellUIRun:
         ui._session_manager.current.mode = "agent"
         ui._stream_renderer = MagicMock()
         controller = MagicMock()
-        ui._runtime.dispatch_text = MagicMock(
-            return_value=RuntimeTurn(
-                mode="agent",
-                events=iter(["agent-event"]),
-                controller=controller,
+        runtime = MagicMock()
+        runtime.submit = MagicMock()
+        runtime.iter_events = MagicMock(
+            return_value=iter(
+                [
+                    RuntimeEvent(
+                        type="agent_event",
+                        submission_id="sub-1",
+                        data="agent-event",
+                    )
+                ]
             )
         )
+        runtime.active_agent_controller = controller
+        ui._runtime = runtime
 
         ui._handle_plain_text("do something")
 
-        ui._runtime.dispatch_text.assert_called_once_with("do something")
+        runtime.submit.assert_called_once()
         ui._stream_renderer.render_agent_event.assert_called_once_with("agent-event")
 
     def test_rebuild_prompt_session_uses_session_history(self, config, storage):
@@ -791,20 +799,28 @@ class TestShellUIRun:
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
         ui._prompt_session.prompt.side_effect = ["/session load demo", "/exit"]
-        ui._runtime = MagicMock()
+        ui._execution_runtime = MagicMock()
+        old_runtime = MagicMock()
+        ui._runtime = old_runtime
         ui._agent_controller = MagicMock()
         ui._rebuild_prompt_session = MagicMock()
+        ui._build_session_runtime = MagicMock(return_value=MagicMock())
         ui._sync_workspace_instruction = MagicMock()
         ui._render_default_target_warning = MagicMock()
+        ui._handle_exit = MagicMock()
 
-        with patch.object(ui._router, "dispatch") as mock_dispatch:
+        with (
+            patch.object(ui._router, "dispatch") as mock_dispatch,
+            patch("localagentcli.shell.ui.SessionExecutionRuntime", return_value=MagicMock()),
+        ):
             mock_dispatch.side_effect = [
                 CommandResult.ok("loaded", data={"action": "session_changed"}),
                 CommandResult.ok("exit", data={"action": "exit"}),
             ]
             ui.run()
 
-        assert ui._runtime.close.call_count == 2
+        old_runtime.close.assert_called_once()
+        ui._build_session_runtime.assert_called_once()
         assert ui._agent_controller is None
         ui._rebuild_prompt_session.assert_called_once()
         assert ui._sync_workspace_instruction.call_count >= 2
@@ -815,21 +831,21 @@ class TestShellUIModelResolution:
     def test_resolve_active_model_uses_provider_backend(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         resolved = MagicMock()
-        ui._runtime.resolve_active_model = MagicMock(return_value=resolved)
+        ui._execution_runtime.resolve_active_model = MagicMock(return_value=resolved)
 
         model = ui._resolve_active_model()
 
         assert model is resolved
-        ui._runtime.resolve_active_model.assert_called_once()
+        ui._execution_runtime.resolve_active_model.assert_called_once()
 
     def test_resolve_active_model_reports_local_load_failure(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
-        ui._runtime.resolve_active_model = MagicMock(return_value=None)
+        ui._execution_runtime.resolve_active_model = MagicMock(return_value=None)
 
         model = ui._resolve_active_model()
 
         assert model is None
-        ui._runtime.resolve_active_model.assert_called_once()
+        ui._execution_runtime.resolve_active_model.assert_called_once()
 
     def test_ensure_backend_dependencies_installs_missing_packages(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1099,9 +1115,12 @@ class TestShellUIHelpers:
     def test_handle_agent_resume_approves_with_autonomy(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         controller = MagicMock()
-        controller.approve_action.return_value = iter(["event"])
         ui._agent_controller = controller
-        ui._drain_agent_events = MagicMock()
+        runtime = MagicMock()
+        runtime.active_submission_id = "sub-1"
+        runtime.submit = MagicMock()
+        ui._runtime = runtime
+        ui._drain_runtime_events = MagicMock()
 
         ui._handle_agent_resume(
             CommandResult.ok(
@@ -1110,8 +1129,11 @@ class TestShellUIHelpers:
             )
         )
 
-        controller.approve_action.assert_called_once_with(autonomous=True)
-        ui._drain_agent_events.assert_called_once()
+        submitted = runtime.submit.call_args.args[0]
+        assert isinstance(submitted, ApprovalDecisionOp)
+        assert submitted.decision == "approve"
+        assert submitted.autonomous is True
+        ui._drain_runtime_events.assert_called_once()
 
     def test_stop_agent_task_with_confirmation_decline(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1152,10 +1174,9 @@ class TestShellUIHelpers:
         ui._session_manager.current.mode = "chat"
         ui._resolve_active_model = MagicMock(return_value=model)
         ui._stream_renderer = MagicMock()
-        ui._runtime.dispatch_text = MagicMock(
-            return_value=RuntimeTurn(mode="chat", stream=iter(()))
-        )
-        ui._stream_renderer.render_stream.side_effect = KeyboardInterrupt
+        ui._runtime.submit = MagicMock()
+        ui._runtime.interrupt = MagicMock(return_value=iter(()))
+        ui._drain_runtime_events = MagicMock(side_effect=KeyboardInterrupt)
 
         ui._handle_plain_text("hello")
 
@@ -1168,7 +1189,9 @@ class TestShellUIHelpers:
         controller = MagicMock()
         ui._session_manager.current.mode = "agent"
         ui._resolve_active_model = MagicMock(return_value=model)
-        ui._runtime.dispatch_text = MagicMock(side_effect=KeyboardInterrupt)
+        ui._runtime.submit = MagicMock()
+        ui._runtime.interrupt = MagicMock(return_value=iter(()))
+        ui._drain_runtime_events = MagicMock(side_effect=KeyboardInterrupt)
         ui._agent_controller = controller
         ui._stream_renderer = MagicMock()
 

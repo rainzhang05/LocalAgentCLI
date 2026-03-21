@@ -9,7 +9,14 @@ from rich.console import Console
 
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import StreamChunk
-from localagentcli.runtime import RuntimeMessage, RuntimeServices, SessionExecutionRuntime
+from localagentcli.runtime import (
+    RuntimeMessage,
+    RuntimeServices,
+    SessionEventLog,
+    SessionExecutionRuntime,
+    SessionRuntime,
+    UserTurnOp,
+)
 
 
 class FakeBackend:
@@ -113,3 +120,32 @@ class TestSessionExecutionRuntime:
         assert turn.route == "direct_answer"
         assert turn.compaction_count == 2
         controller.dispatch_input.assert_called_once_with("answer directly")
+
+
+class TestSessionRuntime:
+    def test_event_log_records_submissions_and_events(self, config, storage):
+        services = RuntimeServices.create(config, storage, Console(record=True))
+        execution_runtime = SessionExecutionRuntime(
+            services=services,
+            emit=lambda _message: None,
+            confirm_backend_install=lambda _backend, _label, _deps: False,
+        )
+        runtime = SessionRuntime(
+            execution_runtime,
+            event_log=SessionEventLog(
+                storage.cache_dir / "runtime-events",
+                services.session_manager.current.id,
+            ),
+        )
+        backend = FakeBackend()
+        execution_runtime.resolve_active_model = MagicMock(
+            return_value=ModelAbstractionLayer(backend)
+        )
+
+        runtime.submit(UserTurnOp(prompt="hello", mode="chat"))
+        list(runtime.iter_events())
+
+        records = runtime._event_log.read_records()  # type: ignore[union-attr]
+        assert records
+        assert any(record["kind"] == "submission" for record in records)
+        assert any(record["kind"] == "event" for record in records)

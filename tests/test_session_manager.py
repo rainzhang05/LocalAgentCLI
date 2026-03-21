@@ -116,6 +116,9 @@ class TestSessionManagerSaveLoad:
         assert forked.name == "forked"
         assert len(forked.history) == 1
         assert forked.history[0].content == "hello"
+        assert forked.metadata.get("fork_parent_name") == "base"
+        assert forked.metadata.get("fork_parent_id") == base_id
+        assert forked.metadata.get("forked_at")
 
 
 class TestSessionManagerList:

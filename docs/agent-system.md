@@ -168,6 +168,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 - If approval is required, the visible phase becomes `waiting_approval` until the user approves, denies, or cancels the prompt
 - The tool executes and returns a `ToolResult`
 - Multiple tools may be batched in a single step if they are independent
+- When every call in a multi-call batch is read-only and auto-approved, those calls may run in parallel; `ToolCallRequested` events are still emitted in order before any `ToolCallResult`, and tool messages keep the same `tool_call_id` ordering the model supplied
 
 #### 4. Observe Results
 - The agent examines the tool output

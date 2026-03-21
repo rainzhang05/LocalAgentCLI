@@ -16,6 +16,16 @@ can merge:
 - callback-backed dynamic tools
 - MCP-backed stdio tools discovered from configured `mcp_servers`
 
+### Parameter schema rules
+
+Every tool’s `parameters_schema` must follow a small JSON Schema subset checked by `localagentcli/tools/schema.py` before the model sees the tool:
+
+- Top-level `"type"` must be the string `"object"`.
+- `"properties"`, if present, maps argument names to objects that each include a non-empty string `"type"` (for example `"string"`, `"integer"`, `"boolean"`).
+- `"required"`, if present, must be a list of strings and every name must exist in `"properties"`.
+
+`Tool.definition()` validates once per instance and raises `ValueError` if the schema is invalid. `ToolRouter.register_dynamic_tool` rejects invalid `DynamicToolSpec.parameters_schema` at registration time with the same rules.
+
 ---
 
 ## Core Tools

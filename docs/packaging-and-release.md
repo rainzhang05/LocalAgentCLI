@@ -52,6 +52,14 @@ The primary command launches the interactive shell. The package also exposes a s
 localagentcli exec "Explain the latest test failures."
 ```
 
+That headless surface also supports:
+
+```bash
+localagentcli exec --mode agent --json "Review the latest changes"
+localagentcli exec --session saved-work "Continue the task"
+localagentcli exec --fork saved-work "Try an alternate approach"
+```
+
 The package also exposes `localagent` as a compatibility alias.
 
 ### Entry Point Configuration
@@ -237,6 +245,7 @@ These flows must be tested end-to-end and must pass before any release:
    - `pipx install localagentcli` completes without errors
    - `localagentcli` launches the interactive shell
    - `localagentcli exec "hello"` runs a one-shot request through the shared runtime without entering the prompt loop
+   - `localagentcli exec --json "hello"` emits one runtime event per line on stdout
    - First-run `/setup` wizard completes successfully in interactive terminals
    - First-run `/setup` falls back to current/default values without prompting when stdin is non-interactive, so packaged smoke tests and piped launches do not fail with `EOFError`
    - Config file is created with valid defaults

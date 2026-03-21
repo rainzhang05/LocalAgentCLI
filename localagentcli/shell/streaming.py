@@ -26,6 +26,9 @@ from localagentcli.agents.events import (
 )
 from localagentcli.models.backends.base import StreamChunk
 
+# Coalesce consecutive neutral status lines before emitting (reduces panel reflow).
+_MAX_STATUS_BATCH = 12
+
 
 class StreamRenderer:
     """Render streaming output, reasoning, and activity updates in real time."""
@@ -36,6 +39,7 @@ class StreamRenderer:
         self._secondary_entries: deque[str] = deque(maxlen=8)
         self._rendered_secondary_count = 0
         self._primary_started = False
+        self._status_batch: list[str] = []
         self._symbols = {
             "error": _safe_symbol(console, "✗", "x"),
             "status": _safe_symbol(console, "ℹ", "i"),
@@ -54,6 +58,7 @@ class StreamRenderer:
         self._secondary_entries.clear()
         self._rendered_secondary_count = 0
         self._primary_started = False
+        self._status_batch.clear()
         for chunk in chunks:
             self.render_chunk(chunk)
         return self._buffer
@@ -87,11 +92,13 @@ class StreamRenderer:
 
     def _finalize(self) -> None:
         """Called when streaming is complete."""
-        has_pending_details = len(self._secondary_entries) > self._rendered_secondary_count
+        has_pending_tail = len(self._secondary_entries) > self._rendered_secondary_count or bool(
+            self._status_batch
+        )
         if self._primary_started:
             self._console.print()
         self.flush_pending_details()
-        if has_pending_details or not self._primary_started:
+        if has_pending_tail or not self._primary_started:
             self._console.print()
         self._primary_started = False
 
@@ -102,10 +109,11 @@ class StreamRenderer:
         self._console.print(f"[red]{self._symbols['error']} {error}[/red]")
 
     def render_status(self, message: str) -> None:
-        """Render a neutral status line."""
-        self._prepare_block_output()
-        self.flush_pending_details()
-        self._console.print(f"{self._symbols['status']} {message}")
+        """Render a neutral status line (batched until the next flush boundary)."""
+        self._status_batch.append(message)
+        if len(self._status_batch) >= _MAX_STATUS_BATCH:
+            self._prepare_block_output()
+            self.flush_pending_details()
 
     def render_success(self, message: str) -> None:
         """Render a success status line."""
@@ -128,20 +136,27 @@ class StreamRenderer:
         self._append_secondary(detail)
 
     def flush_pending_details(self) -> None:
-        """Flush any unrendered secondary detail entries."""
-        if len(self._secondary_entries) <= self._rendered_secondary_count:
+        """Emit queued secondary details and any batched neutral status lines."""
+        pending_secondary = len(self._secondary_entries) > self._rendered_secondary_count
+        pending_status = bool(self._status_batch)
+        if not pending_secondary and not pending_status:
             return
-        pending = list(self._secondary_entries)[self._rendered_secondary_count :]
-        if not pending:
-            return
-        self._console.print(
-            Panel(
-                "\n".join(pending),
-                title="Details",
-                border_style="dim",
-            )
-        )
-        self._rendered_secondary_count = len(self._secondary_entries)
+        if pending_secondary:
+            pending = list(self._secondary_entries)[self._rendered_secondary_count :]
+            if pending:
+                self._console.print(
+                    Panel(
+                        "\n".join(pending),
+                        title="Details",
+                        border_style="dim",
+                    )
+                )
+                self._rendered_secondary_count = len(self._secondary_entries)
+        if pending_status:
+            lines = self._dedupe_consecutive_status(self._status_batch)
+            body = "\n".join(f"{self._symbols['status']} {line}" for line in lines)
+            self._console.print(body)
+            self._status_batch.clear()
 
     def render_approval_prompt(self) -> None:
         """Render the inline approval prompt using the shared status grammar."""
@@ -171,11 +186,14 @@ class StreamRenderer:
                 self.render_status(event.summary)
             return
         if isinstance(event, PlanGenerated):
+            self._prepare_block_output()
             self.flush_pending_details()
             self._render_plan(event.plan, "Plan")
             return
         if isinstance(event, PlanUpdated):
             self.render_status(event.changes)
+            self._prepare_block_output()
+            self.flush_pending_details()
             self._render_plan(event.plan, "Plan")
             return
         if isinstance(event, StepStarted):
@@ -187,6 +205,7 @@ class StreamRenderer:
             )
             color = "yellow" if event.requires_approval else "green"
             suffix = " (HIGH RISK)" if event.risk_level == "high" else ""
+            self._prepare_block_output()
             self.flush_pending_details()
             self._console.print(
                 f"[{color}]{marker} {event.tool_name}: "
@@ -206,6 +225,7 @@ class StreamRenderer:
                     self.render_status(
                         f"Undo available: {event.rollback_entries} change(s). Use /agent undo."
                     )
+                    self.flush_pending_details()
             elif event.result.status == "denied":
                 self.render_warning(event.result.summary)
             else:
@@ -252,6 +272,19 @@ class StreamRenderer:
             cleaned = line.strip()
             if cleaned:
                 self._secondary_entries.append(cleaned)
+
+    def flush_agent_event_tail(self) -> None:
+        """Emit batched status lines and queued secondary after an agent event pass."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+
+    @staticmethod
+    def _dedupe_consecutive_status(messages: list[str]) -> list[str]:
+        out: list[str] = []
+        for msg in messages:
+            if not out or out[-1] != msg:
+                out.append(msg)
+        return out
 
     def _prepare_block_output(self) -> None:
         """Finish any inline primary output before rendering a block element."""

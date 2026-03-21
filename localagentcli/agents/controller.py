@@ -36,6 +36,7 @@ from localagentcli.session.instructions import (
 )
 from localagentcli.session.state import Message, Session
 from localagentcli.tools.registry import ToolRegistry
+from localagentcli.tools.router import ToolRouter
 
 
 @dataclass
@@ -57,7 +58,7 @@ class AgentController:
         self,
         model: ModelAbstractionLayer,
         session: Session,
-        tool_registry: ToolRegistry,
+        tool_registry: ToolRegistry | ToolRouter,
         approval: ApprovalManager | None = None,
         safety: SafetyLayer | None = None,
         rollback_storage: Path | None = None,

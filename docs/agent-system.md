@@ -73,7 +73,7 @@ class ChatController:
 
 ### Behavior
 
-In agent mode, user input first goes through an internal triage pass that uses the full effective context: pinned instructions, repository instructions from `AGENTS.md`, compacted history, and recent messages. The triage result determines one of three execution paths:
+In agent mode, user input first flows through the shared runtime submission/event layer and then through an internal triage pass that uses the full effective context: pinned instructions, repository instructions from `AGENTS.md`, compacted history, and recent messages. The triage result determines one of three execution paths:
 
 1. **`direct_answer`**: simple factual or explanatory prompts skip planning and are answered immediately through the normal model stream
 2. **`single_step_task`**: one concrete action gets a single synthesized step and executes without a separate planner round-trip

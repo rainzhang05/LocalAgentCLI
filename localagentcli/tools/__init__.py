@@ -14,6 +14,7 @@ from localagentcli.tools.git_diff import GitDiffTool
 from localagentcli.tools.git_status import GitStatusTool
 from localagentcli.tools.patch_apply import PatchApplyTool
 from localagentcli.tools.registry import ToolRegistry
+from localagentcli.tools.router import DynamicToolSpec, ToolRouter
 from localagentcli.tools.shell_execute import ShellExecuteTool
 from localagentcli.tools.test_execute import TestExecuteTool
 
@@ -40,6 +41,8 @@ def create_default_tool_registry(workspace_root: Path) -> ToolRegistry:
 __all__ = [
     "Tool",
     "ToolRegistry",
+    "ToolRouter",
     "ToolResult",
+    "DynamicToolSpec",
     "create_default_tool_registry",
 ]

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from localagentcli.tools.base import Tool, ToolResult
 from localagentcli.tools.registry import ToolRegistry
+from localagentcli.tools.schema import validate_function_parameters_schema
 
 
 @dataclass
@@ -75,6 +76,11 @@ class ToolRouter:
 
     def register_dynamic_tool(self, spec: DynamicToolSpec) -> None:
         """Register one callback-backed dynamic tool."""
+        issues = validate_function_parameters_schema(spec.parameters_schema)
+        if issues:
+            raise ValueError(
+                f"Dynamic tool {spec.name!r} has invalid parameters_schema: {'; '.join(issues)}"
+            )
         self._dynamic[spec.name] = DynamicTool(self._workspace_root, spec)
 
     def get_tool(self, name: str) -> Tool | None:

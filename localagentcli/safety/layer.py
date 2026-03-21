@@ -74,11 +74,13 @@ class SafetyLayer:
         approval_manager: ApprovalManager,
         boundary: WorkspaceBoundary,
         rollback: RollbackManager,
+        sandbox_mode: str = "workspace-write",
     ):
         self._approval = approval_manager
         self._boundary = boundary
         self._rollback = rollback
         self._pending_changes: dict[str, list[_PendingRollback]] = {}
+        self._sandbox_mode = sandbox_mode
 
     @property
     def rollback(self) -> RollbackManager:
@@ -87,6 +89,14 @@ class SafetyLayer:
 
     def check_and_approve(self, tool: Tool, args: dict) -> ApprovalResult:
         """Run boundary validation, risk classification, and approval checks."""
+        policy_block = self._sandbox_policy_block(tool)
+        if policy_block is not None:
+            return ApprovalResult(
+                status="blocked",
+                risk_level=RiskLevel.HIGH,
+                reason=policy_block,
+                risk_reason=policy_block,
+            )
         try:
             warnings = self._validate_arguments(tool, args)
         except WorkspaceBoundaryError as exc:
@@ -114,6 +124,15 @@ class SafetyLayer:
             risk_reason=risk_reason,
             rollback_summary=rollback_summary,
         )
+
+    @property
+    def sandbox_mode(self) -> str:
+        """Return the current runtime sandbox mode."""
+        return self._sandbox_mode
+
+    def set_sandbox_mode(self, sandbox_mode: str) -> None:
+        """Update the active runtime sandbox mode."""
+        self._sandbox_mode = sandbox_mode
 
     def pre_action(self, tool: Tool, args: dict) -> None:
         """Create backups before a modifying tool executes."""
@@ -249,3 +268,10 @@ class SafetyLayer:
 
     def _action_key(self, tool: Tool, args: dict) -> str:
         return f"{tool.name}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
+
+    def _sandbox_policy_block(self, tool: Tool) -> str | None:
+        if self._sandbox_mode == "danger-full-access":
+            return None
+        if self._sandbox_mode == "read-only" and not tool.is_read_only:
+            return "Runtime sandbox mode 'read-only' blocks side-effecting tools."
+        return None

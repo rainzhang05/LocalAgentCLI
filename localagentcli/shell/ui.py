@@ -536,6 +536,7 @@ class ShellUI:
         if result.presentation == "status":
             if result.message:
                 self._stream_renderer.render_status(result.message)
+                self._stream_renderer.flush_pending_details()
         elif result.presentation == "success":
             if result.message:
                 self._stream_renderer.render_success(result.message)
@@ -667,6 +668,7 @@ class ShellUI:
                     self._agent_controller.stop("Agent task stopped during approval prompt.")
                     self._stream_renderer.render_warning("Agent task stopped.")
                 return
+        self._stream_renderer.flush_agent_event_tail()
 
     def _prompt_for_tool_approval(self, event: ToolCallRequested) -> str:
         """Prompt inline for approval of a pending tool call."""

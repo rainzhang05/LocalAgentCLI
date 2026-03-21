@@ -96,7 +96,7 @@ class TestBackendAutoInstallIntegration:
             ) as mock_install,
             patch("localagentcli.shell.ui.confirm_choice", return_value=True) as mock_confirm,
             patch.object(
-                ui._runtime, "_create_backend", return_value=backend
+                ui._execution_runtime, "_create_backend", return_value=backend
             ) as mock_create_backend,
         ):
             ui._stream_renderer = MagicMock()
@@ -121,7 +121,7 @@ class TestBackendAutoInstallIntegration:
                 return_value=(False, ["llama_cpp"]),
             ),
             patch("localagentcli.shell.ui.confirm_choice", return_value=False),
-            patch.object(ui._runtime, "_create_backend") as mock_create_backend,
+            patch.object(ui._execution_runtime, "_create_backend") as mock_create_backend,
         ):
             ui._stream_renderer = MagicMock()
             active_backend = ui._get_active_backend("demo-model@v1")
@@ -146,7 +146,7 @@ class TestBackendAutoInstallIntegration:
                 return_value=(False, "pip failed"),
             ),
             patch("localagentcli.shell.ui.confirm_choice", return_value=True),
-            patch.object(ui._runtime, "_create_backend") as mock_create_backend,
+            patch.object(ui._execution_runtime, "_create_backend") as mock_create_backend,
         ):
             ui._stream_renderer = MagicMock()
             active_backend = ui._get_active_backend("demo-model@v1")

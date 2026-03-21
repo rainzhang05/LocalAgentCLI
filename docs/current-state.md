@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Phase 4: opt-in `[sessions]` named autosave with debounce + flush on shell drain/exit; session JSON `format_version`; headless exec persist-on-exit; fork lineage metadata. Plus runtime event logs, MCP tool discovery, sandbox mode, exec modes; shell toolbar and streaming polish.)
+> **Last updated**: 2026-03-21 — **Session durability (shipped):** JSON session files (`format_version`), optional named autosave, append-only runtime JSONL under the cache dir (not merged into chat history). **Agent tools:** read-only parallel batches use a bounded pool (up to 16 workers) so concurrent I/O-bound tools still run on single-CPU hosts. Also: exec persist-on-exit, fork metadata, MCP discovery, sandbox, shell/streaming polish.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -120,7 +120,7 @@ After implementing a component:
 | `[x]` | `git_diff` tool | 2026-03-18 |
 | `[x]` | `git_commit` tool | 2026-03-18 |
 | `[x]` | Agent controller | 2026-03-19 — session-integrated task orchestration now includes triage-based direct-answer fast path, single-step synthesis, controller reuse, remote capability validation by selected model id, interruption-aware cancellation, persisted `agent_task_state` snapshots, and explicit stopped vs timed-out vs failed outcomes |
-| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-21 — same as 2026-03-19 baseline, plus each step system prompt can append **Agent task status (runtime):** from `session.metadata["agent_task_state"]` while the task is active (`localagentcli/session/task_context.py`, `AgentLoop.run(..., session=...)`); multi-call turns whose tools are all read-only and auto-approved may execute those tools concurrently (`localagentcli/agents/loop.py`) |
+| `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-21 — step prompts may append **Agent task status (runtime):** from `session.metadata["agent_task_state"]` (`task_context.py`, `AgentLoop.run(..., session=...)`); eligible multi-call read-only batches run concurrently with `min(batch_size, 16)` thread-pool workers (`agents/loop.py`) |
 | `[x]` | Task planner | 2026-03-19 — model-driven JSON plans with heuristic fallback and replan support, now generating only the minimum number of steps needed instead of a fixed 2-6 step shape |
 | `[x]` | Agent events system | 2026-03-19 — structured route, phase, plan, step, reasoning, tool, completion, stopped, timeout, and failure events rendered by the shell, with approval-risk and rollback-preview metadata flowing into the renderer |
 | `[x]` | `/agent approve` command | 2026-03-19 — resumes pending tool actions and now persists autonomous approvals across future tasks in the shell and future sessions while still forcing explicit approval for high-risk actions |

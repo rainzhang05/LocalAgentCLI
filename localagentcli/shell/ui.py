@@ -363,6 +363,7 @@ class ShellUI:
     def _handle_exit(self, *, prompt_to_save: bool = True) -> None:
         """Handle clean shutdown with optional session save."""
         self._sync_prompt_history_to_session()
+        self._session_manager.flush_named_autosave()
         session = self._session_manager.current
         if prompt_to_save and session.is_modified:
             save = confirm_choice("Save session before exiting?", default=False)
@@ -416,8 +417,11 @@ class ShellUI:
 
     def _drain_runtime_events(self) -> None:
         """Drain typed runtime events until the current submission pauses or finishes."""
-        for event in self._runtime.iter_events():
-            self._handle_runtime_event(event)
+        try:
+            for event in self._runtime.iter_events():
+                self._handle_runtime_event(event)
+        finally:
+            self._session_manager.flush_named_autosave()
 
     def _handle_runtime_event(self, event: RuntimeEvent) -> None:
         """Render and respond to one typed runtime event."""

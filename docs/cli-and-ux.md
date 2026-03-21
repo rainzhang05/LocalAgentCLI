@@ -168,6 +168,21 @@ This keeps interactive command outcomes, cancellations, confirmations, and recov
 
 ## Input Handling
 
+### Non-Interactive Exec Surface
+
+LocalAgentCLI also exposes a small one-shot surface outside the interactive prompt loop:
+
+```bash
+localagentcli exec "Summarize the current repository status."
+```
+
+**Behavior:**
+- Reuses the same runtime core that powers shell chat turns
+- Streams the response immediately without starting the interactive prompt loop
+- Refreshes repository `AGENTS.md` instructions before the request, just like the shell
+- Keeps this first slice intentionally narrow: it is optimized for one chat-style turn rather than long-lived interactive agent workflows
+- Fails closed on flows that would require interactive approval, rather than silently widening autonomy
+
 ### Routing Rules
 
 | Input | Action |

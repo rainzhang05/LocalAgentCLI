@@ -225,8 +225,8 @@ The system implements automatic context compaction (summarization) to maintain u
 
 ### How It Works
 
-1. **Token counting**: After each interaction, the system estimates the token count of the full history
-2. **Threshold check**: If the token count exceeds 75% of the model's context window, compaction triggers
+1. **Token counting**: After each interaction, the system estimates tokens for the full prompt budget (repository instructions, pinned instructions, and message history). The estimate is a **coarse lower bound**: UTF-8 byte length of each message’s role and content, converted with a ceiling divide-by-four heuristic (not a real tokenizer), plus a small fixed per-message overhead and a capped contribution from non-empty `metadata` (so tool payloads are not treated as free).
+2. **Threshold check**: If the estimate reaches **75% of an effective context limit**, compaction triggers. The effective limit is the model context window minus a **generation headroom** reserved for the next reply (default: the smaller of one-eighth of the window, one-quarter of the window, and 2048 tokens). Pass `generation_headroom_tokens=0` to `ContextCompactor` to disable that reserve.
 3. **Summarization**: The oldest messages (excluding pinned instructions and the most recent N messages) are sent to the model with a summarization prompt
 4. **Replacement**: The summarized messages are replaced with a single `Message(role="system", content=summary, is_summary=True)`
 5. **Retention**: Pinned instructions and the most recent messages (configurable, default: last 10) are always kept verbatim
@@ -237,10 +237,15 @@ The system implements automatic context compaction (summarization) to maintain u
 # localagentcli/session/compactor.py
 
 class ContextCompactor:
-    def __init__(self, model: ModelAbstractionLayer, context_limit: int):
+    def __init__(
+        self,
+        model: ModelAbstractionLayer,
+        context_limit: int,
+        generation_headroom_tokens: int | None = None,
+    ):
         self._model = model
         self._context_limit = context_limit
-        self._threshold = 0.75  # Trigger at 75% of context limit
+        self._threshold = 0.75  # Trigger at 75% of effective context limit
         self._keep_recent = 10  # Always keep the last N messages
 
     def needs_compaction(self, messages: list[Message]) -> bool:
@@ -256,9 +261,7 @@ class ContextCompactor:
         """
 
     def estimate_tokens(self, messages: list[Message]) -> int:
-        """Estimate the token count for a list of messages.
-        Uses a simple heuristic (chars / 4) or the model's tokenizer if available.
-        """
+        """Estimate tokens using the shared UTF-8 byte ceiling heuristic."""
 ```
 
 ### Compaction Rules

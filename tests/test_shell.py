@@ -7,11 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
+from prompt_toolkit.utils import Event
 from rich.text import Text
 
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.models.registry import ModelEntry, ModelRegistry
+from localagentcli.shell import prompt as prompt_module
 from localagentcli.shell.prompt import (
     ACTION_PROMPT_TOOLBAR,
     COMMAND_MENU_HEIGHT,
@@ -23,6 +25,7 @@ from localagentcli.shell.prompt import (
     _has_selection_matches,
     _refresh_command_completion,
     _refresh_selection_completion,
+    _wire_live_completion_menu,
     confirm_choice,
     create_prompt_session,
     get_prompt_history_strings,
@@ -206,6 +209,71 @@ class TestCreatePromptSession:
 
         assert value == "/status"
         assert get_prompt_history_strings(session) == ["/help", "/status"]
+
+
+class TestCompletionMenuDebounce:
+    """Completion refresh is debounced when a running prompt_toolkit app is available."""
+
+    def test_sync_refresh_when_no_app(self):
+        refresher = MagicMock()
+        session = MagicMock()
+        buffer = MagicMock()
+        buffer.on_text_changed = Event(buffer)
+        session.default_buffer = buffer
+
+        with patch.object(prompt_module, "get_app_or_none", return_value=None):
+            _wire_live_completion_menu(session, refresher)
+            buffer.on_text_changed.fire()
+            buffer.on_text_changed.fire()
+
+        assert refresher.call_args_list == [
+            call(session.default_buffer),
+            call(session.default_buffer),
+        ]
+
+    def test_burst_text_changes_yield_one_refresher_after_timer(self):
+        refresher = MagicMock()
+
+        class _FakeHandle:
+            def __init__(self, loop: "_FakeLoop", callback: object) -> None:
+                self._loop = loop
+                self._callback = callback
+
+            def cancel(self) -> None:
+                if self._loop.pending is self:
+                    self._loop.pending = None
+
+            def run(self) -> None:
+                self._callback()
+
+        class _FakeLoop:
+            def __init__(self) -> None:
+                self.pending: _FakeHandle | None = None
+
+            def is_closed(self) -> bool:
+                return False
+
+            def call_later(self, delay, callback):
+                if self.pending is not None:
+                    self.pending.cancel()
+                self.pending = _FakeHandle(self, callback)
+                return self.pending
+
+        fake_app = SimpleNamespace(loop=_FakeLoop())
+        session = MagicMock()
+        buffer = MagicMock()
+        buffer.on_text_changed = Event(buffer)
+        session.default_buffer = buffer
+
+        with patch.object(prompt_module, "get_app_or_none", return_value=fake_app):
+            _wire_live_completion_menu(session, refresher)
+            for _ in range(5):
+                buffer.on_text_changed.fire()
+
+        refresher.assert_not_called()
+        assert fake_app.loop.pending is not None
+        fake_app.loop.pending.run()
+        refresher.assert_called_once_with(session.default_buffer)
 
 
 class TestPromptHelpers:
@@ -455,6 +523,48 @@ class TestShellUIStatusToolbar:
         ui._session_manager.current.model = "gpt-4.1"
 
         assert ui._active_target_label() == "openai (gpt-4.1)"
+
+    def test_active_target_label_shows_local_format_from_registry(
+        self, config, storage, tmp_path: Path
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        ui._model_registry.register(
+            ModelEntry(
+                name="demo",
+                version="v1",
+                format="gguf",
+                path=str(model_dir),
+                metadata={},
+            )
+        )
+        ui._session_manager.current.model = "demo@v1"
+
+        assert ui._active_target_label() == "demo@v1 (gguf)"
+
+    def test_prompt_toolbar_repeated_calls_skip_model_detection(
+        self, config, storage, tmp_path: Path
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        ui._model_registry.register(
+            ModelEntry(
+                name="demo",
+                version="v1",
+                format="gguf",
+                path=str(model_dir),
+                metadata={},
+            )
+        )
+        ui._session_manager.current.model = "demo@v1"
+        ui._model_detector.detect = MagicMock()
+
+        for _ in range(25):
+            ui._prompt_toolbar_text()
+
+        ui._model_detector.detect.assert_not_called()
 
     def test_display_welcome_uses_unified_text_style(self, config, storage):
         ui = ShellUI(config=config, storage=storage)

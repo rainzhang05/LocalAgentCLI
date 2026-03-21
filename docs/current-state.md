@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 (Shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion refreshes are debounced during typing.)
+> **Last updated**: 2026-03-21 (Shell responsiveness: toolbar target labeling avoids per-refresh model detection; slash-command completion debounce; batched neutral status lines and single Details flush per batch in `StreamRenderer`.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -91,7 +91,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Chat controller | 2026-03-18 — `localagentcli/agents/chat.py` routes chat turns through the model abstraction layer |
-| `[x]` | Streaming output renderer | 2026-03-19 — renderer now owns the shared output contract for status, success, warning, error, and secondary-detail lanes; late-arriving secondary detail is flushed once at safe boundaries instead of disappearing after the first primary text, and step/task activity wording is now normalized (`Step N started`, `Task completed`) |
+| `[x]` | Streaming output renderer | 2026-03-21 — renderer now owns the shared output contract for status, success, warning, error, and secondary-detail lanes; late-arriving secondary detail is flushed once at safe boundaries instead of disappearing after the first primary text; consecutive neutral status lines coalesce (one Details panel per batch, deduped identical neighbors) with explicit flush at agent-event tail from the shell; step/task activity wording remains normalized (`Step N started`, `Task completed`) |
 | `[x]` | Reasoning panel display | 2026-03-19 — chat, direct-answer, and planned-agent reasoning now all use the same dimmed `Details` lane rather than mixing separate reasoning presentations |
 | `[x]` | Context compactor (auto-summarization) | 2026-03-18 — `localagentcli/session/compactor.py` summarizes older history once context threshold is exceeded |
 | `[x]` | Pinned instructions | 2026-03-19 — retained on `Session`, combined with auto-detected repository `AGENTS.md` instructions, and preserved by `ChatController` across compaction |

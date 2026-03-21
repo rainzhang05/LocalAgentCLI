@@ -108,7 +108,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Tool base class (ABC) | 2026-03-18 |
-| `[x]` | Tool registry | 2026-03-21 — runtime now builds tool inventory through `ToolRouter`, which can merge built-in tools with callback-backed dynamic tool definitions and MCP-backed stdio tools without changing the agent loop contract |
+| `[x]` | Tool registry | 2026-03-21 — `ToolRouter` merges built-in, dynamic, and MCP stdio tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration |
 | `[x]` | `file_read` tool | 2026-03-18 |
 | `[x]` | `file_search` tool | 2026-03-18 |
 | `[x]` | `directory_list` tool | 2026-03-18 |

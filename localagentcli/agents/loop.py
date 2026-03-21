@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 
 from localagentcli.agents.events import (
     AgentEvent,
@@ -29,7 +31,7 @@ from localagentcli.session.task_context import (
     AGENT_TASK_RUNTIME_HEADING,
     format_agent_task_runtime_section,
 )
-from localagentcli.tools.base import ToolResult
+from localagentcli.tools.base import Tool, ToolResult
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.router import ToolRouter
 
@@ -246,6 +248,101 @@ class AgentLoop:
         return None, conversation, consecutive_errors
 
     def _handle_tool_calls(
+        self,
+        result: GenerationResult,
+    ) -> Generator[AgentEvent, bool, tuple[list[ModelMessage], bool]]:
+        if self._parallel_read_only_batch_eligible(result):
+            return (yield from self._handle_tool_calls_parallel_read_only(result))
+        return (yield from self._handle_tool_calls_sequential(result))
+
+    def _parallel_read_only_batch_eligible(self, result: GenerationResult) -> bool:
+        """True when every call can run concurrently: read-only and auto-approved."""
+        raw_calls = result.tool_calls
+        if len(raw_calls) < 2:
+            return False
+        for raw_call in raw_calls:
+            _call_id, tool_name, arguments, parse_error = self._normalize_tool_call(raw_call)
+            if parse_error is not None:
+                return False
+            tool = self._tools.get_tool(tool_name) if tool_name else None
+            if tool is None or not tool.is_read_only:
+                return False
+            decision = self._safety.check_and_approve(tool, arguments)
+            if not decision.approved:
+                return False
+        return True
+
+    def _execute_tool_safely(self, tool: Tool, arguments: dict) -> ToolResult:
+        """Run pre/post hooks and tool execution (used on worker threads for read-only tools)."""
+        self._safety.pre_action(tool, arguments)
+        tool_result = tool.execute(**arguments)
+        self._safety.post_action(tool, arguments, tool_result)
+        return tool_result
+
+    def _handle_tool_calls_parallel_read_only(
+        self,
+        result: GenerationResult,
+    ) -> Generator[AgentEvent, bool, tuple[list[ModelMessage], bool]]:
+        messages: list[ModelMessage] = []
+        had_error = False
+        prepared: list[tuple[str, str, dict, Tool]] = []
+
+        for raw_call in result.tool_calls:
+            call_id, tool_name, arguments, parse_error = self._normalize_tool_call(raw_call)
+            tool = self._tools.get_tool(tool_name) if tool_name else None
+            if tool is None or parse_error is not None:
+                raise RuntimeError("parallel read-only batch invariant violated")
+            decision = self._safety.check_and_approve(tool, arguments)
+            if not decision.approved:
+                raise RuntimeError("parallel read-only batch invariant violated")
+            resolved = tool.name
+            prepared.append((call_id, resolved, arguments, tool))
+            yield ToolCallRequested(
+                tool_name=resolved,
+                arguments=arguments,
+                requires_approval=False,
+                risk_level=decision.risk_level.value,
+                warnings=decision.warnings,
+                risk_reason=decision.risk_reason,
+                rollback_summary=decision.rollback_summary,
+            )
+
+        max_workers = max(1, min(len(prepared), os.cpu_count() or 4))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(self._execute_tool_safely, tool, arguments)
+                for _call_id, _name, arguments, tool in prepared
+            ]
+            tool_results = [f.result() for f in futures]
+
+        for (call_id, resolved_name, _arguments, _tool), tool_result in zip(
+            prepared, tool_results, strict=True
+        ):
+            rollback_entries = len(self._safety.rollback.get_history())
+            yield ToolCallResult(
+                tool_name=resolved_name,
+                result=tool_result,
+                rollback_entries=rollback_entries,
+            )
+            messages.append(
+                ModelMessage(
+                    role="tool",
+                    content=self._tool_payload(resolved_name, tool_result),
+                    metadata={"tool_call_id": call_id, "tool_name": resolved_name},
+                )
+            )
+            had_error = had_error or tool_result.status != "success"
+            if tool_result.status in {"denied", "error", "timeout"}:
+                yield PhaseChanged(
+                    phase="recovering",
+                    summary=(
+                        f"Recovering after {tool_result.status} tool result: {resolved_name}."
+                    ),
+                )
+
+        return messages, had_error
+
+    def _handle_tool_calls_sequential(
         self,
         result: GenerationResult,
     ) -> Generator[AgentEvent, bool, tuple[list[ModelMessage], bool]]:

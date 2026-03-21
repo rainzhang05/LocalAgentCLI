@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,8 @@ from filelock import FileLock
 
 from localagentcli.config.manager import ConfigManager
 from localagentcli.session.state import Session
+
+_SESSION_FORMAT_VERSION = 1
 
 
 class SessionManager:
@@ -29,6 +32,8 @@ class SessionManager:
         self._current: Session | None = None
         self._default_target_resolver = default_target_resolver
         self._pending_default_target_warning = ""
+        self._autosave_lock = threading.Lock()
+        self._autosave_timer: threading.Timer | None = None
 
     def new_session(self) -> Session:
         """Create a fresh session with defaults from config."""
@@ -59,10 +64,12 @@ class SessionManager:
         session.metadata["message_count"] = len(session.history)
 
         path = self._dir / f"{name}.json"
+        payload = dict(session.to_dict())
+        payload["format_version"] = _SESSION_FORMAT_VERSION
         lock = FileLock(str(path) + ".lock")
         with lock:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(session.to_dict(), f, indent=2)
+                json.dump(payload, f, indent=2)
 
         return path
 
@@ -76,6 +83,9 @@ class SessionManager:
         with lock:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+
+        if isinstance(data, dict):
+            data.pop("format_version", None)
 
         session = Session.from_dict(data)
         self._current = session
@@ -155,6 +165,80 @@ class SessionManager:
         warning = self._pending_default_target_warning
         self._pending_default_target_warning = ""
         return warning
+
+    def schedule_named_autosave(self) -> None:
+        """Schedule a debounced save when the session is named and autosave is enabled."""
+        if self._current is None or not self._named_autosave_enabled():
+            return
+        if self._current.name is None:
+            return
+        raw = self.get_effective_config("sessions.autosave_debounce_seconds")
+        try:
+            debounce = float(raw)
+        except (TypeError, ValueError):
+            debounce = 2.0
+        if debounce <= 0:
+            debounce = 2.0
+
+        def fire() -> None:
+            self._named_autosave_fire()
+
+        with self._autosave_lock:
+            if self._autosave_timer is not None:
+                self._autosave_timer.cancel()
+                self._autosave_timer = None
+            timer = threading.Timer(float(debounce), fire)
+            timer.daemon = True
+            self._autosave_timer = timer
+            timer.start()
+
+    def flush_named_autosave(self) -> None:
+        """Cancel pending debounced autosave and persist immediately if enabled and named."""
+        with self._autosave_lock:
+            if self._autosave_timer is not None:
+                self._autosave_timer.cancel()
+                self._autosave_timer = None
+        if not self._named_autosave_enabled():
+            return
+        try:
+            session = self.current
+        except RuntimeError:
+            return
+        if session.name is None:
+            return
+        try:
+            self.save_session(session.name)
+        except Exception:
+            pass
+
+    def cancel_named_autosave_timer(self) -> None:
+        """Cancel a pending debounced autosave without writing (e.g. before tests or shutdown)."""
+        with self._autosave_lock:
+            if self._autosave_timer is not None:
+                self._autosave_timer.cancel()
+                self._autosave_timer = None
+
+    def _named_autosave_enabled(self) -> bool:
+        if self._current is None:
+            return bool(self._config.get("sessions.autosave_named", False))
+        return bool(self.get_effective_config("sessions.autosave_named"))
+
+    def _named_autosave_fire(self) -> None:
+        with self._autosave_lock:
+            self._autosave_timer = None
+        if not self._named_autosave_enabled():
+            return
+        try:
+            session = self.current
+        except RuntimeError:
+            return
+        name = session.name
+        if name is None:
+            return
+        try:
+            self.save_session(name)
+        except Exception:
+            pass
 
     def _resolve_default_target(self, provider: str, model: str) -> tuple[str, str]:
         """Validate or replace the configured default target for new sessions."""

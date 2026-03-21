@@ -39,6 +39,7 @@ active_provider = ""            # CLI-wide default provider for remote targets
 
 [safety]
 approval_mode = "balanced"      # "balanced" | "autonomous"
+sandbox_mode = "workspace-write"  # "workspace-write" | "read-only" | "danger-full-access"
 
 [generation]
 temperature = 0.7
@@ -57,6 +58,14 @@ inactivity = 600                # Seconds of agent inactivity before pause
 # [providers.openai]
 # type = "openai"
 # base_url = "https://api.openai.com/v1"
+
+[mcp_servers]
+# MCP stdio servers are stored as nested tables
+# Example:
+# [mcp_servers.demo]
+# command = "python"
+# args = ["server.py"]
+# cwd = "/path/to/project"
 ```
 
 ### Configurable Fields
@@ -69,6 +78,7 @@ inactivity = 600                # Seconds of agent inactivity before pause
 | `model.active_model` | string | `""` | CLI-wide default target identifier. For local targets this is `<name>@<version>`; for remote targets this is the selected remote model id. |
 | `provider.active_provider` | string | `""` | CLI-wide default remote provider name. Empty means the default target is local or unset. |
 | `safety.approval_mode` | string | `"balanced"` | Approval mode (`balanced` or `autonomous`) |
+| `safety.sandbox_mode` | string | `"workspace-write"` | Runtime sandbox posture for tool execution |
 | `generation.temperature` | float | `0.7` | Sampling temperature |
 | `generation.max_tokens` | int | `4096` | Maximum tokens to generate |
 | `generation.top_p` | float | `1.0` | Nucleus sampling threshold |

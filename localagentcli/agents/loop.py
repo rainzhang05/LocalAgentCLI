@@ -24,6 +24,11 @@ from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.safety.layer import SafetyLayer
+from localagentcli.session.state import Session
+from localagentcli.session.task_context import (
+    AGENT_TASK_RUNTIME_HEADING,
+    format_agent_task_runtime_section,
+)
 from localagentcli.tools.base import ToolResult
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.router import ToolRouter
@@ -67,6 +72,7 @@ class AgentLoop:
         generation_options: dict[str, object] | None = None,
         planning_options: dict[str, object] | None = None,
         inactivity_timeout: int | None = None,
+        session: Session | None = None,
     ) -> Generator[AgentEvent, bool, None]:
         """Execute the full understand/plan/execute/observe loop."""
         options: dict[str, object] = {"temperature": 0.1, "max_tokens": 1200}
@@ -112,6 +118,7 @@ class AgentLoop:
                 step,
                 transcript,
                 options,
+                session,
             )
             transcript.extend(new_messages)
             last_activity = time.monotonic()
@@ -185,6 +192,7 @@ class AgentLoop:
         step: PlanStep,
         transcript: list[ModelMessage],
         options: dict[str, object],
+        session: Session | None,
     ) -> Generator[AgentEvent, bool, tuple[str | None, list[ModelMessage], int]]:
         conversation: list[ModelMessage] = []
         consecutive_errors = 0
@@ -194,7 +202,7 @@ class AgentLoop:
                 return None, conversation, consecutive_errors
 
             result = self._model.generate(
-                self._build_messages(task, plan, step, transcript, conversation),
+                self._build_messages(task, plan, step, transcript, conversation, session),
                 tools=self._tools.get_tool_definitions(),
                 tool_choice="auto",
                 **options,
@@ -351,20 +359,23 @@ class AgentLoop:
         step: PlanStep,
         transcript: list[ModelMessage],
         conversation: list[ModelMessage],
+        session: Session | None,
     ) -> list[ModelMessage]:
         plan_text = "\n".join(
             f"{plan_step.index}. [{plan_step.status}] {plan_step.description}"
             for plan_step in plan.steps
         )
-        system = ModelMessage(
-            role="system",
-            content=(
-                f"{_STEP_PROMPT}\n\n"
-                f"Task:\n{task}\n\n"
-                f"Plan:\n{plan_text}\n\n"
-                f"Current step:\n{step.index}. {step.description}"
-            ),
+        content = (
+            f"{_STEP_PROMPT}\n\n"
+            f"Task:\n{task}\n\n"
+            f"Plan:\n{plan_text}\n\n"
+            f"Current step:\n{step.index}. {step.description}"
         )
+        if session is not None:
+            runtime = format_agent_task_runtime_section(session)
+            if runtime:
+                content = f"{content}\n\n{AGENT_TASK_RUNTIME_HEADING}\n{runtime}"
+        system = ModelMessage(role="system", content=content)
         return [system, *transcript, *conversation]
 
     def _normalize_tool_call(

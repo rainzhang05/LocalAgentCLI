@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Iterator
 
@@ -25,12 +26,18 @@ class ChatController:
         session: Session,
         context_limit: int = 8192,
         generation_config: dict[str, object] | None = None,
+        on_session_mutated: Callable[[], None] | None = None,
     ) -> None:
         self._model = model
         self._session = session
         self._compactor = ContextCompactor(model, context_limit)
         self._generation_config = generation_config or {}
         self._last_compaction_count = 0
+        self._on_session_mutated = on_session_mutated
+
+    def _notify_autosave(self) -> None:
+        if self._on_session_mutated is not None:
+            self._on_session_mutated()
 
     @property
     def last_compaction_count(self) -> int:
@@ -55,6 +62,7 @@ class ChatController:
         )
         self._session.touch()
         self.compact_if_needed()
+        self._notify_autosave()
 
         messages = build_conversation_model_messages(self._session)
         options = dict(self._generation_config)
@@ -85,6 +93,7 @@ class ChatController:
             int(self._session.metadata.get("compaction_count", 0)) + 1
         )
         self._session.touch()
+        self._notify_autosave()
         return self._last_compaction_count
 
     def pin_instruction(self, instruction: str) -> None:
@@ -94,11 +103,13 @@ class ChatController:
             return
         self._session.pinned_instructions.append(cleaned)
         self._session.touch()
+        self._notify_autosave()
 
     def unpin_instruction(self, index: int) -> None:
         """Remove a pinned instruction by index."""
         del self._session.pinned_instructions[index]
         self._session.touch()
+        self._notify_autosave()
 
     def _messages_for_token_estimation(self) -> list[Message]:
         """Build the full context that counts against the model window."""
@@ -140,3 +151,4 @@ class ChatController:
                 )
             )
             self._session.touch()
+            self._notify_autosave()

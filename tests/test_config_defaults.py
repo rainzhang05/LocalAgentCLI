@@ -109,6 +109,17 @@ class TestValidateConfigValue:
         ok, msg = validate_config_value("general.workspace", "/any/path")
         assert ok
 
+    def test_sandbox_mode_valid_values(self):
+        for value in ("workspace-write", "read-only", "danger-full-access"):
+            ok, msg = validate_config_value("safety.sandbox_mode", value)
+            assert ok, msg
+            assert msg == ""
+
+    def test_sandbox_mode_invalid_uses_parse_error_message(self):
+        ok, msg = validate_config_value("safety.sandbox_mode", "nope")
+        assert not ok
+        assert "Invalid sandbox mode" in msg
+
     def test_all_schema_keys_have_defaults(self):
         """Every key in the schema should exist in the default config."""
         defaults = get_default_config()

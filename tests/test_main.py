@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from localagentcli.__main__ import main
 from localagentcli.models.backends.base import StreamChunk
@@ -102,22 +102,23 @@ class TestMain:
         mock_runtime_cls.return_value = exec_runtime
 
         session_runtime = MagicMock()
-        session_runtime.iter_events.return_value = iter(
-            [
-                SimpleNamespace(
-                    type="stream_chunk",
-                    data=StreamChunk(text="chunk"),
-                    message="",
-                    to_dict=lambda: {"type": "stream_chunk"},
-                ),
-                SimpleNamespace(
-                    type="turn_completed",
-                    data={"final_text": "chunk"},
-                    message="chunk",
-                    to_dict=lambda: {"type": "turn_completed"},
-                ),
-            ]
-        )
+
+        async def _exec_events():
+            yield SimpleNamespace(
+                type="stream_chunk",
+                data=StreamChunk(text="chunk"),
+                message="",
+                to_dict=lambda: {"type": "stream_chunk"},
+            )
+            yield SimpleNamespace(
+                type="turn_completed",
+                data={"final_text": "chunk"},
+                message="chunk",
+                to_dict=lambda: {"type": "turn_completed"},
+            )
+
+        session_runtime.aiter_events.return_value = _exec_events()
+        session_runtime.aclose = AsyncMock()
         mock_session_runtime_cls.return_value = session_runtime
 
         result = main(["exec", "hello", "world"])
@@ -125,7 +126,7 @@ class TestMain:
         assert result == 0
         exec_runtime.sync_workspace_instruction.assert_called_once()
         session_runtime.submit.assert_called_once()
-        session_runtime.close.assert_called_once()
+        session_runtime.aclose.assert_called_once()
 
     @patch("localagentcli.__main__.SessionRuntime")
     @patch("localagentcli.__main__.SessionExecutionRuntime")
@@ -155,7 +156,13 @@ class TestMain:
         mock_runtime_cls.return_value = MagicMock()
 
         session_runtime = MagicMock()
-        session_runtime.iter_events.return_value = iter(())
+
+        async def _empty_events():
+            if False:
+                yield  # pragma: no cover
+
+        session_runtime.aiter_events.return_value = _empty_events()
+        session_runtime.aclose = AsyncMock()
         mock_session_runtime_cls.return_value = session_runtime
 
         main(["exec", "--session", "saved", "hello"])
@@ -192,7 +199,13 @@ class TestMain:
         mock_runtime_cls.return_value = MagicMock()
 
         session_runtime = MagicMock()
-        session_runtime.iter_events.return_value = iter(())
+
+        async def _empty_events_fork():
+            if False:
+                yield  # pragma: no cover
+
+        session_runtime.aiter_events.return_value = _empty_events_fork()
+        session_runtime.aclose = AsyncMock()
         mock_session_runtime_cls.return_value = session_runtime
 
         main(["exec", "--fork", "saved", "hello"])
@@ -231,12 +244,18 @@ class TestMain:
 
         session_runtime = MagicMock()
 
-        def _raise_interrupt():
+        async def _raise_interrupt():
             raise KeyboardInterrupt()
             yield  # pragma: no cover
 
-        session_runtime.iter_events.return_value = _raise_interrupt()
-        session_runtime.interrupt.return_value = iter(())
+        session_runtime.aiter_events.return_value = _raise_interrupt()
+
+        async def _empty_interrupt():
+            if False:
+                yield  # pragma: no cover
+
+        session_runtime.ainterrupt.return_value = _empty_interrupt()
+        session_runtime.aclose = AsyncMock()
         mock_session_runtime_cls.return_value = session_runtime
 
         result = main(["exec", "--session", "saved", "hello"])
@@ -244,7 +263,7 @@ class TestMain:
         assert result == 1
         session_manager.load_session.assert_called_once_with("saved")
         session_manager.save_session.assert_called_once_with("saved")
-        session_runtime.close.assert_called_once()
+        session_runtime.aclose.assert_called_once()
 
     @patch("localagentcli.__main__.SessionRuntime")
     @patch("localagentcli.__main__.SessionExecutionRuntime")
@@ -277,10 +296,11 @@ class TestMain:
         mock_runtime_cls.return_value = exec_runtime
 
         session_runtime = MagicMock()
+        session_runtime.aclose = AsyncMock()
         mock_session_runtime_cls.return_value = session_runtime
 
         result = main(["exec", "--session", "saved", "hello"])
 
         assert result == 1
         session_manager.save_session.assert_called_once_with("saved")
-        session_runtime.close.assert_called_once()
+        session_runtime.aclose.assert_called_once()

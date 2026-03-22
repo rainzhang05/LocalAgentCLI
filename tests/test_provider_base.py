@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -16,6 +16,7 @@ from localagentcli.providers.base import (
     ConnectionTestResult,
     RemoteModelInfo,
     RemoteProvider,
+    effective_model_request_timeout,
 )
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,37 @@ class StubRemoteProvider(RemoteProvider):
 
     def list_models(self) -> list[RemoteModelInfo]:
         return [RemoteModelInfo(id="test-model", name="Test Model")]
+
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        return GenerationResult(text="stub response")
+
+    async def astream_generate(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        yield StreamChunk(text="chunk")
+        yield StreamChunk(is_done=True)
+
+    async def atest_connection(self) -> ConnectionTestResult:
+        return ConnectionTestResult(success=True, message="OK")
+
+    async def alist_models(self) -> list[RemoteModelInfo]:
+        return [RemoteModelInfo(id="test-model", name="Test Model")]
+
+
+# ---------------------------------------------------------------------------
+# Timeout precedence
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveModelRequestTimeout:
+    def test_provider_timeout_wins(self):
+        assert effective_model_request_timeout({"timeout": 12.5}, 300) == 12.5
+
+    def test_falls_back_to_global(self):
+        assert effective_model_request_timeout({}, 90) == 90.0
+
+    def test_default_when_unset(self):
+        assert effective_model_request_timeout(None, None) == 300.0
 
 
 # ---------------------------------------------------------------------------

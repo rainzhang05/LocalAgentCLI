@@ -27,19 +27,25 @@ from localagentcli.agents.events import (
 from localagentcli.models.backends.base import StreamChunk
 
 # Coalesce consecutive neutral status lines before emitting (reduces panel reflow).
-_MAX_STATUS_BATCH = 12
+_DEFAULT_STATUS_BATCH_LIMIT = 12
+_CATCHUP_STATUS_BATCH_LIMIT = 4
+_CATCHUP_BACKLOG_HIGH_WATER = 10
+_CATCHUP_BACKLOG_LOW_WATER = 4
 
 
 class StreamRenderer:
     """Render streaming output, reasoning, and activity updates in real time."""
 
-    def __init__(self, console: Console):
+    def __init__(self, console: Console, *, persistent_details_lane: bool = False):
         self._console = console
+        self._persistent_details_lane = persistent_details_lane
         self._buffer = ""
         self._secondary_entries: deque[str] = deque(maxlen=8)
         self._rendered_secondary_count = 0
         self._primary_started = False
         self._status_batch: list[str] = []
+        self._catchup_mode = False
+        self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
         self._symbols = {
             "error": _safe_symbol(console, "✗", "x"),
             "status": _safe_symbol(console, "ℹ", "i"),
@@ -59,6 +65,8 @@ class StreamRenderer:
         self._rendered_secondary_count = 0
         self._primary_started = False
         self._status_batch.clear()
+        self._catchup_mode = False
+        self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
         for chunk in chunks:
             self.render_chunk(chunk)
         return self._buffer
@@ -111,7 +119,8 @@ class StreamRenderer:
     def render_status(self, message: str) -> None:
         """Render a neutral status line (batched until the next flush boundary)."""
         self._status_batch.append(message)
-        if len(self._status_batch) >= _MAX_STATUS_BATCH:
+        self._adjust_status_pacing()
+        if len(self._status_batch) >= self._status_batch_limit:
             self._prepare_block_output()
             self.flush_pending_details()
 
@@ -138,25 +147,31 @@ class StreamRenderer:
     def flush_pending_details(self) -> None:
         """Emit queued secondary details and any batched neutral status lines."""
         pending_secondary = len(self._secondary_entries) > self._rendered_secondary_count
+        show_persistent_secondary = self._persistent_details_lane and bool(self._secondary_entries)
         pending_status = bool(self._status_batch)
-        if not pending_secondary and not pending_status:
+        if not pending_secondary and not pending_status and not show_persistent_secondary:
             return
-        if pending_secondary:
-            pending = list(self._secondary_entries)[self._rendered_secondary_count :]
-            if pending:
+        if pending_secondary or show_persistent_secondary:
+            if self._persistent_details_lane:
+                lane_lines = list(self._secondary_entries)
+            else:
+                lane_lines = list(self._secondary_entries)[self._rendered_secondary_count :]
+            if lane_lines:
                 self._console.print(
                     Panel(
-                        "\n".join(pending),
+                        "\n".join(lane_lines),
                         title="Details",
                         border_style="dim",
                     )
                 )
-                self._rendered_secondary_count = len(self._secondary_entries)
+                if pending_secondary:
+                    self._rendered_secondary_count = len(self._secondary_entries)
         if pending_status:
             lines = self._dedupe_consecutive_status(self._status_batch)
             body = "\n".join(f"{self._symbols['status']} {line}" for line in lines)
             self._console.print(body)
             self._status_batch.clear()
+            self._adjust_status_pacing()
 
     def render_approval_prompt(self) -> None:
         """Render the inline approval prompt using the shared status grammar."""
@@ -278,6 +293,7 @@ class StreamRenderer:
             cleaned = line.strip()
             if cleaned:
                 self._secondary_entries.append(cleaned)
+        self._adjust_status_pacing()
 
     def flush_agent_event_tail(self) -> None:
         """Emit batched status lines and queued secondary after an agent event pass."""
@@ -297,6 +313,18 @@ class StreamRenderer:
         if self._primary_started:
             self._console.print()
             self._primary_started = False
+
+    def _adjust_status_pacing(self) -> None:
+        """Adapt status batching to backlog with simple high/low-water hysteresis."""
+        pending_secondary = len(self._secondary_entries) - self._rendered_secondary_count
+        backlog = max(pending_secondary, 0) + len(self._status_batch)
+        if not self._catchup_mode and backlog >= _CATCHUP_BACKLOG_HIGH_WATER:
+            self._catchup_mode = True
+            self._status_batch_limit = _CATCHUP_STATUS_BATCH_LIMIT
+            return
+        if self._catchup_mode and backlog <= _CATCHUP_BACKLOG_LOW_WATER:
+            self._catchup_mode = False
+            self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
 
     def _format_chunk_payload(self, chunk: StreamChunk) -> str:
         """Render payload-only chunks into human-readable detail lines."""

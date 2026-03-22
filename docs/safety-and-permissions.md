@@ -24,12 +24,14 @@ The default mode balances productivity with safety.
 | Shell commands (`shell_execute`) | Yes — prompt user |
 | Test execution (`test_execute`) | Yes — prompt user |
 | Git commits (`git_commit`) | Yes — prompt user |
+| MCP tools **without** `readOnlyHint: true` | Yes — prompt user in balanced mode (same as other side-effecting tools) |
+| MCP tools **with** `readOnlyHint: true` | No — auto-approved unless high-risk rules apply |
 | High-risk actions (see below) | Always — cannot be auto-approved |
 
 ### Autonomous (via `/agent approve`)
 
 When the user issues `/agent approve`, approval mode switches to autonomous for the current session and future sessions:
-- Standard actions (file writes, shell commands, tests, git commits) are auto-approved
+- Standard actions (file writes, shell commands, tests, git commits, and MCP tools that require approval) are auto-approved
 - High-risk actions still require explicit approval
 - If an agent task is currently paused on approval, the pending action resumes in autonomous mode
 - Choosing `Approve all` from an inline approval prompt has the same effect as `/agent approve`

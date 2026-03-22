@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from rich.console import Console
 
@@ -61,13 +61,23 @@ def _make_runtime(config, storage):
 
 
 class TestSessionExecutionRuntime:
-    def test_run_chat_turn_uses_shared_generation_options(self, config, storage):
+    def test_build_generation_options_includes_request_timeout(self, config, storage):
+        runtime, _emitted = _make_runtime(config, storage)
+        opts = runtime.build_generation_options()
+        assert "request_timeout" in opts
+        assert isinstance(opts["request_timeout"], float)
+        assert opts["request_timeout"] > 0
+
+    async def test_run_chat_turn_uses_shared_generation_options(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)
         backend = FakeBackend()
         runtime.resolve_active_model = MagicMock(return_value=ModelAbstractionLayer(backend))
 
-        turn = runtime.run_chat_turn("hello there")
-        chunks = list(turn.stream or [])
+        turn = await runtime.arun_chat_turn("hello there")
+        assert turn is not None
+        chunks: list[StreamChunk] = []
+        async for chunk in turn.stream or []:
+            chunks.append(chunk)
 
         assert turn.mode == "chat"
         assert turn.compaction_count == 0
@@ -97,33 +107,40 @@ class TestSessionExecutionRuntime:
 
         assert first is not second
 
-    def test_dispatch_agent_turn_returns_route_and_controller(self, config, storage):
+    async def test_dispatch_agent_turn_returns_route_and_controller(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)
         runtime._services.session_manager.current.mode = "agent"
         model = MagicMock()
         controller = MagicMock()
         controller.has_active_task = False
         controller.last_compaction_count = 2
-        controller.dispatch_input.return_value = SimpleNamespace(
-            stream=iter(()),
-            events=None,
-            triage=SimpleNamespace(outcome="direct_answer"),
+
+        async def _empty_stream():
+            if False:
+                yield  # pragma: no cover
+
+        controller.adispatch_input = AsyncMock(
+            return_value=SimpleNamespace(
+                stream=_empty_stream(),
+                events=None,
+                triage=SimpleNamespace(outcome="direct_answer"),
+            )
         )
         runtime.resolve_active_model = MagicMock(return_value=model)
         runtime.get_or_create_agent_controller = MagicMock(return_value=controller)
 
-        turn = runtime.dispatch_agent_turn("answer directly")
+        turn = await runtime.adispatch_agent_turn("answer directly")
 
         assert turn is not None
         assert turn.mode == "agent"
         assert turn.controller is controller
         assert turn.route == "direct_answer"
         assert turn.compaction_count == 2
-        controller.dispatch_input.assert_called_once_with("answer directly")
+        controller.adispatch_input.assert_called_once_with("answer directly")
 
 
 class TestSessionRuntime:
-    def test_event_log_records_submissions_and_events(self, config, storage):
+    async def test_event_log_records_submissions_and_events(self, config, storage):
         services = RuntimeServices.create(config, storage, Console(record=True))
         execution_runtime = SessionExecutionRuntime(
             services=services,
@@ -143,7 +160,8 @@ class TestSessionRuntime:
         )
 
         runtime.submit(UserTurnOp(prompt="hello", mode="chat"))
-        list(runtime.iter_events())
+        async for _event in runtime.aiter_events():
+            pass
 
         records = runtime._event_log.read_records()  # type: ignore[union-attr]
         assert records

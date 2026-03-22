@@ -72,6 +72,9 @@ inactivity = 600                # Seconds of agent inactivity before pause
 [sessions]
 autosave_named = false              # When true, debounce-save named sessions during interactive chat/agent work
 autosave_debounce_seconds = 2       # Minimum quiet period before writing (seconds); must be > 0
+
+[shell]
+persistent_details_lane = false     # When true, re-render the recent Details window at flush boundaries during streaming
 ```
 
 ### Configurable Fields
@@ -91,6 +94,7 @@ autosave_debounce_seconds = 2       # Minimum quiet period before writing (secon
 | `timeouts.shell_command` | int | `120` | Shell command timeout (seconds) |
 | `timeouts.model_response` | int | `300` | Model response timeout (seconds) |
 | `timeouts.inactivity` | int | `600` | Agent inactivity timeout (seconds) |
+| `shell.persistent_details_lane` | bool | `false` | When `true`, streaming surfaces re-render the rolling Details lane at flush boundaries so secondary context remains visible during long-running turns |
 | `sessions.autosave_named` | bool | `false` | When `true`, the interactive shell debounce-saves the current session to its saved name after chat/agent mutations (only applies when the session already has a name from `/session save`) |
 | `sessions.autosave_debounce_seconds` | int | `2` | Debounce interval for named autosaves; must be greater than zero |
 

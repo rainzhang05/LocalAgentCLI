@@ -2,18 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from abc import abstractmethod
-from contextlib import AbstractContextManager
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 import httpx
 
-from localagentcli.models.backends.base import ModelBackend
+from localagentcli.models.backends.base import (
+    GenerationResult,
+    ModelBackend,
+    ModelMessage,
+    StreamChunk,
+)
 
 _ResponseT = TypeVar("_ResponseT", bound=httpx.Response)
+
+
+def effective_model_request_timeout(
+    provider_options: dict[str, Any] | None,
+    global_model_response_seconds: float | int | None,
+) -> float:
+    """Resolve HTTP timeout: provider options.timeout overrides global model_response."""
+    opts = provider_options or {}
+    if opts.get("timeout") is not None:
+        return float(opts["timeout"])
+    if global_model_response_seconds is not None:
+        return float(global_model_response_seconds)
+    return 300.0
 
 
 @dataclass
@@ -58,6 +78,9 @@ class RemoteProvider(ModelBackend):
         self._default_model = default_model
         self._active_model = default_model
         self._options = options or {}
+        self._cancel_requested = False
+        self._async_stream_response: httpx.Response | None = None
+        self._async_stream_loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def name(self) -> str:
@@ -83,6 +106,45 @@ class RemoteProvider(ModelBackend):
         """Bind the provider instance to a specific remote model id."""
         self._active_model = (model_name or self._default_model).strip() or self._default_model
 
+    def _request_timeout_value(self, kwargs: dict[str, object]) -> float:
+        """HTTP client timeout from generation kwargs or provider options."""
+        rt = kwargs.get("request_timeout")
+        if rt is not None:
+            return float(cast(Any, rt))
+        return float(self._options.get("timeout", 30))
+
+    def _track_async_stream(self, response: httpx.Response) -> None:
+        self._async_stream_response = response
+        try:
+            self._async_stream_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._async_stream_loop = None
+
+    def _untrack_async_stream(self) -> None:
+        self._async_stream_response = None
+        self._async_stream_loop = None
+
+    def _reset_cancel(self) -> None:
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Request cancellation of in-flight async streaming or generation."""
+        self._cancel_requested = True
+        resp = self._async_stream_response
+        loop = self._async_stream_loop
+        if resp is not None and loop is not None and loop.is_running():
+
+            async def _close() -> None:
+                try:
+                    await resp.aclose()
+                except Exception:
+                    pass
+
+            try:
+                loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_close(), loop=loop))
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     # ModelBackend no-ops (remote providers have no local model)
     # ------------------------------------------------------------------
@@ -97,17 +159,43 @@ class RemoteProvider(ModelBackend):
         """Remote providers use no local memory."""
         return 0
 
-    def cancel(self) -> None:
-        """No-op by default for remote providers."""
-
     def close(self) -> None:
-        """Close the underlying HTTP client when present."""
+        """Close the underlying sync HTTP client when present."""
+        self.cancel()
         client = getattr(self, "_client", None)
         if client is not None:
             try:
                 client.close()
             except Exception:
                 pass
+        self._close_async_client_sync_best_effort()
+
+    def _close_async_client_sync_best_effort(self) -> None:
+        """When no event loop is running, close AsyncClient synchronously."""
+        ac = getattr(self, "_async_client", None)
+        if ac is None:
+            return
+        try:
+            asyncio.get_running_loop()
+            return
+        except RuntimeError:
+            pass
+        try:
+            asyncio.run(ac.aclose())
+        except Exception:
+            pass
+        setattr(self, "_async_client", None)
+
+    async def aclose(self) -> None:
+        """Close async HTTP resources."""
+        self.cancel()
+        aclient = getattr(self, "_async_client", None)
+        if aclient is not None:
+            try:
+                await aclient.aclose()
+            except Exception:
+                pass
+            setattr(self, "_async_client", None)
 
     # ------------------------------------------------------------------
     # Abstract methods unique to remote providers
@@ -121,6 +209,28 @@ class RemoteProvider(ModelBackend):
     @abstractmethod
     def list_models(self) -> list[RemoteModelInfo]:
         """List available models from this provider."""
+        ...
+
+    @abstractmethod
+    async def atest_connection(self) -> ConnectionTestResult:
+        """Async connectivity test."""
+        ...
+
+    @abstractmethod
+    async def alist_models(self) -> list[RemoteModelInfo]:
+        """Async model listing."""
+        ...
+
+    @abstractmethod
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        """Async non-streaming generation."""
+        ...
+
+    @abstractmethod
+    async def astream_generate(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        """Async streaming generation."""
         ...
 
     # ------------------------------------------------------------------
@@ -149,6 +259,13 @@ class RemoteProvider(ModelBackend):
         delay = self._retry_delay(attempt, response)
         if delay > 0:
             time.sleep(delay)
+
+    async def _async_sleep_before_retry(
+        self, attempt: int, response: httpx.Response | None = None
+    ) -> None:
+        delay = self._retry_delay(attempt, response)
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     def _request_with_retries(
         self,
@@ -180,6 +297,36 @@ class RemoteProvider(ModelBackend):
             raise last_error
         raise RuntimeError("Retry wrapper exhausted without a response")
 
+    async def _arequest_with_retries(
+        self,
+        request_factory: Callable[[], Awaitable[httpx.Response]],
+    ) -> httpx.Response:
+        """Async non-streaming request with bounded retries."""
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_retry_attempts() + 1):
+            try:
+                response = await request_factory()
+            except (
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+                httpx.TimeoutException,
+            ) as exc:
+                last_error = exc
+                if attempt >= self._max_retry_attempts():
+                    raise
+                await self._async_sleep_before_retry(attempt)
+                continue
+
+            if self._should_retry_response(response) and attempt < self._max_retry_attempts():
+                await response.aclose()
+                await self._async_sleep_before_retry(attempt, response)
+                continue
+            return response
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Retry wrapper exhausted without a response")
+
     def _open_stream_with_retries(
         self,
         stream_factory: Callable[[], AbstractContextManager[httpx.Response]],
@@ -204,6 +351,37 @@ class RemoteProvider(ModelBackend):
             if self._should_retry_response(response) and attempt < self._max_retry_attempts():
                 context.__exit__(None, None, None)
                 self._sleep_before_retry(attempt, response)
+                continue
+            return context, response
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Retry wrapper exhausted without a streaming response")
+
+    async def _aopen_stream_with_retries(
+        self,
+        stream_factory: Callable[[], AbstractAsyncContextManager[httpx.Response]],
+    ) -> tuple[AbstractAsyncContextManager[httpx.Response], httpx.Response]:
+        """Open an async streaming response with bounded retries."""
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_retry_attempts() + 1):
+            context = stream_factory()
+            try:
+                response = await context.__aenter__()
+            except (
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+                httpx.TimeoutException,
+            ) as exc:
+                last_error = exc
+                if attempt >= self._max_retry_attempts():
+                    raise
+                await self._async_sleep_before_retry(attempt)
+                continue
+
+            if self._should_retry_response(response) and attempt < self._max_retry_attempts():
+                await context.__aexit__(None, None, None)
+                await self._async_sleep_before_retry(attempt, response)
                 continue
             return context, response
 

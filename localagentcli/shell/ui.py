@@ -78,7 +78,10 @@ class ShellUI:
         self._hardware_detector = self._services.hardware_detector
         self._model_installer = self._services.model_installer
         self._session_manager = self._services.session_manager
-        self._stream_renderer = StreamRenderer(self._console)
+        self._stream_renderer = StreamRenderer(
+            self._console,
+            persistent_details_lane=bool(self._config.get("shell.persistent_details_lane", False)),
+        )
         self._execution_runtime = SessionExecutionRuntime(
             services=self._services,
             emit=self._emit_runtime_message,

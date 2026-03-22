@@ -33,6 +33,9 @@ DEFAULT_CONFIG: dict = {
         "model_response": 300,
         "inactivity": 600,
     },
+    "shell": {
+        "persistent_details_lane": False,
+    },
     "providers": {},
     "mcp_servers": {},
     "sessions": {
@@ -56,6 +59,7 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "timeouts.shell_command": (int, lambda v: v > 0),
     "timeouts.model_response": (int, lambda v: v > 0),
     "timeouts.inactivity": (int, lambda v: v > 0),
+    "shell.persistent_details_lane": (bool, None),
     "sessions.autosave_named": (bool, None),
     "sessions.autosave_debounce_seconds": (int, lambda v: v > 0),
 }

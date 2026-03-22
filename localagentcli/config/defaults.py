@@ -100,6 +100,7 @@ def validate_config_value(key: str, value: Any) -> tuple[bool, str]:
         return False, f"'{key}' expects {expected_type.__name__}, got {type(value).__name__}"
 
     if key == "safety.sandbox_mode":
+        assert isinstance(value, str)
         try:
             parse_sandbox_mode(value)
         except ValueError as exc:

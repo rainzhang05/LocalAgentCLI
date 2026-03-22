@@ -25,6 +25,7 @@ Before modifying any code in this repository, read the relevant documentation in
 | Remote API providers | [docs/remote-providers.md](docs/remote-providers.md) |
 | Chat and agent modes | [docs/agent-system.md](docs/agent-system.md) |
 | Tools (file, shell, git) | [docs/tool-system.md](docs/tool-system.md) |
+| MCP stdio servers | [docs/mcp.md](docs/mcp.md) |
 | Approvals, safety, rollback | [docs/safety-and-permissions.md](docs/safety-and-permissions.md) |
 | Config and sessions | [docs/session-and-config.md](docs/session-and-config.md) |
 | Filesystem and logs | [docs/storage-and-logging.md](docs/storage-and-logging.md) |

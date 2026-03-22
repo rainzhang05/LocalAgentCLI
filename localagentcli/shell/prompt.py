@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import get_terminal_size
 from typing import Callable
 
 from prompt_toolkit import PromptSession
@@ -23,6 +24,8 @@ COMMAND_MENU_HEIGHT = 10
 # Briefly coalesce completion refreshes so each keystroke does not restart the menu.
 COMPLETION_MENU_REFRESH_DEBOUNCE_SEC = 0.04
 CHOICE_MENU_HEIGHT = 8
+NARROW_TERMINAL_WIDTH = 80
+NARROW_MENU_HEIGHT = 5
 TEXT_PROMPT_TOOLBAR = "Enter accepts. Ctrl+C cancels."
 SECRET_PROMPT_TOOLBAR = "Input is hidden. Enter accepts. Ctrl+C cancels."
 ACTION_PROMPT_TOOLBAR = "Type to filter. Enter selects the default. Ctrl+C cancels."
@@ -85,6 +88,8 @@ class CommandCompleter(Completer):
             display = command
             if spec.argument_hint:
                 display = f"{display} {spec.argument_hint}"
+            display = _truncate_with_ellipsis(display, _menu_line_width())
+            summary = _truncate_with_ellipsis(summary, _menu_meta_width())
             yield Completion(
                 command,
                 start_position=-len(text),
@@ -110,8 +115,8 @@ class SelectionCompleter(Completer):
             yield Completion(
                 option.value,
                 start_position=-len(typed),
-                display=option.label,
-                display_meta=option.description,
+                display=_truncate_with_ellipsis(option.label, _menu_line_width()),
+                display_meta=_truncate_with_ellipsis(option.description, _menu_meta_width()),
             )
 
 
@@ -149,7 +154,7 @@ def create_prompt_session(
             completer=CommandCompleter(router),
             complete_while_typing=True,
             complete_style=CompleteStyle.COLUMN,
-            reserve_space_for_menu=COMMAND_MENU_HEIGHT,
+            reserve_space_for_menu=_menu_height_for_terminal(COMMAND_MENU_HEIGHT),
             key_bindings=_build_prompt_key_bindings(),
             bottom_toolbar=_build_status_toolbar(toolbar_provider),
         )
@@ -174,7 +179,10 @@ def select_option(
         completer=SelectionCompleter(options),
         complete_while_typing=True,
         complete_style=CompleteStyle.COLUMN,
-        reserve_space_for_menu=min(max(len(options), 1), CHOICE_MENU_HEIGHT),
+        reserve_space_for_menu=min(
+            max(len(options), 1),
+            _menu_height_for_terminal(CHOICE_MENU_HEIGHT),
+        ),
         key_bindings=_build_prompt_key_bindings(always_navigate_completion=True),
         validator=SelectionValidator(options),
         validate_while_typing=False,
@@ -516,3 +524,40 @@ def _format_prompt_message(message: str, default: str | None) -> str:
     if default:
         return f"{message} [{default}]: "
     return f"{message}: "
+
+
+def _terminal_columns() -> int:
+    """Return terminal columns with a stable default for non-interactive paths."""
+    columns = get_terminal_size(fallback=(NARROW_TERMINAL_WIDTH, 24)).columns
+    if columns <= 0:
+        return NARROW_TERMINAL_WIDTH
+    return columns
+
+
+def _menu_height_for_terminal(default_height: int) -> int:
+    """Reduce completion menu height on narrow terminals."""
+    columns = _terminal_columns()
+    if columns < NARROW_TERMINAL_WIDTH:
+        return min(default_height, NARROW_MENU_HEIGHT)
+    return default_height
+
+
+def _menu_line_width() -> int:
+    """Width budget for completion item labels."""
+    return max(_terminal_columns() - 24, 16)
+
+
+def _menu_meta_width() -> int:
+    """Width budget for completion metadata descriptions."""
+    return max(_terminal_columns() - 28, 14)
+
+
+def _truncate_with_ellipsis(text: str, width: int) -> str:
+    """Truncate text for completion rows while preserving readability."""
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    if width <= 2:
+        return text[:width]
+    return f"{text[: width - 1]}…"

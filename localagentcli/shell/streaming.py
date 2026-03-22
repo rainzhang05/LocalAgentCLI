@@ -176,7 +176,13 @@ class StreamRenderer:
             self.render_status(f"Agent route: {_humanize_route(event.route)}.")
             return
         if isinstance(event, PhaseChanged):
-            if event.phase in {"planning", "waiting_approval", "replanning", "recovering"}:
+            if event.phase in {
+                "planning",
+                "waiting_approval",
+                "retrying",
+                "replanning",
+                "recovering",
+            }:
                 self.render_status(event.summary)
             elif event.phase == "failed":
                 self.render_error(event.summary)

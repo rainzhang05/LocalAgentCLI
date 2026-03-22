@@ -397,5 +397,5 @@ class ShellUI:
 | ANSI color support | Use `rich` which auto-detects terminal capabilities |
 | Unicode characters (✓, ✗, ⟳) | Fall back to ASCII (`[OK]`, `[FAIL]`, `[...]`) on terminals that don't support Unicode |
 | Key bindings | `prompt_toolkit` handles platform differences |
-| Terminal width | Auto-detect and adapt layout. Minimum supported width: 80 columns |
+| Terminal width | Auto-detect and adapt layout. Minimum supported width: 80 columns. On narrower terminals, status/details/plan lines are truncated with an ellipsis to keep rendering stable, and completion menus reduce reserved height to limit redraw churn |
 | Windows cmd.exe | `rich` enables VT processing on Windows 10+. Legacy terminals get plain text |

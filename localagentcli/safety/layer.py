@@ -285,4 +285,3 @@ class SafetyLayer:
 
     def _action_key(self, tool: Tool, args: dict) -> str:
         return f"{tool.name}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
-

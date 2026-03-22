@@ -332,11 +332,18 @@ class AgentController:
         if autonomous_all:
             self.set_autonomous()
         if approved:
-            self._update_task_state(pending_tool=None, summary="Approval granted.", active=True)
+            self._update_task_state(
+                pending_tool=None,
+                wait_reason="",
+                summary="Approval granted.",
+                active=True,
+            )
         else:
             self._update_task_state(
                 phase="recovering",
                 pending_tool=None,
+                wait_reason="",
+                last_error="Approval denied.",
                 summary="Approval denied. Recovering task flow.",
                 active=True,
             )
@@ -349,7 +356,12 @@ class AgentController:
             self.set_autonomous()
         if self._pending_tool is None:
             return iter(())
-        self._update_task_state(pending_tool=None, summary="Approval granted.", active=True)
+        self._update_task_state(
+            pending_tool=None,
+            wait_reason="",
+            summary="Approval granted.",
+            active=True,
+        )
         self._pending_tool = None
         return self._drain(True)
 
@@ -360,6 +372,8 @@ class AgentController:
         self._update_task_state(
             phase="recovering",
             pending_tool=None,
+            wait_reason="",
+            last_error="Approval denied.",
             summary="Approval denied. Recovering task flow.",
             active=True,
         )
@@ -475,11 +489,22 @@ class AgentController:
 
         if isinstance(event, PhaseChanged):
             pending_tool = None if event.phase != "waiting_approval" else _UNCHANGED
+            retry_count = _UNCHANGED
+            wait_reason = _UNCHANGED
+            if event.phase == "retrying":
+                retry_count = self._coerce_int(self.task_state.get("retry_count", 0), 0) + 1
+                wait_reason = "retrying after recent failure"
+            elif event.phase == "waiting_approval":
+                wait_reason = event.summary
+            elif event.phase in {"executing", "planning", "replanning"}:
+                wait_reason = ""
             self._update_task_state(
                 phase=event.phase,
                 step_index=event.step_index,
                 step_description=event.step_description,
                 pending_tool=pending_tool,
+                retry_count=retry_count,
+                wait_reason=wait_reason,
                 summary=event.summary,
                 active=event.phase not in {"stopped", "timed_out", "completed", "failed"},
             )
@@ -497,6 +522,9 @@ class AgentController:
                 step_index=event.step.index,
                 step_description=event.step.description,
                 pending_tool=None,
+                wait_reason="",
+                retry_count=0,
+                last_error="",
                 summary=f"Executing step {event.step.index}.",
                 active=True,
             )
@@ -507,6 +535,8 @@ class AgentController:
                 self._update_task_state(
                     phase="executing",
                     pending_tool=None,
+                    wait_reason="",
+                    last_error="",
                     summary=event.result.summary,
                     active=True,
                 )
@@ -514,6 +544,8 @@ class AgentController:
                 self._update_task_state(
                     phase="recovering",
                     pending_tool=None,
+                    wait_reason="recovering after failed tool call",
+                    last_error=event.result.summary,
                     summary=event.result.summary,
                     active=True,
                 )
@@ -540,6 +572,7 @@ class AgentController:
                 self._update_task_state(
                     phase="waiting_approval",
                     pending_tool=event.tool_name,
+                    wait_reason=f"approval required for {event.tool_name}",
                     summary=f"Waiting for approval: {event.tool_name}.",
                     active=True,
                 )
@@ -548,6 +581,7 @@ class AgentController:
                 self._update_task_state(
                     phase="executing",
                     pending_tool=None,
+                    wait_reason="",
                     summary=f"Running tool: {event.tool_name}.",
                     active=True,
                 )
@@ -557,6 +591,7 @@ class AgentController:
             self._update_task_state(
                 phase="completed",
                 pending_tool=None,
+                wait_reason="",
                 summary="Task complete.",
                 active=False,
             )
@@ -578,6 +613,7 @@ class AgentController:
             self._update_task_state(
                 phase="stopped",
                 pending_tool=None,
+                wait_reason="",
                 summary=event.reason,
                 active=False,
             )
@@ -596,6 +632,7 @@ class AgentController:
             self._update_task_state(
                 phase="timed_out",
                 pending_tool=None,
+                wait_reason="",
                 summary=event.reason,
                 active=False,
             )
@@ -614,6 +651,8 @@ class AgentController:
             self._update_task_state(
                 phase="failed",
                 pending_tool=None,
+                wait_reason="",
+                last_error=event.reason,
                 summary=event.reason,
                 active=False,
             )
@@ -833,6 +872,9 @@ class AgentController:
         step_index: object = _UNCHANGED,
         step_description: object = _UNCHANGED,
         pending_tool: object = _UNCHANGED,
+        wait_reason: object = _UNCHANGED,
+        retry_count: object = _UNCHANGED,
+        last_error: object = _UNCHANGED,
         summary: object = _UNCHANGED,
         active: object = _UNCHANGED,
     ) -> None:
@@ -844,6 +886,9 @@ class AgentController:
             "step_index": current.get("step_index"),
             "step_description": current.get("step_description", ""),
             "pending_tool": current.get("pending_tool", ""),
+            "wait_reason": current.get("wait_reason", ""),
+            "retry_count": self._coerce_int(current.get("retry_count", 0), 0),
+            "last_error": current.get("last_error", ""),
             "summary": current.get("summary", ""),
             "active": bool(current.get("active", False)),
         }
@@ -858,6 +903,12 @@ class AgentController:
             state["step_description"] = step_description
         if pending_tool is not _UNCHANGED:
             state["pending_tool"] = pending_tool
+        if wait_reason is not _UNCHANGED:
+            state["wait_reason"] = wait_reason
+        if retry_count is not _UNCHANGED:
+            state["retry_count"] = self._coerce_int(retry_count, 0)
+        if last_error is not _UNCHANGED:
+            state["last_error"] = last_error
         if summary is not _UNCHANGED:
             state["summary"] = summary
         if active is not _UNCHANGED:

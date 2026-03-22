@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
+import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -33,6 +35,27 @@ class _HFDownloadPlanItem:
     filename: str
     size_bytes: int | None
     is_cached: bool = False
+
+
+@dataclass(frozen=True)
+class _DownloadTelemetry:
+    """Persisted metrics captured during one model install attempt."""
+
+    source: str
+    status: str
+    started_at: str
+    finished_at: str
+    duration_seconds: float
+    model_name: str
+    version: str
+    bytes_downloaded: int | None = None
+    bytes_cached: int | None = None
+    bytes_total: int | None = None
+    files_total: int | None = None
+    files_cached: int | None = None
+    error: str | None = None
+    repo: str | None = None
+    url: str | None = None
 
 
 class ModelInstaller:
@@ -64,16 +87,62 @@ class ModelInstaller:
 
         version = self._registry.next_version(name)
         target_dir = self._models_dir / name / version
+        started_at = datetime.now(tz=timezone.utc)
+        started_monotonic = time.perf_counter()
 
         self._console.print(f"[dim]Downloading {repo} → {name} ({version})...[/dim]")
 
+        files_total: int | None = None
+        files_cached: int | None = None
+        bytes_total: int | None = None
+        bytes_cached: int | None = None
         try:
-            self._download_hf(repo, target_dir)
+            plan_metrics = self._download_hf(repo, target_dir)
+            if plan_metrics is not None:
+                files_total, files_cached, bytes_total, bytes_cached = plan_metrics
         except Exception as e:
+            self._record_download_telemetry(
+                _DownloadTelemetry(
+                    source="huggingface",
+                    status="failed",
+                    started_at=started_at.isoformat(),
+                    finished_at=datetime.now(tz=timezone.utc).isoformat(),
+                    duration_seconds=max(time.perf_counter() - started_monotonic, 0.0),
+                    model_name=name,
+                    version=version,
+                    bytes_cached=bytes_cached,
+                    bytes_total=bytes_total,
+                    files_total=files_total,
+                    files_cached=files_cached,
+                    error=str(e),
+                    repo=repo,
+                )
+            )
             return InstallResult(success=False, message=f"Download failed: {e}")
 
+        bytes_downloaded = (
+            max((bytes_total or 0) - (bytes_cached or 0), 0) if bytes_total is not None else None
+        )
         return self._detect_and_register(
-            name, version, target_dir, {"source": "huggingface", "repo": repo}
+            name,
+            version,
+            target_dir,
+            {"source": "huggingface", "repo": repo},
+            download_telemetry=_DownloadTelemetry(
+                source="huggingface",
+                status="success",
+                started_at=started_at.isoformat(),
+                finished_at=datetime.now(tz=timezone.utc).isoformat(),
+                duration_seconds=max(time.perf_counter() - started_monotonic, 0.0),
+                model_name=name,
+                version=version,
+                bytes_downloaded=bytes_downloaded,
+                bytes_cached=bytes_cached,
+                bytes_total=bytes_total,
+                files_total=files_total,
+                files_cached=files_cached,
+                repo=repo,
+            ),
         )
 
     def install_from_url(self, url: str, name: str | None = None) -> InstallResult:
@@ -89,6 +158,8 @@ class ModelInstaller:
         version = self._registry.next_version(name)
         target_dir = self._models_dir / name / version
         target_dir.mkdir(parents=True, exist_ok=True)
+        started_at = datetime.now(tz=timezone.utc)
+        started_monotonic = time.perf_counter()
 
         # Download to cache first, then move
         download_dir = self._cache_dir / "downloads" / name
@@ -101,11 +172,24 @@ class ModelInstaller:
         self._console.print(f"[dim]Downloading {url} → {name} ({version})...[/dim]")
 
         try:
-            self._download_url(url, download_path)
+            bytes_downloaded = self._download_url(url, download_path)
         except Exception as e:
             # Clean up partial download
             if download_path.exists():
                 download_path.unlink(missing_ok=True)
+            self._record_download_telemetry(
+                _DownloadTelemetry(
+                    source="url",
+                    status="failed",
+                    started_at=started_at.isoformat(),
+                    finished_at=datetime.now(tz=timezone.utc).isoformat(),
+                    duration_seconds=max(time.perf_counter() - started_monotonic, 0.0),
+                    model_name=name,
+                    version=version,
+                    error=str(e),
+                    url=url,
+                )
+            )
             return InstallResult(success=False, message=f"Download failed: {e}")
 
         # Move downloaded file to target directory
@@ -118,13 +202,34 @@ class ModelInstaller:
         except OSError:
             pass
 
-        return self._detect_and_register(name, version, target_dir, {"source": "url", "url": url})
+        return self._detect_and_register(
+            name,
+            version,
+            target_dir,
+            {"source": "url", "url": url},
+            download_telemetry=_DownloadTelemetry(
+                source="url",
+                status="success",
+                started_at=started_at.isoformat(),
+                finished_at=datetime.now(tz=timezone.utc).isoformat(),
+                duration_seconds=max(time.perf_counter() - started_monotonic, 0.0),
+                model_name=name,
+                version=version,
+                bytes_downloaded=bytes_downloaded,
+                bytes_total=bytes_downloaded,
+                url=url,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _download_hf(self, repo: str, target_dir: Path) -> None:
+    def _download_hf(
+        self,
+        repo: str,
+        target_dir: Path,
+    ) -> tuple[int, int, int, int] | None:
         """Download a HuggingFace repo using huggingface_hub."""
         try:
             hf_hub_download, snapshot_download = _load_huggingface_downloaders()
@@ -142,7 +247,11 @@ class ModelInstaller:
                 hf_hub_download,
                 download_plan,
             )
-            return
+            total_bytes = sum(item.size_bytes or 0 for item in download_plan)
+            cached_bytes = sum((item.size_bytes or 0) for item in download_plan if item.is_cached)
+            files_total = len(download_plan)
+            files_cached = sum(1 for item in download_plan if item.is_cached)
+            return files_total, files_cached, total_bytes, cached_bytes
 
         snapshot_download(
             repo_id=repo,
@@ -150,8 +259,9 @@ class ModelInstaller:
             max_workers=1,
             tqdm_class=_make_fast_tqdm_class(),
         )
+        return None
 
-    def _download_url(self, url: str, target_path: Path) -> None:
+    def _download_url(self, url: str, target_path: Path) -> int:
         """Download a file from a URL with resume support."""
         import httpx
 
@@ -166,7 +276,7 @@ class ModelInstaller:
         with httpx.stream("GET", url, headers=headers, follow_redirects=True) as response:
             if response.status_code == 416:
                 # Range not satisfiable — file already complete
-                return
+                return existing_size
 
             response.raise_for_status()
 
@@ -184,6 +294,9 @@ class ModelInstaller:
                     for chunk in response.iter_bytes(chunk_size=8192):
                         f.write(chunk)
                         progress.update(task, advance=len(chunk), refresh=True)
+        if total_bytes is not None:
+            return total_bytes
+        return target_path.stat().st_size
 
     def _plan_hf_download(
         self,
@@ -266,6 +379,8 @@ class ModelInstaller:
         version: str,
         model_dir: Path,
         source_info: dict,
+        *,
+        download_telemetry: _DownloadTelemetry | None = None,
     ) -> InstallResult:
         """Detect format, extract metadata, and register the model."""
         try:
@@ -284,6 +399,17 @@ class ModelInstaller:
             "installed_at": datetime.now(tz=timezone.utc).isoformat(),
             "backend": result.backend,
         }
+        telemetry_for_record = download_telemetry
+        if download_telemetry is not None:
+            if download_telemetry.bytes_downloaded is None:
+                inferred_downloaded = self._calculate_size(model_dir)
+                telemetry_for_record = replace(
+                    download_telemetry,
+                    bytes_downloaded=inferred_downloaded,
+                    bytes_total=inferred_downloaded,
+                )
+            assert telemetry_for_record is not None
+            metadata["download_telemetry"] = _telemetry_dict(telemetry_for_record)
 
         capabilities = self._infer_capabilities(name, result.metadata, source_info)
         entry = ModelEntry(
@@ -308,7 +434,18 @@ class ModelInstaller:
             f"[green]✓ Installed {name} ({version}) — "
             f"{result.format} format, {_fmt_size(size_bytes)}[/green]"
         )
+        if telemetry_for_record is not None:
+            self._record_download_telemetry(telemetry_for_record)
+            self._console.print(f"[dim]{_format_download_summary(telemetry_for_record)}[/dim]")
         return InstallResult(success=True, model_entry=entry, message="Installed successfully")
+
+    def _record_download_telemetry(self, telemetry: _DownloadTelemetry) -> None:
+        """Append one JSONL telemetry record for installer diagnostics."""
+        telemetry_path = self._cache_dir / "downloads" / "install_telemetry.jsonl"
+        telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+        with telemetry_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_telemetry_dict(telemetry), sort_keys=True))
+            handle.write("\n")
 
     def _infer_capabilities(
         self,
@@ -377,6 +514,53 @@ def _fmt_size(n: int) -> str:
     if n >= 1024:
         return f"{n / 1024:.1f} KB"
     return f"{n} bytes"
+
+
+def _fmt_speed(bytes_downloaded: int, duration_seconds: float) -> str:
+    """Format average download speed for telemetry summary output."""
+    if duration_seconds <= 0:
+        return "n/a"
+    return f"{_fmt_size(int(bytes_downloaded / duration_seconds))}/s"
+
+
+def _telemetry_dict(telemetry: _DownloadTelemetry) -> dict[str, object]:
+    """Convert telemetry dataclass to a JSON-serializable dict."""
+    return {
+        "source": telemetry.source,
+        "status": telemetry.status,
+        "started_at": telemetry.started_at,
+        "finished_at": telemetry.finished_at,
+        "duration_seconds": round(telemetry.duration_seconds, 3),
+        "model_name": telemetry.model_name,
+        "version": telemetry.version,
+        "bytes_downloaded": telemetry.bytes_downloaded,
+        "bytes_cached": telemetry.bytes_cached,
+        "bytes_total": telemetry.bytes_total,
+        "files_total": telemetry.files_total,
+        "files_cached": telemetry.files_cached,
+        "error": telemetry.error,
+        "repo": telemetry.repo,
+        "url": telemetry.url,
+    }
+
+
+def _format_download_summary(telemetry: _DownloadTelemetry) -> str:
+    """Render a concise post-install telemetry line for operators."""
+    downloaded = telemetry.bytes_downloaded or 0
+    parts = [
+        "Download telemetry:",
+        f"source={telemetry.source}",
+        f"time={telemetry.duration_seconds:.2f}s",
+    ]
+    if downloaded > 0:
+        parts.append(f"downloaded={_fmt_size(downloaded)}")
+        parts.append(f"avg={_fmt_speed(downloaded, telemetry.duration_seconds)}")
+    if telemetry.bytes_cached:
+        parts.append(f"cached={_fmt_size(telemetry.bytes_cached)}")
+    if telemetry.files_total:
+        files_cached = telemetry.files_cached or 0
+        parts.append(f"files={telemetry.files_total} (cached {files_cached})")
+    return ", ".join(parts)
 
 
 def _load_huggingface_downloaders():

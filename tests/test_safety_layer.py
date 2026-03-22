@@ -94,9 +94,7 @@ class TestSafetyLayer:
         safety.rollback.undo_last()
         assert not (tmp_path / "new.txt").exists()
 
-    def test_read_only_sandbox_blocks_mutating_tool_even_when_autonomous(
-        self, tmp_path: Path
-    ):
+    def test_read_only_sandbox_blocks_mutating_tool_even_when_autonomous(self, tmp_path: Path):
         tool = FileWriteTool(tmp_path)
         approval = ApprovalManager(mode="autonomous")
         safety = SafetyLayer(
@@ -169,7 +167,6 @@ class TestSafetyLayer:
     def test_shell_high_risk_extended_patterns(
         self, tmp_path: Path, command: str, expect_high: bool
     ):
-        tool = ShellExecuteTool(tmp_path)
         safety = _make_safety(tmp_path)
         risk, _reason = safety.describe_risk("shell_execute", {"command": command})
         if expect_high:

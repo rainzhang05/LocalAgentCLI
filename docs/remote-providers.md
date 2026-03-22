@@ -209,6 +209,8 @@ This means the Model Abstraction Layer works identically whether the active mode
 Shared provider requirements:
 - Requests must go through a bounded retry wrapper for timeout, connection-reset, and retryable HTTP status handling.
 - Streaming requests must surface normalized `error` and `done` chunks instead of leaking raw transport exceptions into the shell.
+- Async streaming requests enforce an optional idle timeout (`idle_stream_timeout` / per-call `stream_idle_timeout`) and normalize idle stalls into the same `error` + `done` stream contract.
+- Async client lifetime policy is configurable per provider via `connection_policy` (`reuse` default, `close_after_turn` for one-turn connection reuse constraints).
 - Provider HTTP clients must be closed when the active provider changes or the shell exits.
 - New provider configs should not depend on provider-level `default_model` values; that field is legacy compatibility only.
 - Agent-mode gating should trust only models whose tool-use readiness is backed by `verified`, `inferred`, or `configured` provenance.

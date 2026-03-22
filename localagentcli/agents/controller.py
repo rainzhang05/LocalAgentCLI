@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -45,8 +45,8 @@ class AgentDispatch:
     """Prepared execution path for one agent-mode plain-text input."""
 
     triage: TaskTriage
-    events: Iterator[AgentEvent] | None = None
-    stream: Iterator[StreamChunk] | None = None
+    events: Iterator[AgentEvent] | AsyncIterator[AgentEvent] | None = None
+    stream: Iterator[StreamChunk] | AsyncIterator[StreamChunk] | None = None
 
 
 _UNCHANGED = object()
@@ -92,6 +92,7 @@ class AgentController:
         self._last_compaction_count = 0
         self._last_triage: TaskTriage | None = None
         self._direct_stream_active = False
+        self._async_agent_active = False
         self._on_session_mutated = on_session_mutated
 
     def _notify_autosave(self) -> None:
@@ -105,6 +106,7 @@ class AgentController:
             self._generator is not None
             or self._pending_tool is not None
             or self._direct_stream_active
+            or self._async_agent_active
         )
 
     @property
@@ -140,7 +142,7 @@ class AgentController:
         """Messages compacted before the most recent task started."""
         return self._last_compaction_count
 
-    def handle_task(self, task_input: str) -> Iterator[AgentEvent]:
+    def handle_task(self, task_input: str) -> Iterator[AgentEvent] | AsyncIterator[AgentEvent]:
         """Start a new task and stream its events."""
         dispatch = self.dispatch_input(task_input)
         if dispatch.events is None:
@@ -229,6 +231,117 @@ class AgentController:
             session=self._session,
         )
         return AgentDispatch(triage=triage, events=self._with_route_event(triage, self._drain()))
+
+    async def adispatch_input(self, task_input: str) -> AgentDispatch:
+        """Async dispatch: triage and agent loop with awaitable model calls."""
+        if self.has_active_task:
+            raise RuntimeError("An agent task is already running.")
+
+        self._append_user_input(task_input)
+        context = build_conversation_model_messages(self._session)
+        triage = await self._triage.aclassify(
+            task_input,
+            context,
+            generation_options=self._profile("triage"),
+        )
+        self._last_triage = triage
+        self._session.metadata["last_triage"] = {
+            "outcome": triage.outcome,
+            "reason": triage.reason,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if triage.outcome == "direct_answer":
+            self._update_task_state(
+                route=triage.outcome,
+                phase="executing",
+                step_index=None,
+                step_description=None,
+                pending_tool=None,
+                summary="Answering directly without tool use.",
+                active=True,
+            )
+        else:
+            self._update_task_state(
+                route=triage.outcome,
+                phase="planning",
+                step_index=None,
+                step_description=None,
+                pending_tool=None,
+                summary="Preparing agent execution.",
+                active=True,
+            )
+        self._session.touch()
+
+        if triage.outcome == "direct_answer":
+            self._direct_stream_active = True
+            return AgentDispatch(
+                triage=triage,
+                stream=self._astream_direct_answer(context, self._profile("direct")),
+            )
+
+        supports_tools = getattr(self._model, "supports_tools", lambda: True)
+        if not bool(supports_tools()):
+            self._update_task_state(
+                phase="failed",
+                summary=(
+                    "The active model/provider cannot execute tools in agent mode. "
+                    "Switch targets or ask a simple direct question instead."
+                ),
+                active=False,
+            )
+            raise RuntimeError(
+                "The active model/provider cannot execute tools in agent mode. "
+                "Switch targets or ask a simple direct question instead."
+            )
+
+        self._session.metadata["approval_mode"] = self._approval.mode
+        plan = (
+            TaskPlan(
+                task=task_input,
+                steps=[PlanStep(index=1, description=task_input)],
+                status="planning",
+            )
+            if triage.outcome == "single_step_task"
+            else None
+        )
+
+        async def _events() -> AsyncIterator[AgentEvent]:
+            self._async_agent_active = True
+            try:
+                routed = TaskRouted(route=triage.outcome, reason=triage.reason)
+                self._record_event(routed)
+                yield routed
+                async for event in self._loop.arun(
+                    task_input,
+                    context,
+                    plan=plan,
+                    generation_options=self._profile("step"),
+                    planning_options=self._profile("planning"),
+                    inactivity_timeout=self._inactivity_timeout(),
+                    session=self._session,
+                ):
+                    self._record_event(event)
+                    yield event
+            finally:
+                self._async_agent_active = False
+
+        return AgentDispatch(triage=triage, events=_events())
+
+    def apply_tool_approval(self, approved: bool, *, autonomous_all: bool = False) -> None:
+        """Resume async agent loop after a tool approval decision (no sync iterator)."""
+        if autonomous_all:
+            self.set_autonomous()
+        if approved:
+            self._update_task_state(pending_tool=None, summary="Approval granted.", active=True)
+        else:
+            self._update_task_state(
+                phase="recovering",
+                pending_tool=None,
+                summary="Approval denied. Recovering task flow.",
+                active=True,
+            )
+        self._pending_tool = None
+        self._loop.supply_tool_approval(approved)
 
     def approve_action(self, autonomous: bool = False) -> Iterator[AgentEvent]:
         """Approve the pending tool call and optionally enable autonomous mode."""
@@ -423,6 +536,7 @@ class AgentController:
 
         if isinstance(event, ToolCallRequested):
             if event.requires_approval:
+                self._pending_tool = event
                 self._update_task_state(
                     phase="waiting_approval",
                     pending_tool=event.tool_name,
@@ -430,6 +544,7 @@ class AgentController:
                     active=True,
                 )
             else:
+                self._pending_tool = None
                 self._update_task_state(
                     phase="executing",
                     pending_tool=None,
@@ -516,6 +631,7 @@ class AgentController:
         self._generator = None
         self._pending_tool = None
         self._direct_stream_active = False
+        self._async_agent_active = False
         self._approval.reset()
         self._session.metadata.pop("approval_mode", None)
         self._update_task_state(active=False, pending_tool=None)
@@ -610,6 +726,55 @@ class AgentController:
         if isinstance(value, int) and value > 0:
             return value
         return None
+
+    async def _astream_direct_answer(
+        self,
+        messages: list[ModelMessage],
+        generation_options: dict[str, object],
+    ) -> AsyncIterator[StreamChunk]:
+        """Async stream for direct-answer fast path."""
+        chunks: list[StreamChunk] = []
+        assistant_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        try:
+            async for chunk in self._model.astream_generate(messages, **generation_options):
+                chunks.append(chunk)
+                if chunk.kind == "final_text" and chunk.text:
+                    assistant_parts.append(chunk.text)
+                elif chunk.kind == "reasoning" and chunk.text:
+                    reasoning_parts.append(chunk.text)
+                yield chunk
+        finally:
+            stopped = self.task_state.get("phase") == "stopped"
+            assistant_text = "".join(assistant_parts).strip()
+            reasoning_text = "".join(reasoning_parts).strip()
+            if (assistant_text or reasoning_text) and not stopped:
+                self._session.history.append(
+                    Message(
+                        role="assistant",
+                        content=assistant_text,
+                        timestamp=datetime.now(),
+                        metadata={
+                            "agent_task": "direct_answer",
+                            "fast_path": True,
+                            "triage": (
+                                self._last_triage.outcome if self._last_triage else "direct_answer"
+                            ),
+                            "reasoning": reasoning_text,
+                            "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+                        },
+                    )
+                )
+                self._update_task_state(
+                    phase="completed",
+                    pending_tool=None,
+                    summary="Direct answer completed.",
+                    active=False,
+                )
+            elif stopped:
+                self._update_task_state(active=False, pending_tool=None)
+            self._finish_task()
+            self._session.touch()
 
     def _stream_direct_answer(
         self,

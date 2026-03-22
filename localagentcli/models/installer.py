@@ -223,6 +223,7 @@ class ModelInstaller:
         """Download a repo file-by-file so the terminal progress stays live."""
         total_bytes = sum(item.size_bytes or 0 for item in plan)
         completed_bytes = sum((item.size_bytes or 0) for item in plan if item.is_cached)
+        label_width = _download_label_width(self._console)
 
         with _build_download_progress(self._console) as progress:
             task_id = progress.add_task(
@@ -234,7 +235,7 @@ class ModelInstaller:
             for item in plan:
                 progress.update(
                     task_id,
-                    description=_format_download_label(item.filename),
+                    description=_format_download_label(item.filename, max_width=label_width),
                     refresh=True,
                 )
                 hf_hub_download(
@@ -245,6 +246,7 @@ class ModelInstaller:
                         progress,
                         task_id,
                         item.filename,
+                        label_width=label_width,
                     ),
                 )
 
@@ -423,7 +425,13 @@ def _make_fast_tqdm_class():
     return FastTQDM
 
 
-def _make_rich_hf_tqdm_class(progress, task_id: int, filename: str):
+def _make_rich_hf_tqdm_class(
+    progress,
+    task_id: int,
+    filename: str,
+    *,
+    label_width: int | None = None,
+):
     """Bridge hf_hub_download byte updates into the shared Rich progress task."""
     tqdm_base = _load_tqdm_base()
 
@@ -436,14 +444,18 @@ def _make_rich_hf_tqdm_class(progress, task_id: int, filename: str):
             kwargs.setdefault("disable", False)
             kwargs.setdefault("smoothing", 0.0)
             super().__init__(*args, **kwargs)
-            progress.update(task_id, description=_format_download_label(filename), refresh=True)
+            progress.update(
+                task_id,
+                description=_format_download_label(filename, max_width=label_width),
+                refresh=True,
+            )
 
         def update(self, n=1):
             result = super().update(n)
             progress.update(
                 task_id,
                 advance=max(int(n), 0),
-                description=_format_download_label(filename),
+                description=_format_download_label(filename, max_width=label_width),
                 refresh=True,
             )
             return result
@@ -463,12 +475,17 @@ def _normalize_hf_plan_item(item: object) -> _HFDownloadPlanItem | None:
     )
 
 
-def _format_download_label(filename: str) -> str:
+def _format_download_label(filename: str, *, max_width: int | None = None) -> str:
     """Create a compact progress label for one file."""
     path = Path(filename)
+    label: str
     if len(path.parts) <= 2:
-        return f"Downloading {filename}"
-    return f"Downloading {path.parts[0]}/.../{path.name}"
+        label = f"Downloading {filename}"
+    else:
+        label = f"Downloading {path.parts[0]}/.../{path.name}"
+    if max_width is None:
+        return label
+    return _truncate_with_ellipsis(label, max_width)
 
 
 def _attr_str(item: object, *names: str) -> str | None:
@@ -520,6 +537,38 @@ def _load_tqdm_base():
                 return None
 
         return TQDMStub
+
+
+def _download_label_width(console: Console) -> int | None:
+    """Return a conservative label width budget for progress descriptions."""
+    width = _console_width(console)
+    if width is None:
+        return None
+    return max(width - 20, 16)
+
+
+def _console_width(console: Console) -> int | None:
+    """Best-effort lookup of terminal width for narrow-layout safeguards."""
+    width = getattr(console, "width", None)
+    if isinstance(width, int) and width > 0:
+        return width
+    size = getattr(console, "size", None)
+    if size is not None:
+        columns = getattr(size, "width", None)
+        if isinstance(columns, int) and columns > 0:
+            return columns
+    return None
+
+
+def _truncate_with_ellipsis(text: str, max_width: int) -> str:
+    """Truncate one line to a fixed width, preserving readability."""
+    if max_width <= 0:
+        return ""
+    if len(text) <= max_width:
+        return text
+    if max_width <= 2:
+        return text[:max_width]
+    return f"{text[: max_width - 1]}…"
 
 
 def _strip_hf_tqdm_kwargs(kwargs: dict[str, object]) -> None:

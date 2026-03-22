@@ -88,7 +88,9 @@ The loop continues until the task is complete, fails, or the user intervenes.
 - Local targets can enter agent mode only when the current readiness assessment still reports trusted tool use
 - Remote targets can enter agent mode only when `tool_use` is supported and its tier is `verified`, `inferred`, or `configured`
 - Remote targets in `legacy fallback` or `unknown` state are rejected until discovery is refreshed and the user reselects a live model
-- Rejections include the tool-use verdict, its readiness tier, and concrete next steps instead of only a raw boolean failure
+- Rejections include readiness posture (`ready`, `degraded`, `blocked`), tradeoff
+    messaging (`chat available` vs `agent blocked`), the tool-use verdict/tier,
+    and concrete next steps instead of only a raw boolean failure
 
 ### Core Principles
 

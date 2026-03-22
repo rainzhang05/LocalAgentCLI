@@ -32,7 +32,9 @@ from localagentcli.models.readiness import (
     build_target_readiness,
     default_local_capability_provenance,
     format_capability_brief,
+    format_readiness_tradeoff,
     is_agent_ready,
+    readiness_posture_label,
     selection_state_label,
 )
 from localagentcli.models.registry import ModelEntry, ModelRegistry
@@ -369,8 +371,9 @@ class SessionExecutionRuntime:
                     "error",
                     "Cannot run agent mode: active provider model is "
                     f"{selection_state_label(readiness.selection_state)}. "
-                    "Run /providers test to refresh discovery, then use /set to choose an "
-                    "API-discovered model.",
+                    f"Readiness posture: {readiness_posture_label(readiness)}. "
+                    f"Tradeoff: {format_readiness_tradeoff(readiness)}. "
+                    f"{readiness.guidance}",
                 )
                 return False
             tool_use = readiness.capabilities["tool_use"]
@@ -378,7 +381,10 @@ class SessionExecutionRuntime:
                 self._emit_message(
                     "error",
                     "Cannot run agent mode: the active provider model reports "
-                    f"{format_capability_brief('tool use', tool_use)} — {tool_use.reason}",
+                    f"{format_capability_brief('tool use', tool_use)} — {tool_use.reason}. "
+                    f"Readiness posture: {readiness_posture_label(readiness)}. "
+                    f"Tradeoff: {format_readiness_tradeoff(readiness)}. "
+                    f"{readiness.agent_recommendation}",
                 )
                 return False
             return True
@@ -400,7 +406,10 @@ class SessionExecutionRuntime:
                 self._emit_message(
                     "error",
                     "Cannot run agent mode: the active model reports "
-                    f"{format_capability_brief('tool use', tool_use)} — {tool_use.reason}",
+                    f"{format_capability_brief('tool use', tool_use)} — {tool_use.reason}. "
+                    f"Readiness posture: {readiness_posture_label(readiness)}. "
+                    f"Tradeoff: {format_readiness_tradeoff(readiness)}. "
+                    f"{readiness.agent_recommendation}",
                 )
                 return False
         return True

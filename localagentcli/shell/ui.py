@@ -332,6 +332,9 @@ class ShellUI:
             agent_phase=str(task_state.get("phase", "") or ""),
             agent_step=self._format_agent_step(task_state),
             agent_pending_tool=str(task_state.get("pending_tool", "") or ""),
+            agent_wait_reason=str(task_state.get("wait_reason", "") or ""),
+            agent_retry_count=int(task_state.get("retry_count", 0) or 0),
+            agent_last_error=str(task_state.get("last_error", "") or ""),
             rollback_count=int(task_state.get("rollback_count", 0) or 0),
         )
 

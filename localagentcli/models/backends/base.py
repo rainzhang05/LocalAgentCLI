@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Literal
@@ -326,6 +327,14 @@ def collect_generation_result(chunks: Iterable[StreamChunk]) -> GenerationResult
         finish_reason=finish_reason,
         chunks=ordered_chunks,
     )
+
+
+async def acollect_generation_result(chunks: AsyncIterable[StreamChunk]) -> GenerationResult:
+    """Collect chunks from an async stream into a GenerationResult."""
+    buffered: list[StreamChunk] = []
+    async for chunk in chunks:
+        buffered.append(chunk)
+    return collect_generation_result(iter(buffered))
 
 
 def backend_label(backend: str) -> str:

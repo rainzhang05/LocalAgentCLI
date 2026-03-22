@@ -157,6 +157,42 @@ class TestStatusCommand:
         assert "Pending tool:" in result.message
         assert "Undo ready:" in result.message
 
+    def test_shows_retry_wait_and_error_details(self, config, session_manager):
+        session_manager.current.metadata["agent_task_state"] = {
+            "route": "multi_step_task",
+            "phase": "retrying",
+            "step_index": 2,
+            "step_description": "Run test suite",
+            "wait_reason": "retrying after recent failure",
+            "retry_count": 2,
+            "last_error": "pytest exited with code 1",
+        }
+        router = _make_router(config, session_manager)
+
+        result = router.dispatch("status")
+
+        assert result.success
+        assert "Wait reason:" in result.message
+        assert "Retries:" in result.message
+        assert "Last error:" in result.message
+
+    def test_toolbar_shows_retry_badge_for_retrying_phase(self):
+        snapshot = status_cmd.build_status_snapshot(
+            mode="agent",
+            target="(none)",
+            workspace="~/repo",
+            session_name="(unsaved)",
+            approval_mode="balanced",
+            message_count=0,
+            agent_route="multi_step_task",
+            agent_phase="retrying",
+            agent_retry_count=3,
+        )
+
+        toolbar = status_cmd.format_status_toolbar(snapshot)
+
+        assert "agent: multi-step task/retrying/retry 3" in toolbar
+
 
 class TestConfigCommand:
     """Tests for /config."""

@@ -232,6 +232,8 @@ class TestInstallFromHF:
         assert records
         assert records[-1]["source"] == "huggingface"
         assert records[-1]["status"] == "success"
+        assert records[-1]["telemetry_version"] == 2
+        assert records[-1]["completion_path"] in {"hf_live_plan", "hf_snapshot_fallback"}
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +282,8 @@ class TestInstallFromURL:
         ]
         assert records[-1]["source"] == "url"
         assert records[-1]["status"] == "failed"
+        assert records[-1]["telemetry_version"] == 2
+        assert records[-1]["completion_path"] == "url_failed"
         assert "Connection refused" in str(records[-1]["error"])
 
     def test_custom_name(self, installer: ModelInstaller):
@@ -353,22 +357,28 @@ class TestDownloadTelemetrySummary:
             _DownloadTelemetry(
                 source="huggingface",
                 status="success",
+                telemetry_version=2,
                 started_at="2026-03-22T00:00:00+00:00",
                 finished_at="2026-03-22T00:00:02+00:00",
                 duration_seconds=2.0,
                 model_name="demo",
                 version="v1",
+                completion_path="hf_live_plan",
                 bytes_downloaded=10_485_760,
                 bytes_cached=1_048_576,
                 bytes_total=11_534_336,
                 files_total=4,
                 files_cached=1,
+                files_downloaded=3,
+                cache_hit_ratio=0.25,
                 repo="repo/demo",
             )
         )
+        assert "path=hf_live_plan" in summary
         assert "avg=" in summary
         assert "cached=" in summary
-        assert "files=4" in summary
+        assert "downloaded 3" in summary
+        assert "cache-hit=25%" in summary
 
     def test_mb(self):
         assert _fmt_size(1_048_576) == "1.0 MB"

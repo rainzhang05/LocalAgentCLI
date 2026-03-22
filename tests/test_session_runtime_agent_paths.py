@@ -1,0 +1,165 @@
+"""SessionRuntime agent-event draining (async paths)."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from localagentcli.agents.events import (
+    TaskComplete,
+    TaskFailed,
+    TaskRouted,
+    TaskStopped,
+    TaskTimedOut,
+    ToolCallRequested,
+)
+from localagentcli.agents.planner import TaskPlan
+from localagentcli.runtime.core import RuntimeTurn
+from localagentcli.runtime.protocol import ApprovalDecisionOp, UserTurnOp
+from localagentcli.runtime.session_runtime import SessionRuntime
+
+
+def _exec_mock() -> MagicMock:
+    ex = MagicMock()
+    sm = MagicMock()
+    sm.current.mode = "agent"
+    sm.current.history = []
+    ex._services.session_manager = sm
+    ex.agent_controller = MagicMock()
+    return ex
+
+
+async def _collect(runtime: SessionRuntime) -> list:
+    out = []
+    async for ev in runtime.aiter_events():
+        out.append(ev)
+    return out
+
+
+@pytest.mark.asyncio
+async def test_agent_events_task_complete():
+    plan = TaskPlan(task="t")
+
+    async def events():
+        yield TaskRouted(route="planner", reason="go")
+        yield TaskComplete(summary="ok", plan=plan)
+
+    ex = _exec_mock()
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", events=events(), route="planner")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent"))
+    out = await _collect(rt)
+    assert any(e.type == "turn_completed" for e in out)
+
+
+@pytest.mark.asyncio
+async def test_agent_events_task_failed():
+    plan = TaskPlan(task="t")
+
+    async def events():
+        yield TaskFailed(reason="boom", plan=plan)
+
+    ex = _exec_mock()
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", events=events(), route="planner")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent"))
+    out = await _collect(rt)
+    assert any(e.type == "turn_failed" for e in out)
+
+
+@pytest.mark.asyncio
+async def test_agent_events_task_stopped():
+    async def events():
+        yield TaskStopped(reason="user")
+
+    ex = _exec_mock()
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", events=events(), route="planner")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent"))
+    out = await _collect(rt)
+    assert any(e.type == "turn_interrupted" for e in out)
+
+
+@pytest.mark.asyncio
+async def test_agent_events_task_timed_out():
+    plan = TaskPlan(task="t")
+
+    async def events():
+        yield TaskTimedOut(reason="slow", plan=plan)
+
+    ex = _exec_mock()
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", events=events(), route="planner")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent"))
+    out = await _collect(rt)
+    assert any(e.type == "turn_interrupted" for e in out)
+
+
+@pytest.mark.asyncio
+async def test_agent_shell_policy_emits_approval_requested():
+    async def events():
+        yield ToolCallRequested(
+            tool_name="shell_execute",
+            arguments={"command": "ls"},
+            requires_approval=True,
+        )
+
+    ex = _exec_mock()
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", events=events(), route="planner")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent", approval_policy="shell"))
+    out = await _collect(rt)
+    assert any(e.type == "approval_requested" for e in out)
+    assert rt.has_pending_approval
+
+
+@pytest.mark.asyncio
+async def test_approval_resume_then_task_complete():
+    plan = TaskPlan(task="t")
+
+    async def events():
+        yield ToolCallRequested(
+            tool_name="file_read",
+            arguments={"path": "a.txt"},
+            requires_approval=True,
+        )
+        yield TaskComplete(summary="done", plan=plan)
+
+    ex = _exec_mock()
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", events=events(), route="planner")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent", approval_policy="shell"))
+    async for ev in rt.aiter_events():
+        if ev.type == "approval_requested":
+            break
+    assert rt.has_pending_approval
+    rt.submit(ApprovalDecisionOp("approve"))
+    tail = []
+    async for ev in rt.aiter_events():
+        tail.append(ev)
+    assert any(e.type == "turn_completed" for e in tail)

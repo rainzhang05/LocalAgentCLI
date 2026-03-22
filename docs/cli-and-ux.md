@@ -37,6 +37,7 @@ LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/
 - The active local target label is derived from the model registry only (format suffix), not from repeated on-disk re-detection, so toolbar refreshes stay lightweight while loading a model or running `/models` flows still repairs registry metadata through the existing load paths.
 - `/status` uses the same status snapshot data and formatting family, so the compact toolbar and expanded report cannot drift.
 - Agent-state snapshots now carry explicit wait/retry/error metadata (`wait_reason`, `retry_count`, `last_error`) so operators can distinguish waiting approval, retrying, and recovery states quickly.
+- The secondary details lane can run in opt-in persistent mode via `shell.persistent_details_lane`; when enabled, the recent details window is re-rendered at flush boundaries so secondary context remains continuously visible during long-running turns.
 - This is the strongest non-full-screen status surface currently used by the CLI. A full-screen TUI remains intentionally out of scope.
 
 ### Prompt Line
@@ -111,7 +112,9 @@ Quicksort is a divide-and-conquer sorting algorithm...
 **Behavior:**
 - Secondary entries are shown by default in dim styling so they remain visible without competing with the final answer
 - The renderer prints pending detail before the first primary answer text, and flushes any later-arriving detail once at the next safe boundary such as task completion or an approval prompt
+- Optional persistent details mode (`shell.persistent_details_lane = true`) re-renders the current rolling details window at each flush boundary, allowing split-lane-style monitoring without adopting a full-screen TUI layout
 - Neutral status lines (`render_status` / activity-style messages) may be batched across rapid agent events: queued secondary detail is emitted once per flush, then consecutive status lines print together (duplicate back-to-back lines collapse to one). A flush runs at boundaries such as success/warning/error lines, plan panels, tool-call rows, stream completion, approval prompts, and the end of each agent event pass from the shell
+- Status batching uses adaptive pacing under bursty backlog: the renderer switches to a smaller batch size when pending detail+status backlog crosses a high-water mark, then restores calmer batching only after backlog drops below a lower-water threshold (hysteresis)
 - The on-screen panel is capped to a rolling window of recent secondary entries during active generation
 - Full normalized secondary events are still preserved in session metadata even when the on-screen view is capped
 
@@ -245,6 +248,7 @@ The picker must be keyboard-first:
 3. Markdown is rendered progressively. A code block that hasn't been closed yet is still displayed with partial syntax highlighting.
 4. If the model is generating and the user scrolls up, generation continues in the background. Scrolling back down resumes live output.
 5. Secondary chunks are buffered separately from final assistant text so the renderer can dim and cap them without losing the full ordered event stream.
+6. Neutral status pacing adapts automatically during backlog spikes (high/low-water hysteresis) to reduce wait-state jitter while keeping operators caught up.
 
 ### Streaming Implementation
 

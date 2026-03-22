@@ -48,6 +48,7 @@ This file defines mandatory rules for AI agents (Claude, Codex, Copilot, or any 
 | [docs/remote-providers.md](docs/remote-providers.md) | API providers, key storage, streaming, provider types |
 | [docs/agent-system.md](docs/agent-system.md) | Chat mode, agent mode, agent loop, mode switching |
 | [docs/tool-system.md](docs/tool-system.md) | Tool definitions, output schema, registration, execution flow |
+| [docs/mcp.md](docs/mcp.md) | Stdio MCP servers, discovered tools, safety and limitations |
 | [docs/safety-and-permissions.md](docs/safety-and-permissions.md) | Approval modes, workspace boundary, rollback, high-risk actions |
 | [docs/session-and-config.md](docs/session-and-config.md) | TOML config, session state, context compaction |
 | [docs/cli-and-ux.md](docs/cli-and-ux.md) | Terminal UI, streaming, input handling, error display |

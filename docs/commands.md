@@ -118,11 +118,12 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/models install hf <repo>`
 - **Syntax**: `/models install hf <repo>`
 - **Behavior**: Downloads a model from an explicit Hugging Face repository path. Automatically detects the model format (MLX, GGUF, safetensors), assigns the appropriate backend, validates the model structure, extracts metadata, and registers it in the model registry.
-- **Progress**: Displays a download progress bar with speed and ETA.
+- **Progress**: Displays a download progress bar with speed and ETA. File labels degrade safely on narrow terminals by truncating with an ellipsis.
 
 #### `/models install url <url>`
 - **Syntax**: `/models install url <url>`
 - **Behavior**: Downloads a model file from a direct URL. Same detection, validation, and registration as HF install.
+- **Progress**: Uses the same width-safe progress rendering behavior as Hugging Face installs.
 
 #### `/models remove <name>`
 - **Syntax**: `/models remove <name>`

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from rich.console import Console
 
@@ -26,8 +27,16 @@ from localagentcli.models.backends.base import (
 )
 from localagentcli.models.detector import HardwareDetector, ModelDetector
 from localagentcli.models.installer import ModelInstaller
+from localagentcli.models.provider_readiness import aresolve_remote_model_readiness
+from localagentcli.models.readiness import (
+    build_target_readiness,
+    default_local_capability_provenance,
+    format_capability_brief,
+    is_agent_ready,
+    selection_state_label,
+)
 from localagentcli.models.registry import ModelEntry, ModelRegistry
-from localagentcli.providers.base import RemoteProvider
+from localagentcli.providers.base import RemoteProvider, effective_model_request_timeout
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.safety.approval import ApprovalManager
@@ -57,8 +66,8 @@ class RuntimeTurn:
     """Prepared execution path for one plain-text request."""
 
     mode: Literal["chat", "agent"]
-    stream: Iterator[StreamChunk] | None = None
-    events: Iterator[AgentEvent] | None = None
+    stream: AsyncIterator[StreamChunk] | None = None
+    events: AsyncIterator[AgentEvent] | None = None
     controller: AgentController | None = None
     route: str | None = None
     compaction_count: int = 0
@@ -235,6 +244,7 @@ class SessionExecutionRuntime:
         self._confirm_backend_install = confirm_backend_install
         self._active_provider: RemoteProvider | None = None
         self._active_provider_name = ""
+        self._active_provider_binding: str = ""
         self._active_backend: ModelBackend | None = None
         self._active_backend_model = ""
         self._agent_controller: AgentController | None = None
@@ -268,6 +278,10 @@ class SessionExecutionRuntime:
         session = self._services.session_manager.current
         if session.provider and session.model:
             options["model"] = session.model
+        global_rt = self._services.session_manager.get_effective_config("timeouts.model_response")
+        entry = self._services.provider_registry.get(session.provider) if session.provider else None
+        prov_opts = entry.options if entry is not None else {}
+        options["request_timeout"] = effective_model_request_timeout(prov_opts, global_rt)
         return options
 
     def context_limit(self) -> int:
@@ -291,15 +305,8 @@ class SessionExecutionRuntime:
         """Return the current workspace root."""
         return self._services.workspace_root()
 
-    def dispatch_text(self, text: str) -> RuntimeTurn | None:
-        """Route one text input through chat or agent mode."""
-        session = self._services.session_manager.current
-        if session.mode == "agent":
-            return self.dispatch_agent_turn(text)
-        return self.run_chat_turn(text)
-
-    def run_chat_turn(self, text: str) -> RuntimeTurn | None:
-        """Run one chat-mode turn through the shared runtime boundary."""
+    async def arun_chat_turn(self, text: str) -> RuntimeTurn | None:
+        """Run one chat-mode turn through the shared runtime boundary (async)."""
         model = self.resolve_active_model()
         if model is None:
             return None
@@ -311,20 +318,23 @@ class SessionExecutionRuntime:
             generation_config=self.build_generation_options(),
             on_session_mutated=self._services.session_manager.schedule_named_autosave,
         )
-        chunks = chat_controller.handle_input(
+        gen = chat_controller.ahandle_input(
             text,
             generation_options=self.build_generation_options(),
         )
         return RuntimeTurn(
             mode="chat",
-            stream=chunks,
+            stream=gen,
             compaction_count=chat_controller.last_compaction_count,
         )
 
-    def dispatch_agent_turn(self, text: str) -> RuntimeTurn | None:
-        """Dispatch one text input through the agent runtime boundary."""
+    async def adispatch_agent_turn(self, text: str) -> RuntimeTurn | None:
+        """Dispatch one text input through the agent runtime boundary (async)."""
         model = self.resolve_active_model()
         if model is None:
+            return None
+
+        if not await self._async_ensure_agent_dispatch_allowed():
             return None
 
         agent_controller = self.get_or_create_agent_controller(model)
@@ -336,15 +346,64 @@ class SessionExecutionRuntime:
             )
             return None
 
-        dispatch = agent_controller.dispatch_input(text)
+        dispatch = await agent_controller.adispatch_input(text)
         return RuntimeTurn(
             mode="agent",
-            stream=dispatch.stream,
-            events=dispatch.events,
+            stream=cast(AsyncIterator[StreamChunk] | None, dispatch.stream),
+            events=cast(AsyncIterator[AgentEvent] | None, dispatch.events),
             controller=agent_controller,
             route=dispatch.triage.outcome,
             compaction_count=agent_controller.last_compaction_count,
         )
+
+    async def _async_ensure_agent_dispatch_allowed(self) -> bool:
+        """Mirror /mode agent readiness checks at dispatch time."""
+        session = self._services.session_manager.current
+        if session.provider:
+            prov = self._active_provider
+            if prov is None or not session.model:
+                return True
+            readiness = await aresolve_remote_model_readiness(prov, session.model)
+            if readiness.selection_state in {"legacy_fallback", "unknown"}:
+                self._emit_message(
+                    "error",
+                    "Cannot run agent mode: active provider model is "
+                    f"{selection_state_label(readiness.selection_state)}. "
+                    "Run /providers test to refresh discovery, then use /set to choose an "
+                    "API-discovered model.",
+                )
+                return False
+            tool_use = readiness.capabilities["tool_use"]
+            if not is_agent_ready(readiness):
+                self._emit_message(
+                    "error",
+                    "Cannot run agent mode: the active provider model reports "
+                    f"{format_capability_brief('tool use', tool_use)} — {tool_use.reason}",
+                )
+                return False
+            return True
+
+        if session.model:
+            name, version = self._services.parse_name_version(session.model)
+            entry = self._services.model_registry.get_model(name, version)
+            if entry is None:
+                return True
+            readiness = build_target_readiness(
+                kind="local",
+                selection_state="local",
+                capabilities=entry.capabilities,
+                capability_provenance=entry.capability_provenance,
+                default_builder=default_local_capability_provenance,
+            )
+            tool_use = readiness.capabilities["tool_use"]
+            if not tool_use.supported:
+                self._emit_message(
+                    "error",
+                    "Cannot run agent mode: the active model reports "
+                    f"{format_capability_brief('tool use', tool_use)} — {tool_use.reason}",
+                )
+                return False
+        return True
 
     def resolve_active_model(self) -> ModelAbstractionLayer | None:
         """Resolve the active local backend or remote provider into a model abstraction."""
@@ -453,6 +512,7 @@ class SessionExecutionRuntime:
                 pass
             self._active_provider = None
             self._active_provider_name = ""
+            self._active_provider_binding = ""
 
         if self._agent_controller is not None:
             self._agent_controller.stop()
@@ -461,18 +521,60 @@ class SessionExecutionRuntime:
         if self._services.mcp_manager is not None:
             self._services.mcp_manager.close()
 
+    async def aclose(self) -> None:
+        """Async close (closes remote AsyncClient when a loop is running)."""
+        if self._active_backend is not None:
+            try:
+                self._active_backend.unload()
+            except Exception:
+                pass
+            self._active_backend = None
+            self._active_backend_model = ""
+
+        if self._active_provider is not None:
+            try:
+                await self._active_provider.aclose()
+            except Exception:
+                pass
+            self._active_provider = None
+            self._active_provider_name = ""
+            self._active_provider_binding = ""
+
+        if self._agent_controller is not None:
+            self._agent_controller.stop()
+            self._agent_controller = None
+            self._agent_controller_key = None
+        if self._services.mcp_manager is not None:
+            self._services.mcp_manager.close()
+
+    def _provider_cache_binding(self, provider_name: str) -> str | None:
+        """Fingerprint provider config + selected model for cache invalidation."""
+        entry = self._services.provider_registry.get(provider_name)
+        if entry is None:
+            return None
+        opts = json.dumps(entry.options or {}, sort_keys=True, default=str)
+        model = (self._services.session_manager.current.model or "").strip()
+        return (
+            f"{provider_name}\0{entry.type}\0{entry.base_url}\0"
+            f"{entry.default_model}\0{opts}\0{model}"
+        )
+
     def _get_active_provider(self, provider_name: str) -> RemoteProvider | None:
         """Get the active provider, caching the instance."""
-        if self._active_provider and self._active_provider_name == provider_name:
-            self._active_provider.set_active_model(
-                self._services.session_manager.current.model or None
-            )
+        want = self._provider_cache_binding(provider_name)
+        if (
+            self._active_provider is not None
+            and self._active_provider_name == provider_name
+            and want is not None
+            and self._active_provider_binding == want
+        ):
             return self._active_provider
         try:
             if self._active_provider is not None:
                 self._active_provider.close()
             self._active_provider = self._services.provider_registry.create_provider(provider_name)
             self._active_provider_name = provider_name
+            self._active_provider_binding = want or ""
             self._active_provider.set_active_model(
                 self._services.session_manager.current.model or None
             )
@@ -482,6 +584,7 @@ class SessionExecutionRuntime:
                 self._active_provider.close()
             self._active_provider = None
             self._active_provider_name = ""
+            self._active_provider_binding = ""
             return None
 
     def _get_active_backend(self, model_name: str) -> ModelBackend | None:

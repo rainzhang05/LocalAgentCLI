@@ -103,6 +103,38 @@ async def test_astream_http_error_chunks():
 
 
 @pytest.mark.asyncio
+async def test_astream_idle_timeout_chunks():
+    provider = _make_provider()
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.raise_for_status = MagicMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch.object(
+        AnthropicProvider,
+        "_ensure_async_client",
+        AsyncMock(return_value=MagicMock()),
+    ):
+        with patch.object(
+            provider, "_aopen_stream_with_retries", AsyncMock(return_value=(ctx, mock_resp))
+        ):
+            with patch.object(
+                provider,
+                "_aiter_lines_with_idle_timeout",
+                side_effect=TimeoutError("idle timeout"),
+            ):
+                chunks = [
+                    c
+                    async for c in provider.astream_generate(
+                        [ModelMessage(role="user", content="x")]
+                    )
+                ]
+    assert any(c.kind == "error" for c in chunks)
+    assert chunks[-1].is_done
+
+
+@pytest.mark.asyncio
 async def test_atest_connection_ok():
     provider = _make_provider()
     mock_resp = MagicMock(spec=httpx.Response)

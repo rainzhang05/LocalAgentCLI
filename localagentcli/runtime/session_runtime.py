@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import (
@@ -39,7 +39,8 @@ class _PendingApproval:
 
     submission_id: str
     tool_name: str
-    callback: Callable[[ApprovalDecisionOp], Iterator[AgentEvent]]
+    agent_iter: Any
+    approval_policy: str
 
 
 class SessionRuntime:
@@ -54,7 +55,7 @@ class SessionRuntime:
         self._event_log = event_log
         self._submission_queue: deque[Submission] = deque()
         self._current_submission_id: str | None = None
-        self._current_iterator: Iterator[RuntimeEvent] | None = None
+        self._current_iterator: AsyncIterator[RuntimeEvent] | None = None
         self._pending_approval: _PendingApproval | None = None
         self._active_model: ModelAbstractionLayer | None = None
 
@@ -95,17 +96,17 @@ class SessionRuntime:
             self._event_log.append_submission(submission)
         return submission.id
 
-    def iter_events(self) -> Iterator[RuntimeEvent]:
-        """Drain events for queued or active submissions."""
+    async def aiter_events(self) -> AsyncIterator[RuntimeEvent]:
+        """Drain events for queued or active submissions (async)."""
         while self._current_iterator is not None or self._submission_queue:
             if self._current_iterator is None:
                 submission = self._submission_queue.popleft()
                 self._current_submission_id = submission.id
-                self._current_iterator = self._start_submission(submission)
+                self._current_iterator = self._astart_submission(submission)
 
             try:
-                event = next(self._current_iterator)
-            except StopIteration:
+                event = await anext(self._current_iterator)
+            except StopAsyncIteration:
                 self._current_iterator = None
                 if self._pending_approval is None:
                     self._current_submission_id = None
@@ -115,15 +116,67 @@ class SessionRuntime:
                 self._event_log.append_event(event)
             yield event
 
-    def interrupt(self) -> Iterator[RuntimeEvent]:
-        """Interrupt the active turn and emit interruption events."""
+    def iter_events(self) -> Iterator[RuntimeEvent]:
+        """Sync wrapper (runs the shared async iterator under asyncio.run)."""
+        import asyncio
+
+        agen = self.aiter_events()
+
+        class _SyncBridge:
+            def __init__(self) -> None:
+                self._it = agen.__aiter__()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self) -> RuntimeEvent:
+                async def _one() -> RuntimeEvent:
+                    return await self._it.__anext__()
+
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return asyncio.run(_one())
+                raise RuntimeError(
+                    "iter_events() cannot be used while an event loop is running; "
+                    "use aiter_events()."
+                )
+
+        return _SyncBridge()
+
+    async def ainterrupt(self) -> AsyncIterator[RuntimeEvent]:
+        """Interrupt the active turn (async)."""
         self.submit(InterruptOp())
-        return self.iter_events()
+        async for event in self.aiter_events():
+            yield event
+
+    async def ashutdown(self) -> AsyncIterator[RuntimeEvent]:
+        """Shut down the runtime (async)."""
+        self.submit(ShutdownOp())
+        async for event in self.aiter_events():
+            yield event
+
+    def interrupt(self) -> Iterator[RuntimeEvent]:
+        import asyncio
+
+        async def _run():
+            out: list[RuntimeEvent] = []
+            async for e in self.ainterrupt():
+                out.append(e)
+            return out
+
+        return iter(asyncio.run(_run()))
 
     def shutdown(self) -> Iterator[RuntimeEvent]:
-        """Shut down the runtime and release resources."""
-        self.submit(ShutdownOp())
-        return self.iter_events()
+        import asyncio
+
+        async def _run():
+            out: list[RuntimeEvent] = []
+            async for e in self.ashutdown():
+                out.append(e)
+            return out
+
+        return iter(asyncio.run(_run()))
 
     def close(self) -> None:
         """Immediately release execution resources."""
@@ -134,19 +187,30 @@ class SessionRuntime:
         self._active_model = None
         self._execution_runtime.close()
 
-    def _start_submission(self, submission: Submission) -> Iterator[RuntimeEvent]:
+    async def aclose(self) -> None:
+        """Async teardown including remote provider cleanup."""
+        self._submission_queue.clear()
+        self._current_iterator = None
+        self._current_submission_id = None
+        self._pending_approval = None
+        self._active_model = None
+        await self._execution_runtime.aclose()
+
+    def _astart_submission(self, submission: Submission) -> AsyncIterator[RuntimeEvent]:
         op = submission.op
         if isinstance(op, UserTurnOp):
-            return self._run_user_turn(submission.id, op)
+            return self._arun_user_turn(submission.id, op)
         if isinstance(op, ApprovalDecisionOp):
-            return self._resume_approval(submission.id, op)
+            return self._aresume_approval(submission.id, op)
         if isinstance(op, InterruptOp):
-            return self._handle_interrupt(submission.id)
+            return self._ahandle_interrupt(submission.id)
         if isinstance(op, ShutdownOp):
-            return self._handle_shutdown(submission.id)
+            return self._ahandle_shutdown(submission.id)
         raise RuntimeError(f"Unsupported runtime operation: {op}")
 
-    def _run_user_turn(self, submission_id: str, op: UserTurnOp) -> Iterator[RuntimeEvent]:
+    async def _arun_user_turn(
+        self, submission_id: str, op: UserTurnOp
+    ) -> AsyncIterator[RuntimeEvent]:
         mode = op.mode or self._execution_runtime._services.session_manager.current.mode
         yield RuntimeEvent(
             type="turn_started",
@@ -159,9 +223,9 @@ class SessionRuntime:
         )
 
         if mode == "agent":
-            turn = self._execution_runtime.dispatch_agent_turn(op.prompt)
+            turn = await self._execution_runtime.adispatch_agent_turn(op.prompt)
         else:
-            turn = self._execution_runtime.run_chat_turn(op.prompt)
+            turn = await self._execution_runtime.arun_chat_turn(op.prompt)
 
         self._active_model = self._execution_runtime.resolve_active_model()
         if turn is None:
@@ -181,15 +245,17 @@ class SessionRuntime:
             )
 
         if turn.stream is not None:
-            yield from self._drain_stream(submission_id, turn.stream, mode=turn.mode)
+            async for ev in self._adrain_stream(submission_id, turn.stream, mode=turn.mode):
+                yield ev
             return
 
         if turn.events is not None:
-            yield from self._drain_agent_events(
+            async for ev in self._adrain_agent_events(
                 submission_id=submission_id,
                 events=turn.events,
                 approval_policy=op.approval_policy,
-            )
+            ):
+                yield ev
             return
 
         yield RuntimeEvent(
@@ -198,14 +264,14 @@ class SessionRuntime:
             data={"mode": turn.mode},
         )
 
-    def _drain_stream(
+    async def _adrain_stream(
         self,
         submission_id: str,
-        chunks: Iterator[StreamChunk],
+        chunks: AsyncIterator[StreamChunk],
         *,
         mode: str,
-    ) -> Iterator[RuntimeEvent]:
-        for chunk in chunks:
+    ) -> AsyncIterator[RuntimeEvent]:
+        async for chunk in chunks:
             yield RuntimeEvent(
                 type="stream_chunk",
                 submission_id=submission_id,
@@ -220,15 +286,20 @@ class SessionRuntime:
                     message=final_text,
                 )
 
-    def _drain_agent_events(
+    async def _adrain_agent_events(
         self,
         submission_id: str,
-        events: Iterator[AgentEvent],
+        events: AsyncIterator[AgentEvent],
         *,
         approval_policy: str,
-    ) -> Iterator[RuntimeEvent]:
+    ) -> AsyncIterator[RuntimeEvent]:
         controller = self._execution_runtime.agent_controller
-        for event in events:
+        it = events.__aiter__()
+        while True:
+            try:
+                event = await anext(it)
+            except StopAsyncIteration:
+                break
             yield RuntimeEvent(
                 type="agent_event",
                 submission_id=submission_id,
@@ -246,7 +317,8 @@ class SessionRuntime:
                     self._pending_approval = _PendingApproval(
                         submission_id=submission_id,
                         tool_name=event.tool_name,
-                        callback=self._approval_callback(controller),
+                        agent_iter=it,
+                        approval_policy=approval_policy,
                     )
                 yield RuntimeEvent(
                     type="approval_requested",
@@ -283,11 +355,11 @@ class SessionRuntime:
                 )
                 return
 
-    def _resume_approval(
+    async def _aresume_approval(
         self,
         submission_id: str,
         op: ApprovalDecisionOp,
-    ) -> Iterator[RuntimeEvent]:
+    ) -> AsyncIterator[RuntimeEvent]:
         pending = self._pending_approval
         if pending is None:
             yield RuntimeEvent(
@@ -304,14 +376,24 @@ class SessionRuntime:
             )
             return
 
-        self._pending_approval = None
-        yield from self._drain_agent_events(
-            submission_id=submission_id,
-            events=pending.callback(op),
-            approval_policy="shell",
-        )
+        controller = self._execution_runtime.agent_controller
+        if controller is not None:
+            if op.decision == "deny":
+                controller.apply_tool_approval(False)
+            elif op.decision == "approve_all":
+                controller.apply_tool_approval(True, autonomous_all=True)
+            else:
+                controller.apply_tool_approval(True, autonomous_all=op.autonomous)
 
-    def _handle_interrupt(self, submission_id: str) -> Iterator[RuntimeEvent]:
+        self._pending_approval = None
+        async for ev in self._adrain_agent_events(
+            submission_id=submission_id,
+            events=_AsyncIterResume(pending.agent_iter),
+            approval_policy=pending.approval_policy,
+        ):
+            yield ev
+
+    async def _ahandle_interrupt(self, submission_id: str) -> AsyncIterator[RuntimeEvent]:
         controller = self._execution_runtime.agent_controller
         if controller is not None and controller.has_active_task:
             controller.stop("Task interrupted.")
@@ -324,8 +406,8 @@ class SessionRuntime:
             message="Turn interrupted.",
         )
 
-    def _handle_shutdown(self, submission_id: str) -> Iterator[RuntimeEvent]:
-        self.close()
+    async def _ahandle_shutdown(self, submission_id: str) -> AsyncIterator[RuntimeEvent]:
+        await self.aclose()
         yield RuntimeEvent(
             type="shutdown",
             submission_id=submission_id,
@@ -339,15 +421,30 @@ class SessionRuntime:
                 return message.content
         return ""
 
-    @staticmethod
-    def _approval_callback(
-        controller: AgentController,
-    ) -> Callable[[ApprovalDecisionOp], Iterator[AgentEvent]]:
-        def callback(op: ApprovalDecisionOp) -> Iterator[AgentEvent]:
-            if op.decision == "approve":
-                return controller.approve_action(autonomous=op.autonomous)
-            if op.decision == "approve_all":
-                return controller.approve_action(autonomous=True)
-            return controller.deny_action()
 
-        return callback
+class _AsyncIterResume:
+    """Re-wrap a partially consumed async-iterator for continued anext consumption."""
+
+    def __init__(self, it: Any) -> None:
+        self._it = it
+
+    def __aiter__(self) -> _AsyncIterResume:
+        return self
+
+    async def __anext__(self) -> AgentEvent:
+        return await anext(self._it)
+
+
+def _legacy_approval_callback(
+    controller: AgentController,
+) -> Callable[[ApprovalDecisionOp], Iterator[AgentEvent]]:
+    """Sync approval resume (legacy); async runtime uses apply_tool_approval + saved iterator."""
+
+    def callback(op: ApprovalDecisionOp) -> Iterator[AgentEvent]:
+        if op.decision == "approve":
+            return controller.approve_action(autonomous=op.autonomous)
+        if op.decision == "approve_all":
+            return controller.approve_action(autonomous=True)
+        return controller.deny_action()
+
+    return callback

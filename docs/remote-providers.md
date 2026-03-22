@@ -69,6 +69,10 @@ Provider-level default models are no longer part of the interactive configuratio
 
 Provider entries are stored in `~/.localagent/config.toml` under the `[providers]` section. API keys are stored separately (see Key Storage).
 
+### Request timeouts
+
+For model calls, **`providers.<name>.options.timeout`** (seconds) overrides the global **`[timeouts].model_response`** value when set. The effective value is passed through generation options as `request_timeout` on the async request path. Slash-command and other sync provider entrypoints may still use a dedicated sync client so they do not nest `asyncio.run` inside an active event loop.
+
 ---
 
 ## API Key Storage

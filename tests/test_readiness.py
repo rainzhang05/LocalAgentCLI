@@ -42,6 +42,15 @@ class TestNormalizeCapabilityProvenance:
         assert normalized["reasoning"]["tier"] == "inferred"
         assert normalized["streaming"]["tier"] == "verified"
 
+    def test_skips_entries_with_invalid_tier(self):
+        capabilities = {"tool_use": True, "reasoning": False, "streaming": True}
+        normalized = normalize_capability_provenance(
+            {"tool_use": {"tier": "not_a_valid_tier", "reason": "ignored"}},
+            capabilities,
+            default_builder=default_local_capability_provenance,
+        )
+        assert normalized["tool_use"]["tier"] != "not_a_valid_tier"
+
 
 class TestBuildTargetReadiness:
     def test_agent_ready_requires_supported_tool_use_and_trusted_tier(self):

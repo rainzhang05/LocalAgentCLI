@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -298,3 +299,53 @@ class TestRemoteProviderABC:
         p._async_client = mock_ac
         p._close_async_client_sync_best_effort()
         mock_ac.aclose.assert_not_called()
+
+    def test_stream_idle_timeout_value_defaults_disabled(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        assert p._stream_idle_timeout_value({}) == 0.0
+
+    def test_stream_idle_timeout_value_from_kwargs(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        assert p._stream_idle_timeout_value({"stream_idle_timeout": 1.25}) == 1.25
+
+    def test_connection_policy_defaults_to_reuse(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        assert p._connection_policy() == "reuse"
+
+    @pytest.mark.asyncio
+    async def test_maybe_close_async_client_after_turn_for_close_policy(self):
+        p = StubRemoteProvider(
+            name="test",
+            base_url="http://x",
+            api_key="k",
+            default_model="m",
+            options={"connection_policy": "close_after_turn"},
+        )
+        mock_ac = MagicMock()
+        mock_ac.aclose = AsyncMock()
+        p._async_client = mock_ac
+
+        await p._maybe_close_async_client_after_turn()
+
+        mock_ac.aclose.assert_awaited_once()
+        assert p._async_client is None
+
+    @pytest.mark.asyncio
+    async def test_aiter_lines_with_idle_timeout_raises_on_slow_stream(self):
+        p = StubRemoteProvider(
+            name="test",
+            base_url="http://x",
+            api_key="k",
+            default_model="m",
+            options={"idle_stream_timeout": 0.01},
+        )
+
+        class _SlowResponse:
+            async def aiter_lines(self):
+                await asyncio.sleep(0.05)
+                yield "late-line"
+
+        response = _SlowResponse()
+        with pytest.raises(TimeoutError):
+            async for _line in p._aiter_lines_with_idle_timeout(response, {}):
+                pass

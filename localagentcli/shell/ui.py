@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from localagentcli.runtime import (
 )
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.shell.prompt import (
+    LinePromptSession,
     SelectionOption,
     confirm_choice,
     create_prompt_session,
@@ -161,7 +163,11 @@ class ShellUI:
         )
 
     def run(self) -> None:
-        """Main input loop."""
+        """Main input loop (sync entrypoint around async runtime)."""
+        asyncio.run(self.run_async())
+
+    async def run_async(self) -> None:
+        """Main input loop driven by the async session runtime."""
         self._logger.normal("Session started (id: %s)", self._session_manager.current.id)
         self._render_default_target_warning()
 
@@ -178,7 +184,10 @@ class ShellUI:
         while True:
             try:
                 self._sync_workspace_instruction()
-                user_input = self._prompt_session.prompt("> ")
+                if isinstance(self._prompt_session, LinePromptSession):
+                    user_input = self._prompt_session.prompt("> ")
+                else:
+                    user_input = await self._prompt_session.prompt_async("> ")
                 self._awaiting_idle_exit_confirmation = False
                 if not user_input.strip():
                     continue
@@ -192,7 +201,7 @@ class ShellUI:
 
                     action = result.data.get("action") if result.data else None
                     if action == "session_changed":
-                        self._runtime.close()
+                        await self._runtime.aclose()
                         self._execution_runtime = SessionExecutionRuntime(
                             services=self._services,
                             emit=self._emit_runtime_message,
@@ -204,25 +213,25 @@ class ShellUI:
                         self._sync_workspace_instruction()
                         self._render_default_target_warning()
                     if action == "agent_resume":
-                        self._handle_agent_resume(result)
+                        await self._handle_agent_resume(result)
                     if action == "exit":
-                        self._handle_exit()
+                        await self._ahandle_exit_async()
                         break
                 else:
-                    self._handle_plain_text(stripped)
+                    await self._ahandle_plain_text(stripped)
 
             except KeyboardInterrupt:
                 self._console.print()
                 if self._should_exit_after_idle_interrupt():
-                    self._handle_exit(prompt_to_save=False)
+                    await self._ahandle_exit_async(prompt_to_save=False)
                     break
                 continue
             except EOFError:
                 self._console.print()
-                self._handle_exit()
+                await self._ahandle_exit_async()
                 break
 
-    def _handle_plain_text(self, text: str) -> None:
+    async def _ahandle_plain_text(self, text: str) -> None:
         """Handle plain text input according to the current session mode."""
         try:
             self._runtime.submit(
@@ -232,12 +241,12 @@ class ShellUI:
                     approval_policy="shell",
                 )
             )
-            self._drain_runtime_events()
+            await self._adrain_runtime_events()
         except KeyboardInterrupt:
             interrupted = False
-            for event in self._runtime.interrupt():
+            async for event in self._runtime.ainterrupt():
                 interrupted = True
-                self._handle_runtime_event(event)
+                await self._ahandle_runtime_event(event)
             if not interrupted:
                 model = self._resolve_active_model()
                 if model is not None:
@@ -360,7 +369,7 @@ class ShellUI:
         if warning:
             self._stream_renderer.render_warning(warning)
 
-    def _handle_exit(self, *, prompt_to_save: bool = True) -> None:
+    async def _ahandle_exit_async(self, *, prompt_to_save: bool = True) -> None:
         """Handle clean shutdown with optional session save."""
         self._sync_prompt_history_to_session()
         self._session_manager.flush_named_autosave()
@@ -371,7 +380,7 @@ class ShellUI:
                 path = self._session_manager.save_session()
                 self._console.print(f"Session saved to {path}")
 
-        self._runtime.close()
+        await self._runtime.aclose()
         self._agent_controller = None
 
         self._logger.normal("Session ended")
@@ -415,15 +424,15 @@ class ShellUI:
                 return
         self._stream_renderer.flush_agent_event_tail()
 
-    def _drain_runtime_events(self) -> None:
+    async def _adrain_runtime_events(self) -> None:
         """Drain typed runtime events until the current submission pauses or finishes."""
         try:
-            for event in self._runtime.iter_events():
-                self._handle_runtime_event(event)
+            async for event in self._runtime.aiter_events():
+                await self._ahandle_runtime_event(event)
         finally:
             self._session_manager.flush_named_autosave()
 
-    def _handle_runtime_event(self, event: RuntimeEvent) -> None:
+    async def _ahandle_runtime_event(self, event: RuntimeEvent) -> None:
         """Render and respond to one typed runtime event."""
         self._agent_controller = self._runtime.active_agent_controller
         if event.type == "stream_chunk":
@@ -464,7 +473,7 @@ class ShellUI:
                 else:
                     self._runtime.submit(InterruptOp())
                     self._stream_renderer.render_warning("Agent task stopped.")
-                self._drain_runtime_events()
+                await self._adrain_runtime_events()
             return
         if event.type == "turn_completed":
             if (
@@ -622,7 +631,7 @@ class ShellUI:
             return text, False
         return text[:limit] + "...", True
 
-    def _handle_agent_resume(self, result: CommandResult) -> None:
+    async def _handle_agent_resume(self, result: CommandResult) -> None:
         """Resume a paused agent task after an /agent command."""
         if self._runtime.active_submission_id is None:
             return
@@ -634,7 +643,7 @@ class ShellUI:
             self._runtime.submit(ApprovalDecisionOp("deny"))
         else:
             return
-        self._drain_runtime_events()
+        await self._adrain_runtime_events()
 
     def _undo_last_agent_change(self) -> tuple[str, str | None]:
         """Undo the most recent rollback entry for the current session."""

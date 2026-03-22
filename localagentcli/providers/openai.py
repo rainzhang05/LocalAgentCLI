@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -88,7 +90,7 @@ class OpenAIProvider(RemoteProvider):
         options: dict | None = None,
     ):
         super().__init__(name, base_url, api_key, default_model, options)
-        timeout = self._options.get("timeout", 30)
+        timeout = float(self._options.get("timeout", 30))
         self._client = httpx.Client(
             base_url=self._base_url,
             headers={
@@ -97,6 +99,23 @@ class OpenAIProvider(RemoteProvider):
             },
             timeout=timeout,
         )
+        self._async_client: httpx.AsyncClient | None = None
+
+    def _sync_timeout(self) -> float:
+        return float(self._options.get("timeout", 30))
+
+    async def _ensure_async_client(self, timeout: float) -> httpx.AsyncClient:
+        if self._async_client is not None:
+            return self._async_client
+        self._async_client = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=timeout,
+        )
+        return self._async_client
 
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         """POST /chat/completions without streaming."""
@@ -192,6 +211,171 @@ class OpenAIProvider(RemoteProvider):
         """GET /models and parse the response."""
         try:
             response = self._request_with_retries(lambda: self._client.get("/models"))
+            response.raise_for_status()
+            data = response.json()
+            models: list[RemoteModelInfo] = []
+            for model_data in data.get("data", []):
+                model_id = model_data.get("id", "")
+                if not model_id:
+                    continue
+                capabilities = self._capabilities_for_model(model_id)
+                models.append(
+                    RemoteModelInfo(
+                        id=model_id,
+                        name=model_data.get("id", ""),
+                        capabilities=capabilities,
+                        capability_provenance=inferred_remote_capability_provenance(
+                            capabilities,
+                            provider_label="OpenAI-compatible",
+                        ),
+                        selection_state="api_discovered",
+                    )
+                )
+            if models:
+                return models
+        except Exception:
+            logger.debug("Failed to list models from %s", self._name)
+        if self._default_model:
+            capabilities = self._capabilities_for_model(self._default_model)
+            return [
+                RemoteModelInfo(
+                    id=self._default_model,
+                    name=self._default_model,
+                    capabilities=capabilities,
+                    capability_provenance=legacy_fallback_capability_provenance(capabilities),
+                    selection_state="legacy_fallback",
+                )
+            ]
+        return []
+
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        """POST /chat/completions without streaming (async)."""
+        self._reset_cancel()
+        body = self._build_request_body(messages, stream=False, **kwargs)
+        timeout = self._request_timeout_value(kwargs)
+        client = await self._ensure_async_client(timeout)
+        try:
+            response = await self._arequest_with_retries(
+                lambda: client.post("/chat/completions", json=body)
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+
+        data = response.json()
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+        usage = data.get("usage", {})
+
+        return GenerationResult(
+            text=self._extract_message_text(message),
+            reasoning=self._extract_message_reasoning(message),
+            tool_calls=message.get("tool_calls", []),
+            usage=usage,
+            finish_reason=choice.get("finish_reason", ""),
+        )
+
+    async def astream_generate(  # type: ignore[misc, override]
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        """POST /chat/completions with stream=True (async SSE)."""
+        self._reset_cancel()
+        body = self._build_request_body(messages, stream=True, **kwargs)
+        accumulator = _OpenAIToolCallAccumulator()
+        timeout = self._request_timeout_value(kwargs)
+        client = await self._ensure_async_client(timeout)
+        context = None
+        try:
+
+            def _stream_factory():
+                return client.stream("POST", "/chat/completions", json=body)
+
+            context, resp = await self._aopen_stream_with_retries(_stream_factory)
+            resp.raise_for_status()
+            self._track_async_stream(resp)
+            try:
+                async for line in resp.aiter_lines():
+                    if self._cancel_requested:
+                        yield StreamChunk(
+                            text="Generation interrupted.",
+                            kind="notification",
+                            importance="secondary",
+                        )
+                        yield StreamChunk(
+                            kind="done", is_done=True, payload={"finish_reason": "cancelled"}
+                        )
+                        return
+                    for chunk in self._parse_sse_line(line, accumulator):
+                        yield chunk
+                        if chunk.is_done:
+                            return
+            finally:
+                self._untrack_async_stream()
+        except httpx.HTTPStatusError as e:
+            yield StreamChunk(
+                text=f"API error: {e.response.status_code}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                text="Generation interrupted.",
+                kind="notification",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "cancelled"})
+            raise
+        finally:
+            if context is not None:
+                await context.__aexit__(None, None, None)
+
+    async def atest_connection(self) -> ConnectionTestResult:
+        """GET /models (async)."""
+        start = time.monotonic()
+        timeout = self._sync_timeout()
+        client = await self._ensure_async_client(timeout)
+        try:
+            response = await self._arequest_with_retries(lambda: client.get("/models"))
+            response.raise_for_status()
+            latency = max((time.monotonic() - start) * 1000, 0.001)
+            data = response.json()
+            model_count = len(data.get("data", []))
+            return ConnectionTestResult(
+                success=True,
+                message=f"Connected. {model_count} models available.",
+                latency_ms=latency,
+            )
+        except httpx.HTTPStatusError as e:
+            latency = max((time.monotonic() - start) * 1000, 0.001)
+            if e.response.status_code == 401:
+                msg = "Authentication failed. Check your API key."
+            else:
+                msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+            return ConnectionTestResult(success=False, message=msg, latency_ms=latency)
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            latency = max((time.monotonic() - start) * 1000, 0.001)
+            return ConnectionTestResult(
+                success=False,
+                message=f"Connection failed: {e}",
+                latency_ms=latency,
+            )
+
+    async def alist_models(self) -> list[RemoteModelInfo]:
+        """GET /models (async)."""
+        try:
+            timeout = self._sync_timeout()
+            client = await self._ensure_async_client(timeout)
+            response = await self._arequest_with_retries(lambda: client.get("/models"))
             response.raise_for_status()
             data = response.json()
             models: list[RemoteModelInfo] = []

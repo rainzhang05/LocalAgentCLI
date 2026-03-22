@@ -371,6 +371,15 @@ class AgentLoop:
 
             if result.finish_reason == "error":
                 consecutive_errors += 1
+                yield PhaseChanged(
+                    phase="retrying",
+                    summary=(
+                        f"Retrying step {step.index} after model error "
+                        f"({consecutive_errors}/{self._max_consecutive_errors})."
+                    ),
+                    step_index=step.index,
+                    step_description=step.description,
+                )
                 if result.usage.get("error"):
                     conversation.append(
                         ModelMessage(
@@ -397,6 +406,15 @@ class AgentLoop:
                 conversation.extend(tool_messages)
                 if had_error:
                     consecutive_errors += 1
+                    yield PhaseChanged(
+                        phase="retrying",
+                        summary=(
+                            f"Retrying step {step.index} after tool failure "
+                            f"({consecutive_errors}/{self._max_consecutive_errors})."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
                 else:
                     consecutive_errors = 0
                 continue
@@ -642,6 +660,15 @@ class AgentLoop:
 
             if result.finish_reason == "error":
                 consecutive_errors += 1
+                yield PhaseChanged(
+                    phase="retrying",
+                    summary=(
+                        f"Retrying step {step.index} after model error "
+                        f"({consecutive_errors}/{self._max_consecutive_errors})."
+                    ),
+                    step_index=step.index,
+                    step_description=step.description,
+                )
                 if result.usage.get("error"):
                     conversation.append(
                         ModelMessage(
@@ -663,6 +690,15 @@ class AgentLoop:
                 conversation.extend(tool_messages)
                 if had_error:
                     consecutive_errors += 1
+                    yield PhaseChanged(
+                        phase="retrying",
+                        summary=(
+                            f"Retrying step {step.index} after tool failure "
+                            f"({consecutive_errors}/{self._max_consecutive_errors})."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
                 else:
                     consecutive_errors = 0
                 continue

@@ -10,7 +10,12 @@ import pytest
 from rich.console import Console
 
 from localagentcli.models.detector import ModelDetector
-from localagentcli.models.installer import ModelInstaller, _fmt_size, _make_fast_tqdm_class
+from localagentcli.models.installer import (
+    ModelInstaller,
+    _fmt_size,
+    _format_download_label,
+    _make_fast_tqdm_class,
+)
 from localagentcli.models.registry import ModelRegistry
 
 
@@ -283,6 +288,21 @@ class TestTQDMCompatibility:
         progress = tqdm_class(total=1, name="huggingface_hub.snapshot_download")
         progress.update(1)
         progress.close()
+
+
+class TestDownloadLabelFormatting:
+    def test_download_label_truncates_when_width_is_limited(self):
+        label = _format_download_label(
+            "weights/very/long/path/to/model-file.safetensors",
+            max_width=24,
+        )
+        assert len(label) <= 24
+        assert label.endswith("…")
+
+    def test_download_label_unbounded_by_default(self):
+        label = _format_download_label("weights/model.safetensors")
+        assert "Downloading" in label
+        assert "model.safetensors" in label
 
     def test_mb(self):
         assert _fmt_size(1_048_576) == "1.0 MB"

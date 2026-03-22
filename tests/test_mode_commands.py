@@ -68,6 +68,8 @@ class TestModeCommands:
 
         assert not result.success
         assert "tool use: no [verified]" in result.message
+        assert "Readiness posture:" in result.message
+        assert "Tradeoff:" in result.message
 
     def test_mode_agent_allows_tool_capable_provider(self, config, session_manager, storage):
         router, _, provider_registry = _make_router(config, session_manager, storage)
@@ -148,3 +150,5 @@ class TestModeCommands:
         assert not result.success
         assert "legacy fallback" in result.message
         assert "API-discovered model" in result.message
+        assert "Readiness posture:" in result.message
+        assert "Tradeoff:" in result.message

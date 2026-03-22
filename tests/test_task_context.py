@@ -112,5 +112,22 @@ def test_format_truncates_long_summary(tmp_path: Path):
     assert summary_line.endswith("...")
 
 
+def test_format_omits_whitespace_only_summary(tmp_path: Path):
+    session = _session(
+        tmp_path,
+        metadata={
+            "agent_task_state": {
+                "active": True,
+                "phase": "running",
+                "summary": "   \t  ",
+            }
+        },
+    )
+    text = format_agent_task_runtime_section(session)
+    assert text is not None
+    assert "summary:" not in text
+    assert "phase: running" in text
+
+
 def test_heading_constant_for_loop_use():
     assert "runtime" in AGENT_TASK_RUNTIME_HEADING.lower()

@@ -263,6 +263,8 @@ class OpenAIProvider(RemoteProvider):
             return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
         except (httpx.TimeoutException, httpx.ConnectError) as e:
             return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+        finally:
+            await self._maybe_close_async_client_after_turn()
 
         data = response.json()
         choice = data.get("choices", [{}])[0]
@@ -296,7 +298,7 @@ class OpenAIProvider(RemoteProvider):
             resp.raise_for_status()
             self._track_async_stream(resp)
             try:
-                async for line in resp.aiter_lines():
+                async for line in self._aiter_lines_with_idle_timeout(resp, kwargs):
                     if self._cancel_requested:
                         yield StreamChunk(
                             text="Generation interrupted.",
@@ -327,6 +329,13 @@ class OpenAIProvider(RemoteProvider):
                 importance="secondary",
             )
             yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except TimeoutError as e:
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
         except asyncio.CancelledError:
             yield StreamChunk(
                 text="Generation interrupted.",
@@ -338,6 +347,7 @@ class OpenAIProvider(RemoteProvider):
         finally:
             if context is not None:
                 await context.__aexit__(None, None, None)
+            await self._maybe_close_async_client_after_turn()
 
     async def atest_connection(self) -> ConnectionTestResult:
         """GET /models (async)."""

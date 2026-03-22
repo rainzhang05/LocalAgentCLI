@@ -48,6 +48,10 @@ All persistent data is stored under `~/.localagent/`:
 | `sessions/` | Saved session snapshots | Until user deletes session |
 | `logs/` | Runtime logs and exports | Configurable retention (default: 30 days) |
 | `cache/` | Temporary data (rollbacks, downloads, installer telemetry sidecar) | Short-lived (auto-cleaned) |
+
+Installer download telemetry is append-only JSONL (`install_telemetry.jsonl`).
+Current records use telemetry schema version `2` and include completion-path and
+cache/download counters for completion recap diagnostics.
 | `secrets/` | Encrypted API keys | Until user removes provider |
 
 ---

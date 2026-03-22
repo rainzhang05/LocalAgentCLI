@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from collections.abc import AsyncIterator, Iterator
 from contextlib import redirect_stderr, redirect_stdout
-from typing import Iterator
+from typing import Any, cast
 
 from localagentcli.models.backends.base import (
     EmbeddedStreamNormalizer,
@@ -11,8 +14,10 @@ from localagentcli.models.backends.base import (
     ModelBackend,
     ModelMessage,
     StreamChunk,
+    acollect_generation_result,
     collect_generation_result,
 )
+from localagentcli.providers.base import RemoteProvider
 
 
 class ModelAbstractionLayer:
@@ -48,6 +53,107 @@ class ModelAbstractionLayer:
 
         yield from self._drain_captured_output(capture, final=True)
         yield from normalizer.flush()
+
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        """Async complete response from the normalized streaming pipeline."""
+        return await acollect_generation_result(self.astream_generate(messages, **kwargs))
+
+    async def astream_generate(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        """Async streaming response (native for remote, thread-bridged for local)."""
+        if isinstance(self._backend, RemoteProvider):
+            async for chunk in self._astream_remote(messages, **kwargs):
+                yield chunk
+        else:
+            async for chunk in self._astream_local_threaded(messages, **kwargs):
+                yield chunk
+
+    async def _astream_remote(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        capture = _CapturedOutput()
+        normalizer = EmbeddedStreamNormalizer()
+        remote = self._backend
+        assert isinstance(remote, RemoteProvider)
+        with redirect_stdout(capture), redirect_stderr(capture):
+            remote_stream = cast(
+                AsyncIterator[StreamChunk],
+                remote.astream_generate(messages, **kwargs),
+            )
+            async for raw_chunk in remote_stream:
+                for line in self._drain_captured_output(capture):
+                    yield line
+                if raw_chunk.is_done:
+                    for part in normalizer.flush():
+                        yield part
+                    yield raw_chunk
+                    continue
+                for part in normalizer.feed(raw_chunk):
+                    yield part
+        for line in self._drain_captured_output(capture, final=True):
+            yield line
+        for part in normalizer.flush():
+            yield part
+
+    async def _astream_local_threaded(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        """Run sync local stream_generate in a worker thread; never block the event loop."""
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=512)
+        error_holder: list[BaseException] = []
+
+        def worker() -> None:
+            capture = _CapturedOutput()
+            try:
+                with redirect_stdout(capture), redirect_stderr(capture):
+                    for raw_chunk in self._backend.stream_generate(messages, **kwargs):
+                        for line in capture.drain():
+                            fut = asyncio.run_coroutine_threadsafe(
+                                queue.put(("notify", line)), loop
+                            )
+                            fut.result(timeout=3600)
+                        fut = asyncio.run_coroutine_threadsafe(
+                            queue.put(("chunk", raw_chunk)), loop
+                        )
+                        fut.result(timeout=3600)
+                    for line in capture.drain(final=True):
+                        fut = asyncio.run_coroutine_threadsafe(queue.put(("notify", line)), loop)
+                        fut.result(timeout=3600)
+            except BaseException as exc:
+                error_holder.append(exc)
+            finally:
+                asyncio.run_coroutine_threadsafe(queue.put(("end", None)), loop).result(timeout=60)
+
+        thread = threading.Thread(target=worker, name="localagentcli-model-stream", daemon=True)
+        thread.start()
+        normalizer = EmbeddedStreamNormalizer()
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == "end":
+                    if error_holder:
+                        raise error_holder[0]
+                    break
+                if kind == "notify":
+                    yield StreamChunk(text=str(payload), kind="notification", importance="primary")
+                    continue
+                if kind == "chunk":
+                    raw_chunk = payload
+                    assert isinstance(raw_chunk, StreamChunk)
+                    if raw_chunk.is_done:
+                        for part in normalizer.flush():
+                            yield part
+                        yield raw_chunk
+                        continue
+                    for part in normalizer.feed(raw_chunk):
+                        yield part
+            for part in normalizer.flush():
+                yield part
+        finally:
+            self._backend.cancel()
+            thread.join(timeout=30.0)
 
     def supports_tools(self) -> bool:
         """Whether the backend supports tool/function calling."""

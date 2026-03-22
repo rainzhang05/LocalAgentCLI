@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from localagentcli.models.backends.base import (
@@ -209,3 +211,90 @@ class TestRemoteProviderABC:
         models = p.list_models()
         assert len(models) == 1
         assert models[0].id == "test-model"
+
+    def test_request_timeout_value_from_kwargs(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        assert p._request_timeout_value({"request_timeout": 42.5}) == 42.5
+
+    def test_track_async_stream_without_running_loop(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        resp = MagicMock()
+        p._track_async_stream(resp)
+        assert p._async_stream_response is resp
+        assert p._async_stream_loop is None
+
+    def test_retry_delay_uses_retry_after_header(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        req = httpx.Request("GET", "http://x")
+        response = httpx.Response(503, request=req, headers={"Retry-After": "0.25"})
+        assert p._retry_delay(1, response) == 0.25
+
+    def test_retry_delay_invalid_retry_after_falls_back_to_backoff(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        req = httpx.Request("GET", "http://x")
+        response = httpx.Response(503, request=req, headers={"Retry-After": "not-a-number"})
+        assert p._retry_delay(3, response) == pytest.approx(0.6)
+
+    def test_request_with_retries_recovers_after_transient_status(self):
+        opts = {"max_retries": 2}
+        p = StubRemoteProvider(
+            name="test", base_url="http://x", api_key="k", default_model="m", options=opts
+        )
+        req = httpx.Request("GET", "http://x")
+        calls = {"n": 0}
+
+        def factory() -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(503, request=req)
+            return httpx.Response(200, request=req)
+
+        out = p._request_with_retries(factory)
+        assert out.status_code == 200
+        assert calls["n"] == 2
+
+    def test_request_with_retries_recovers_after_connect_error(self):
+        opts = {"max_retries": 1}
+        p = StubRemoteProvider(
+            name="test", base_url="http://x", api_key="k", default_model="m", options=opts
+        )
+        req = httpx.Request("GET", "http://x")
+        calls = {"n": 0}
+
+        def factory() -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ConnectError("boom", request=req)
+            return httpx.Response(200, request=req)
+
+        out = p._request_with_retries(factory)
+        assert out.status_code == 200
+        assert calls["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_arequest_with_retries_recovers_after_transient_status(self):
+        opts = {"max_retries": 2}
+        p = StubRemoteProvider(
+            name="test", base_url="http://x", api_key="k", default_model="m", options=opts
+        )
+        req = httpx.Request("GET", "http://x")
+        calls = {"n": 0}
+
+        async def factory() -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(503, request=req)
+            return httpx.Response(200, request=req)
+
+        out = await p._arequest_with_retries(factory)
+        assert out.status_code == 200
+        assert calls["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_close_async_client_skips_sync_close_when_loop_running(self):
+        p = StubRemoteProvider(name="test", base_url="http://x", api_key="k", default_model="m")
+        mock_ac = MagicMock()
+        mock_ac.aclose = AsyncMock()
+        p._async_client = mock_ac
+        p._close_async_client_sync_best_effort()
+        mock_ac.aclose.assert_not_called()

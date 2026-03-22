@@ -183,6 +183,53 @@ class TaskPlanner:
         revised.status = plan.status
         return revised
 
+    async def acreate_plan(
+        self,
+        task: str,
+        context: list[ModelMessage],
+        generation_options: dict[str, object] | None = None,
+    ) -> TaskPlan:
+        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        if generation_options:
+            options.update(generation_options)
+        result = await self._model.agenerate(
+            [
+                ModelMessage(role="system", content=_PLANNING_PROMPT),
+                *context[-8:],
+                ModelMessage(role="user", content=f"Task: {task}"),
+            ],
+            **options,
+        )
+        return self._parse_plan_response(task, result)
+
+    async def arevise_plan(
+        self,
+        task: str,
+        plan: TaskPlan,
+        observation: str,
+        generation_options: dict[str, object] | None = None,
+    ) -> TaskPlan:
+        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        if generation_options:
+            options.update(generation_options)
+        result = await self._model.agenerate(
+            [
+                ModelMessage(role="system", content=_REPLAN_PROMPT),
+                ModelMessage(
+                    role="user",
+                    content=(
+                        f"Task: {task}\n\n"
+                        f"Current plan:\n{self._format_plan(plan)}\n\n"
+                        f"Observation:\n{observation}"
+                    ),
+                ),
+            ],
+            **options,
+        )
+        revised = self._parse_plan_response(task, result)
+        revised.status = plan.status
+        return revised
+
     def _parse_plan_response(self, task: str, result: GenerationResult) -> TaskPlan:
         payload = self._extract_json(result.text)
         if payload is None:

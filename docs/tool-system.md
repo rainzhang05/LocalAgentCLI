@@ -1,6 +1,6 @@
 # LocalAgentCLI — Tool System
 
-This document defines the tool system: the tools available to agents, their behavior, output schema, registration pattern, and implementation guidance. For how tools integrate with the agent loop, see [agent-system.md](agent-system.md). For approval rules around tool execution, see [safety-and-permissions.md](safety-and-permissions.md).
+This document defines the tool system: the tools available to agents, their behavior, output schema, registration pattern, and implementation guidance. For how tools integrate with the agent loop, see [agent-system.md](agent-system.md). For approval rules around tool execution, see [safety-and-permissions.md](safety-and-permissions.md). For MCP stdio servers and discovered tools, see [mcp.md](mcp.md).
 
 ---
 
@@ -14,7 +14,7 @@ The runtime now builds turn-scoped tool inventory through `ToolRouter`, which
 can merge:
 - built-in Python tools
 - callback-backed dynamic tools
-- MCP-backed stdio tools discovered from configured `mcp_servers`
+- MCP-backed stdio tools discovered from configured `mcp_servers` (see [mcp.md](mcp.md))
 
 ### Parameter schema rules
 

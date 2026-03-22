@@ -7,9 +7,11 @@ from localagentcli.models.readiness import (
     build_target_readiness,
     default_local_capability_provenance,
     format_capability_line,
+    format_readiness_tradeoff,
     is_agent_ready,
     local_capability_provenance,
     normalize_capability_provenance,
+    readiness_posture_label,
     selection_state_label,
 )
 
@@ -67,6 +69,8 @@ class TestBuildTargetReadiness:
 
         assert is_agent_ready(readiness) is True
         assert readiness.summary == "Agent mode available: tool use yes [inferred]."
+        assert readiness.operator_posture == "ready"
+        assert "trusted tool-use readiness" in readiness.tradeoff
 
     def test_legacy_fallback_is_not_agent_ready(self):
         assessments = build_capability_assessments(
@@ -100,3 +104,18 @@ class TestFormattingHelpers:
         assert selection_state_label("api_discovered") == "api discovered"
         assert selection_state_label("legacy_fallback") == "legacy fallback"
         assert selection_state_label("model_unselected") == "model unselected"
+
+    def test_readiness_tradeoff_formatting(self):
+        readiness = build_target_readiness(
+            kind="provider",
+            selection_state="legacy_fallback",
+            capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+            capability_provenance={
+                "tool_use": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                "reasoning": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                "streaming": {"tier": "legacy_fallback", "reason": "Fallback only."},
+            },
+        )
+
+        assert readiness_posture_label(readiness) == "degraded"
+        assert "degraded -" in format_readiness_tradeoff(readiness)

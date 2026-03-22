@@ -237,6 +237,42 @@ class TestStreamRendererStatusCoalescing:
         printed = console.print.call_args.args[0]
         assert printed.count("same") == 1
 
+    def test_enters_and_exits_status_catchup_mode_with_hysteresis(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        for index in range(20):
+            renderer.render_secondary(f"detail {index}")
+
+        assert renderer._status_batch_limit == 12
+
+        renderer.render_status("a")
+        renderer.render_status("b")
+        assert renderer._status_batch_limit == 4
+        renderer.render_status("c")
+        renderer.render_status("d")
+
+        assert renderer._status_batch_limit == 12
+        assert any(
+            call.args and isinstance(call.args[0], str) and "ℹ a" in call.args[0]
+            for call in console.print.call_args_list
+        )
+
+    def test_persistent_details_lane_rerenders_recent_window(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console, persistent_details_lane=True)
+
+        renderer.render_secondary("alpha")
+        renderer.flush_pending_details()
+        console.reset_mock()
+
+        renderer.render_status("tick")
+        renderer.flush_pending_details()
+
+        assert isinstance(console.print.call_args_list[0].args[0], Panel)
+        assert "alpha" in console.print.call_args_list[0].args[0].renderable
+        assert "ℹ tick" in console.print.call_args_list[1].args[0]
+
 
 class TestStreamRendererAgentEvents:
     def test_task_routed_renders_status(self):

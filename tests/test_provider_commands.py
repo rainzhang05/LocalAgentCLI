@@ -129,6 +129,7 @@ class TestProvidersList:
         assert result.success is True
         assert "gpt-4o" in result.message
         assert "api discovered" in result.message
+        assert "[ready]" in result.message
 
     def test_list_shows_active_marker(self, registry: ProviderRegistry):
         _add_openai(registry)

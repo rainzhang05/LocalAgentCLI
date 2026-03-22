@@ -10,6 +10,8 @@ from localagentcli.models.readiness import (
     build_target_readiness,
     default_local_capability_provenance,
     format_capability_brief,
+    format_readiness_tradeoff,
+    readiness_posture_label,
     selection_state_label,
 )
 from localagentcli.models.registry import ModelRegistry
@@ -125,14 +127,17 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     "Cannot enter agent mode: active provider model "
                     f"'{session.model}' is {selection_state_label(readiness.selection_state)}. "
-                    "Run /providers test to refresh discovery, then use /set to choose an "
-                    "API-discovered model."
+                    f"Readiness posture: {readiness_posture_label(readiness)}. "
+                    f"Tradeoff: {format_readiness_tradeoff(readiness)}. "
+                    f"{readiness.guidance}"
                 )
             if not tool_use.supported:
                 return CommandResult.error(
                     "Cannot enter agent mode: the active provider "
                     f"model ({session.model}) reports "
-                    f"{format_capability_brief('tool use', tool_use)} - {tool_use.reason} "
+                    f"{format_capability_brief('tool use', tool_use)} - {tool_use.reason}. "
+                    f"Readiness posture: {readiness_posture_label(readiness)}. "
+                    f"Tradeoff: {format_readiness_tradeoff(readiness)}. "
                     "Use /set to switch to a tool-capable provider."
                 )
         elif session.model:
@@ -154,7 +159,9 @@ class ModeAgentHandler(CommandHandler):
                 return CommandResult.error(
                     "Cannot enter agent mode: the active model "
                     f"({session.model}) reports "
-                    f"{format_capability_brief('tool use', tool_use)} - {tool_use.reason} "
+                    f"{format_capability_brief('tool use', tool_use)} - {tool_use.reason}. "
+                    f"Readiness posture: {readiness_posture_label(readiness)}. "
+                    f"Tradeoff: {format_readiness_tradeoff(readiness)}. "
                     "Use /set to switch to a tool-capable target."
                 )
 

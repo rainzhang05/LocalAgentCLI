@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from collections.abc import Sequence
@@ -30,16 +31,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "exec":
         prompt = " ".join(args.prompt).strip()
-        return _run_exec(
-            prompt,
-            config,
-            storage,
-            mode=args.mode,
-            json_mode=bool(args.json),
-            approval_policy=args.approval_policy,
-            session_name=args.session,
-            fork_name=args.fork,
-            save_session=args.save_session,
+        return asyncio.run(
+            _run_exec_async(
+                prompt,
+                config,
+                storage,
+                mode=args.mode,
+                json_mode=bool(args.json),
+                approval_policy=args.approval_policy,
+                session_name=args.session,
+                fork_name=args.fork,
+                save_session=args.save_session,
+            )
         )
 
     shell = ShellUI(config=config, storage=storage, first_run=first_run)
@@ -107,7 +110,7 @@ def _bootstrap_application() -> tuple[StorageManager, ConfigManager, bool]:
     return storage, config, first_run
 
 
-def _run_exec(
+async def _run_exec_async(
     prompt: str,
     config: ConfigManager,
     storage: StorageManager,
@@ -151,7 +154,7 @@ def _run_exec(
                 approval_policy=approval_policy,  # type: ignore[arg-type]
             )
         )
-        return _drain_exec_runtime_events(
+        return await _adrain_exec_runtime_events(
             runtime,
             output_console,
             error_console,
@@ -159,7 +162,7 @@ def _run_exec(
         )
     except KeyboardInterrupt:
         exit_code = 1
-        for event in runtime.interrupt():
+        async for event in runtime.ainterrupt():
             if json_mode:
                 output_console.print(json.dumps(event.to_dict(), ensure_ascii=False))
             else:
@@ -177,7 +180,7 @@ def _run_exec(
                 services.session_manager.save_session(persisted_session_name)
             except Exception:
                 pass
-        runtime.close()
+        await runtime.aclose()
 
 
 def _emit_exec_message(message: RuntimeMessage, console: Console) -> None:
@@ -211,7 +214,7 @@ def _prepare_exec_session(
     return save_session
 
 
-def _drain_exec_runtime_events(
+async def _adrain_exec_runtime_events(
     runtime: SessionRuntime,
     output_console: Console,
     error_console: Console,
@@ -220,7 +223,7 @@ def _drain_exec_runtime_events(
 ) -> int:
     """Drain runtime events for the headless exec surface."""
     exit_code = 0
-    for event in runtime.iter_events():
+    async for event in runtime.aiter_events():
         if json_mode:
             output_console.print(json.dumps(event.to_dict(), ensure_ascii=False))
             continue

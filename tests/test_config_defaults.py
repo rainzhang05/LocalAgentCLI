@@ -21,6 +21,7 @@ class TestDefaultConfig:
         assert "safety" in DEFAULT_CONFIG
         assert "generation" in DEFAULT_CONFIG
         assert "timeouts" in DEFAULT_CONFIG
+        assert "shell" in DEFAULT_CONFIG
         assert "providers" in DEFAULT_CONFIG
         assert "sessions" in DEFAULT_CONFIG
 
@@ -95,6 +96,16 @@ class TestValidateConfigValue:
         ok, msg = validate_config_value("sessions.autosave_debounce_seconds", 0)
         assert not ok
 
+    def test_shell_persistent_details_lane_bool(self):
+        ok, msg = validate_config_value("shell.persistent_details_lane", True)
+        assert ok
+        assert msg == ""
+
+    def test_shell_persistent_details_lane_string_coercion(self):
+        ok, msg = validate_config_value("shell.persistent_details_lane", "false")
+        assert ok
+        assert msg == ""
+
     def test_unknown_key(self):
         ok, msg = validate_config_value("nonexistent.key", "value")
         assert not ok
@@ -155,3 +166,7 @@ class TestCoerceValue:
     def test_coerce_string_to_bool(self):
         assert coerce_value("sessions.autosave_named", "true") is True
         assert coerce_value("sessions.autosave_named", "false") is False
+
+    def test_coerce_shell_bool(self):
+        assert coerce_value("shell.persistent_details_lane", "true") is True
+        assert coerce_value("shell.persistent_details_lane", "false") is False

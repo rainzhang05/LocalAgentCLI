@@ -20,7 +20,7 @@ This document defines the terminal user interface: visual style, UI elements, in
 A single-line status summary shown in the prompt-toolkit toolbar while the shell is idle:
 
 ```
-LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/waiting approval | undo: 2 | workspace: ~/project | Type /help
+LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/waiting approval/patch_apply | undo: 2 | workspace: ~/project | Type /help
 ```
 
 **Contents:**
@@ -36,6 +36,7 @@ LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/
 - The toolbar is rendered by `prompt_toolkit` instead of being printed into scrollback before each prompt.
 - The active local target label is derived from the model registry only (format suffix), not from repeated on-disk re-detection, so toolbar refreshes stay lightweight while loading a model or running `/models` flows still repairs registry metadata through the existing load paths.
 - `/status` uses the same status snapshot data and formatting family, so the compact toolbar and expanded report cannot drift.
+- Agent-state snapshots now carry explicit wait/retry/error metadata (`wait_reason`, `retry_count`, `last_error`) so operators can distinguish waiting approval, retrying, and recovery states quickly.
 - This is the strongest non-full-screen status surface currently used by the CLI. A full-screen TUI remains intentionally out of scope.
 
 ### Prompt Line

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from prompt_toolkit.utils import Event
 from rich.text import Text
@@ -601,7 +602,8 @@ class TestShellUIHandleExit:
     def test_exit_unmodified_session(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
-        ui._handle_exit()
+        ui._runtime.aclose = AsyncMock()
+        asyncio.run(ui._ahandle_exit_async())
         # Should print goodbye without asking to save
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("Goodbye" in c for c in calls)
@@ -610,6 +612,7 @@ class TestShellUIHandleExit:
     def test_exit_modified_session_decline_save(self, mock_confirm, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
+        ui._runtime.aclose = AsyncMock()
         from datetime import datetime
 
         from localagentcli.session.state import Message
@@ -617,13 +620,14 @@ class TestShellUIHandleExit:
         ui._session_manager.current.history.append(
             Message(role="user", content="test", timestamp=datetime.now())
         )
-        ui._handle_exit()
+        asyncio.run(ui._ahandle_exit_async())
         mock_confirm.assert_called_once()
 
     @patch("localagentcli.shell.ui.confirm_choice", return_value=True)
     def test_exit_modified_session_accept_save(self, mock_confirm, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
+        ui._runtime.aclose = AsyncMock()
         from datetime import datetime
 
         from localagentcli.session.state import Message
@@ -631,7 +635,7 @@ class TestShellUIHandleExit:
         ui._session_manager.current.history.append(
             Message(role="user", content="test", timestamp=datetime.now())
         )
-        ui._handle_exit()
+        asyncio.run(ui._ahandle_exit_async())
         # Session should have been saved
         sessions = ui._session_manager.list_sessions()
         assert len(sessions) == 1
@@ -644,24 +648,24 @@ class TestShellUIRun:
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.return_value = "/exit"
+        ui._prompt_session.prompt_async = AsyncMock(return_value="/exit")
         ui.run()
         # Should have called prompt at least once
-        ui._prompt_session.prompt.assert_called()
+        ui._prompt_session.prompt_async.assert_awaited()
 
     def test_empty_input_continues(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = ["", "  ", "/exit"]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=["", "  ", "/exit"])
         ui.run()
-        assert ui._prompt_session.prompt.call_count == 3
+        assert ui._prompt_session.prompt_async.await_count == 3
 
     def test_plain_text_shows_no_model(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = ["hello world", "/exit"]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=["hello world", "/exit"])
         ui.run()
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("No model connected" in c for c in calls)
@@ -673,21 +677,19 @@ class TestShellUIRun:
         controller = MagicMock()
         runtime = MagicMock()
         runtime.submit = MagicMock()
-        runtime.iter_events = MagicMock(
-            return_value=iter(
-                [
-                    RuntimeEvent(
-                        type="agent_event",
-                        submission_id="sub-1",
-                        data="agent-event",
-                    )
-                ]
+
+        async def _agent_events():
+            yield RuntimeEvent(
+                type="agent_event",
+                submission_id="sub-1",
+                data="agent-event",
             )
-        )
+
+        runtime.aiter_events = MagicMock(return_value=_agent_events())
         runtime.active_agent_controller = controller
         ui._runtime = runtime
 
-        ui._handle_plain_text("do something")
+        asyncio.run(ui._ahandle_plain_text("do something"))
 
         runtime.submit.assert_called_once()
         ui._stream_renderer.render_agent_event.assert_called_once_with("agent-event")
@@ -702,18 +704,19 @@ class TestShellUIRun:
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = [KeyboardInterrupt(), "/exit"]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=[KeyboardInterrupt(), "/exit"])
         ui.run()
-        assert ui._prompt_session.prompt.call_count == 2
+        assert ui._prompt_session.prompt_async.await_count == 2
 
     def test_double_keyboard_interrupt_exits(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = [KeyboardInterrupt(), KeyboardInterrupt()]
+        _two_interrupts = [KeyboardInterrupt(), KeyboardInterrupt()]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=_two_interrupts)
         ui.run()
 
-        assert ui._prompt_session.prompt.call_count == 2
+        assert ui._prompt_session.prompt_async.await_count == 2
         calls = [call.args[0] for call in ui._console.print.call_args_list if call.args]
         assert any("Press Ctrl+C again" in str(call) for call in calls)
         assert any("Goodbye" in str(call) for call in calls)
@@ -725,7 +728,8 @@ class TestShellUIRun:
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = [KeyboardInterrupt(), KeyboardInterrupt()]
+        _two_interrupts = [KeyboardInterrupt(), KeyboardInterrupt()]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=_two_interrupts)
         from datetime import datetime
 
         from localagentcli.session.state import Message
@@ -742,14 +746,14 @@ class TestShellUIRun:
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = EOFError()
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=EOFError())
         ui.run()
 
     def test_command_dispatch(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = ["/status", "/exit"]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=["/status", "/exit"])
         ui.run()
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("Mode:" in c for c in calls)
@@ -785,7 +789,7 @@ class TestShellUIRun:
         ui._console = MagicMock()
         ui._stream_renderer = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = ["/exit"]
+        ui._prompt_session.prompt_async = AsyncMock(return_value="/exit")
 
         ui.run()
 
@@ -798,16 +802,17 @@ class TestShellUIRun:
         ui = ShellUI(config=config, storage=storage)
         ui._console = MagicMock()
         ui._prompt_session = MagicMock()
-        ui._prompt_session.prompt.side_effect = ["/session load demo", "/exit"]
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=["/session load demo", "/exit"])
         ui._execution_runtime = MagicMock()
         old_runtime = MagicMock()
+        old_runtime.aclose = AsyncMock()
         ui._runtime = old_runtime
         ui._agent_controller = MagicMock()
         ui._rebuild_prompt_session = MagicMock()
         ui._build_session_runtime = MagicMock(return_value=MagicMock())
         ui._sync_workspace_instruction = MagicMock()
         ui._render_default_target_warning = MagicMock()
-        ui._handle_exit = MagicMock()
+        ui._ahandle_exit_async = AsyncMock()
 
         with (
             patch.object(ui._router, "dispatch") as mock_dispatch,
@@ -819,7 +824,7 @@ class TestShellUIRun:
             ]
             ui.run()
 
-        old_runtime.close.assert_called_once()
+        old_runtime.aclose.assert_awaited_once()
         ui._build_session_runtime.assert_called_once()
         assert ui._agent_controller is None
         ui._rebuild_prompt_session.assert_called_once()
@@ -1120,12 +1125,14 @@ class TestShellUIHelpers:
         runtime.active_submission_id = "sub-1"
         runtime.submit = MagicMock()
         ui._runtime = runtime
-        ui._drain_runtime_events = MagicMock()
+        ui._adrain_runtime_events = AsyncMock()
 
-        ui._handle_agent_resume(
-            CommandResult.ok(
-                "approved",
-                data={"decision": "approve", "autonomous": True},
+        asyncio.run(
+            ui._handle_agent_resume(
+                CommandResult.ok(
+                    "approved",
+                    data={"decision": "approve", "autonomous": True},
+                )
             )
         )
 
@@ -1133,7 +1140,7 @@ class TestShellUIHelpers:
         assert isinstance(submitted, ApprovalDecisionOp)
         assert submitted.decision == "approve"
         assert submitted.autonomous is True
-        ui._drain_runtime_events.assert_called_once()
+        ui._adrain_runtime_events.assert_awaited_once()
 
     def test_stop_agent_task_with_confirmation_decline(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1175,10 +1182,19 @@ class TestShellUIHelpers:
         ui._resolve_active_model = MagicMock(return_value=model)
         ui._stream_renderer = MagicMock()
         ui._runtime.submit = MagicMock()
-        ui._runtime.interrupt = MagicMock(return_value=iter(()))
-        ui._drain_runtime_events = MagicMock(side_effect=KeyboardInterrupt)
 
-        ui._handle_plain_text("hello")
+        async def _empty_ainterrupt():
+            if False:
+                yield  # pragma: no cover
+
+        ui._runtime.ainterrupt = MagicMock(return_value=_empty_ainterrupt())
+
+        async def _boom():
+            raise KeyboardInterrupt()
+
+        ui._adrain_runtime_events = MagicMock(side_effect=_boom)
+
+        asyncio.run(ui._ahandle_plain_text("hello"))
 
         model.cancel.assert_called_once()
         ui._stream_renderer.render_warning.assert_called_once_with("Generation interrupted.")
@@ -1190,12 +1206,21 @@ class TestShellUIHelpers:
         ui._session_manager.current.mode = "agent"
         ui._resolve_active_model = MagicMock(return_value=model)
         ui._runtime.submit = MagicMock()
-        ui._runtime.interrupt = MagicMock(return_value=iter(()))
-        ui._drain_runtime_events = MagicMock(side_effect=KeyboardInterrupt)
+
+        async def _empty_ainterrupt_agent():
+            if False:
+                yield  # pragma: no cover
+
+        ui._runtime.ainterrupt = MagicMock(return_value=_empty_ainterrupt_agent())
+
+        async def _boom_agent():
+            raise KeyboardInterrupt()
+
+        ui._adrain_runtime_events = MagicMock(side_effect=_boom_agent)
         ui._agent_controller = controller
         ui._stream_renderer = MagicMock()
 
-        ui._handle_plain_text("do something")
+        asyncio.run(ui._ahandle_plain_text("do something"))
 
         model.cancel.assert_called_once()
         controller.stop.assert_called_once()

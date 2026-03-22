@@ -36,6 +36,11 @@ class TestToolResult:
         assert data["status"] == "error"
         assert data["error"] == "boom"
 
+    def test_error_descriptor_setter_updates_instance(self):
+        result = ToolResult.success("ok", output="x")
+        result.error = "patched"
+        assert result._error == "patched"
+
 
 class TestFileReadTool:
     def test_reads_text_file(self, tmp_path: Path):

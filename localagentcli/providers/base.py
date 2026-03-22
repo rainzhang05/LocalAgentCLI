@@ -21,6 +21,7 @@ from localagentcli.models.backends.base import (
 )
 
 _ResponseT = TypeVar("_ResponseT", bound=httpx.Response)
+_CONNECTION_POLICIES = {"reuse", "close_after_turn"}
 
 
 def effective_model_request_timeout(
@@ -112,6 +113,60 @@ class RemoteProvider(ModelBackend):
         if rt is not None:
             return float(cast(Any, rt))
         return float(self._options.get("timeout", 30))
+
+    def _stream_idle_timeout_value(self, kwargs: dict[str, object]) -> float:
+        """Idle timeout between streamed lines; 0 disables idle-timeout enforcement."""
+        value = kwargs.get("stream_idle_timeout")
+        if value is not None:
+            timeout = float(cast(Any, value))
+            return timeout if timeout > 0 else 0.0
+        configured = self._options.get("idle_stream_timeout")
+        if configured is None:
+            return 0.0
+        timeout = float(configured)
+        return timeout if timeout > 0 else 0.0
+
+    def _connection_policy(self) -> str:
+        """Provider async-client lifecycle policy."""
+        policy = str(self._options.get("connection_policy", "reuse") or "reuse").strip()
+        if policy not in _CONNECTION_POLICIES:
+            return "reuse"
+        return policy
+
+    async def _maybe_close_async_client_after_turn(self) -> None:
+        """Close async client after a turn when connection policy requires it."""
+        if self._connection_policy() != "close_after_turn":
+            return
+        aclient = getattr(self, "_async_client", None)
+        if aclient is None:
+            return
+        try:
+            await aclient.aclose()
+        except Exception:
+            pass
+        setattr(self, "_async_client", None)
+
+    async def _aiter_lines_with_idle_timeout(
+        self,
+        response: httpx.Response,
+        kwargs: dict[str, object],
+    ) -> AsyncIterator[str]:
+        """Yield streamed lines while enforcing optional idle timeout between lines."""
+        idle_timeout = self._stream_idle_timeout_value(kwargs)
+        if idle_timeout <= 0:
+            async for line in response.aiter_lines():
+                yield line
+            return
+
+        iterator = response.aiter_lines().__aiter__()
+        while True:
+            try:
+                line = await asyncio.wait_for(iterator.__anext__(), timeout=idle_timeout)
+            except StopAsyncIteration:
+                break
+            except TimeoutError as exc:
+                raise TimeoutError(f"Stream idle timeout after {idle_timeout:.1f}s") from exc
+            yield line
 
     def _track_async_stream(self, response: httpx.Response) -> None:
         self._async_stream_response = response

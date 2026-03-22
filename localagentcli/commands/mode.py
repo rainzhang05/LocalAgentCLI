@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from localagentcli.commands.providers import resolve_remote_model_readiness
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
+from localagentcli.models.provider_readiness import resolve_remote_model_readiness
 from localagentcli.models.readiness import (
     build_target_readiness,
     default_local_capability_provenance,

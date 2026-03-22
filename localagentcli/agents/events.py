@@ -13,6 +13,7 @@ AgentPhase = Literal[
     "planning",
     "executing",
     "waiting_approval",
+    "retrying",
     "replanning",
     "recovering",
     "stopped",

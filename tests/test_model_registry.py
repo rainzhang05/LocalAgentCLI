@@ -267,6 +267,11 @@ class TestModelRegistryUpdate:
         assert v2 is not None
         assert v2.format == "gguf"
 
+    def test_update_version_missing_raises_keyerror(self, registry: ModelRegistry):
+        registry.register(_make_entry(version="v1"))
+        with pytest.raises(KeyError, match="not found"):
+            registry.update_version("codellama-7b", "v9", {"format": "mlx"})
+
 
 class TestModelRegistrySearch:
     def test_search_by_name(self, registry: ModelRegistry):

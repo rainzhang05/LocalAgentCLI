@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-22 — **MCP (stdio):** per-request read timeouts, subprocess env merged with `os.environ` when `[mcp_servers.*].env` is set, deterministic disambiguation when sanitized MCP tool names collide; product doc `docs/mcp.md` describes configuration, safety, and intentional skills posture (`AGENTS.md` + pinned instructions; no separate skills runtime). **Session durability (shipped):** JSON session files (`format_version`), optional named autosave, append-only runtime JSONL under the cache dir (not merged into chat history). **Agent tools:** read-only parallel batches use a bounded pool (up to 16 workers) so concurrent I/O-bound tools still run on single-CPU hosts. Also: exec persist-on-exit, fork metadata, sandbox, shell/streaming polish.)
+> **Last updated**: 2026-03-22 — **Safety:** typed `SandboxPosture` / `parse_sandbox_mode` (`localagentcli/safety/posture.py`), config validation aligned; docs describe application-layer containment vs no OS-level shell/MCP isolation; extended high-risk shell patterns (`chmod`/`777`, `docker rm|rmi|system prune`, `kubectl delete`). **MCP (stdio):** per-request read timeouts, subprocess env merged with `os.environ` when `[mcp_servers.*].env` is set, deterministic disambiguation when sanitized MCP tool names collide; product doc `docs/mcp.md` describes configuration, safety, and intentional skills posture (`AGENTS.md` + pinned instructions; no separate skills runtime). **Session durability (shipped):** JSON session files (`format_version`), optional named autosave, append-only runtime JSONL under the cache dir (not merged into chat history). **Agent tools:** read-only parallel batches use a bounded pool (up to 16 workers) so concurrent I/O-bound tools still run on single-CPU hosts. Also: exec persist-on-exit, fork metadata, sandbox, shell/streaming polish.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -34,7 +34,7 @@ After implementing a component:
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
-| `[x]` | Config defaults and validation | 2026-03-21 — sandbox mode and `mcp_servers` tables; `[sessions].autosave_named` and `autosave_debounce_seconds` with bool/string coercion for autosave |
+| `[x]` | Config defaults and validation | 2026-03-22 — `safety.sandbox_mode` validated via `parse_sandbox_mode`; `mcp_servers` tables; `[sessions].autosave_named` and `autosave_debounce_seconds` with bool/string coercion for autosave |
 | `[x]` | Session state dataclass | 2026-03-17 |
 | `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — default-target repair; exec resume/fork; fork lineage metadata; exec persist-on-exit; `format_version` on save; opt-in debounced named autosave and flush from shell drain/exit; chat/agent controllers notify the scheduler when wired from `SessionExecutionRuntime` |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
@@ -135,13 +135,13 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | Safety layer (central gate) | 2026-03-21 — `localagentcli/safety/layer.py` validates boundaries, classifies risk, explains why high-risk actions were flagged, describes rollback availability up front, applies approval policy, records rollback history around successful tool execution, and now enforces runtime sandbox posture such as `read-only` for side-effecting tools |
+| `[x]` | Safety layer (central gate) | 2026-03-22 — `localagentcli/safety/layer.py` uses `SandboxPosture` for runtime sandbox checks; validates boundaries, classifies risk, explains high-risk flags, describes rollback availability, applies approval policy, records rollback history; `read-only` posture blocks side-effecting tools even in autonomous mode |
 | `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
 | `[x]` | Approval manager (autonomous mode) | 2026-03-19 — autonomous mode auto-approves standard actions, persists correctly across future tasks, and still pauses high-risk operations for explicit approval |
 | `[x]` | Approval UX (inline prompts) | 2026-03-20 — inline prompts flush pending renderer detail before blocking for input, use the shared action-prompt surface for approve/deny/details/approve-all, and render tool-specific previews with target, risk, warning, overwrite/create, and rollback context, plus explicit truncation labels for long preview sections |
 | `[x]` | Workspace boundary enforcement | 2026-03-18 — dedicated `WorkspaceBoundary` enforces root confinement for tool paths and shell working directories |
 | `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
-| `[x]` | High-risk action detection | 2026-03-18 — shell commands and sensitive file paths are classified centrally so high-risk actions always require approval |
+| `[x]` | High-risk action detection | 2026-03-22 — shell commands (including extended patterns for permissive `chmod`, destructive `docker`/`kubectl` verbs) and sensitive file paths are classified centrally so high-risk actions always require approval |
 | `[x]` | Rollback manager (file backups) | 2026-03-18 — `RollbackManager` stores per-session backups and a JSON rollback log under `cache/rollback/` |
 | `[x]` | Undo capability | 2026-03-19 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files, with Windows-safe modified-file restore behavior plus explicit `/agent undo` and `/agent undo-all` command surfaces |
 
@@ -153,11 +153,11 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-22 — 847 tests including MCP env merge, approval/sandbox integration for MCP tools, and colliding sanitized MCP name disambiguation; full suite passes at ~83.7% coverage |
+| `[x]` | Unit tests | 2026-03-22 — full suite includes MCP env merge, approval/sandbox integration for MCP tools, colliding sanitized MCP name disambiguation, `SandboxPosture`/read-only sandbox tests, and config `safety.sandbox_mode` validation; run `pytest --cov` for current counts and coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
-| `[x]` | Safety tests | 2026-03-18 — added boundary, rollback, safety-layer, and high-risk approval coverage |
+| `[x]` | Safety tests | 2026-03-22 — boundary, rollback, safety-layer, high-risk approval, read-only sandbox blocks, `parse_sandbox_mode`, and extended shell pattern coverage |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Linux) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Windows) | 2026-03-18 — added `windows-latest` to the GitHub Actions test matrix |

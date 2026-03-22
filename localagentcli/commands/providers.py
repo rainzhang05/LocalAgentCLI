@@ -10,6 +10,8 @@ from localagentcli.models.provider_readiness import resolve_remote_model_readine
 from localagentcli.models.readiness import (
     build_target_readiness,
     format_capability_brief,
+    format_readiness_tradeoff,
+    readiness_posture_label,
     selection_state_label,
     unknown_capability_provenance,
 )
@@ -91,7 +93,10 @@ class ProvidersListHandler(CommandHandler):
             readiness_label = "model unselected"
             if selected_model:
                 readiness = self._provider_readiness(entry.name, selected_model)
-                readiness_label = selection_state_label(readiness.selection_state)
+                readiness_label = (
+                    f"{selection_state_label(readiness.selection_state)} "
+                    f"[{readiness_posture_label(readiness)}]"
+                )
             lines.append(
                 f"  {entry.name:<20s} {entry.type:<12s} {entry.status:<12s} "
                 f"{model_label:<24s} {readiness_label}{marker}"
@@ -562,6 +567,8 @@ def _provider_discovery_report(provider: RemoteProvider, *, selected_model: str)
         readiness = resolve_remote_model_readiness(provider, selected_model)
         selection_label = selection_state_label(readiness.selection_state)
         lines.append(f"Current target: {selected_model} [{selection_label}].")
+        lines.append(f"Readiness posture: {readiness_posture_label(readiness)}.")
+        lines.append(f"Tradeoff: {format_readiness_tradeoff(readiness)}.")
     return "\n".join(lines)
 
 

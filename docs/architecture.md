@@ -55,8 +55,9 @@ Each layer communicates only with its immediate neighbors. No layer may bypass t
 - Owns shared process-level services such as config, storage, registries, sessions, model installation helpers, and logging
 - Resolves the active backend or provider into the unified model abstraction
 - Builds shared generation options, context limits, tool registries, and safety wiring
+- Drives interactive and headless turns on an **async** path: `SessionRuntime.aiter_events()`, `SessionExecutionRuntime.arun_chat_turn` / `adispatch_agent_turn`, with remote HTTP via `httpx.AsyncClient` and local backends bridged through the model layer without blocking the event loop
 - Exposes reusable chat-turn and agent-dispatch entrypoints for both the interactive shell and non-interactive surfaces
-- Keeps controller reuse and model/provider caching out of the prompt loop
+- Keeps controller reuse and model/provider caching out of the prompt loop; provider instances are keyed by config fingerprint and active model so target changes invalidate stale clients
 
 ### Submission / Event Protocol
 - Accepts typed runtime operations such as user turns, approval decisions, interrupts, and shutdown
@@ -81,7 +82,7 @@ Each layer communicates only with its immediate neighbors. No layer may bypass t
 
 ### Model Abstraction Layer
 - Provides a unified interface regardless of whether the underlying model is local or remote
-- Core methods: `generate()`, `stream_generate()`, `supports_tools()`, `supports_reasoning()`, `supports_streaming()`
+- Core methods: `generate()`, `stream_generate()`, `agenerate()`, `astream_generate()`, `supports_tools()`, `supports_reasoning()`, `supports_streaming()`
 - Normalizes all model outputs into a consistent format
 - Enforces the rule: if a model does not support tool use, agent mode is blocked
 - Selects the appropriate backend or provider based on the active model configuration

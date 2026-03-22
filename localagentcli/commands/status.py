@@ -24,6 +24,9 @@ class StatusSnapshot:
     agent_phase: str = ""
     agent_step: str = ""
     agent_pending_tool: str = ""
+    agent_wait_reason: str = ""
+    agent_retry_count: int = 0
+    agent_last_error: str = ""
     rollback_count: int = 0
 
 
@@ -39,6 +42,9 @@ def build_status_snapshot(
     agent_phase: str = "",
     agent_step: str = "",
     agent_pending_tool: str = "",
+    agent_wait_reason: str = "",
+    agent_retry_count: int = 0,
+    agent_last_error: str = "",
     rollback_count: int = 0,
 ) -> StatusSnapshot:
     """Create one reusable snapshot of the current CLI state."""
@@ -53,6 +59,9 @@ def build_status_snapshot(
         agent_phase=agent_phase,
         agent_step=agent_step,
         agent_pending_tool=agent_pending_tool,
+        agent_wait_reason=agent_wait_reason,
+        agent_retry_count=agent_retry_count,
+        agent_last_error=agent_last_error,
         rollback_count=rollback_count,
     )
 
@@ -94,6 +103,12 @@ def format_status_report(snapshot: StatusSnapshot) -> str:
         lines.append(f"  Agent phase:   {phase}")
         lines.append(f"  Agent step:    {step}")
         lines.append(f"  Pending tool:  {pending_tool}")
+        if snapshot.agent_wait_reason:
+            lines.append(f"  Wait reason:   {snapshot.agent_wait_reason}")
+        if snapshot.agent_retry_count:
+            lines.append(f"  Retries:       {snapshot.agent_retry_count}")
+        if snapshot.agent_last_error:
+            lines.append(f"  Last error:    {snapshot.agent_last_error}")
         lines.append(f"  Undo ready:    {snapshot.rollback_count} change(s)")
     else:
         if snapshot.agent_route:
@@ -169,6 +184,9 @@ class StatusHandler(CommandHandler):
             agent_phase=str(task_state.get("phase", "") or ""),
             agent_step=_format_agent_step(task_state),
             agent_pending_tool=str(task_state.get("pending_tool", "") or ""),
+            agent_wait_reason=str(task_state.get("wait_reason", "") or ""),
+            agent_retry_count=int(task_state.get("retry_count", 0) or 0),
+            agent_last_error=str(task_state.get("last_error", "") or ""),
             rollback_count=int(task_state.get("rollback_count", 0) or 0),
         )
 
@@ -235,6 +253,10 @@ def _agent_toolbar_label(snapshot: StatusSnapshot) -> str:
         parts.append(_humanize_phase(snapshot.agent_phase))
     if snapshot.agent_phase == "waiting_approval" and snapshot.agent_pending_tool:
         parts.append(snapshot.agent_pending_tool)
+    elif snapshot.agent_phase == "retrying":
+        parts.append(f"retry {max(snapshot.agent_retry_count, 1)}")
+    elif snapshot.agent_retry_count and snapshot.agent_phase == "recovering":
+        parts.append(f"retry {snapshot.agent_retry_count}")
     elif snapshot.agent_step:
         parts.append(_compact(snapshot.agent_step, 28))
     return "/".join(parts)

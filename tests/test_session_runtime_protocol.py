@@ -36,3 +36,10 @@ def test_submit_queue_capacity_raises():
         rt.submit(UserTurnOp(prompt="x", mode="chat"))
     with pytest.raises(RuntimeError, match="full"):
         rt.submit(UserTurnOp(prompt="y", mode="chat"))
+
+
+def test_iter_events_emits_deprecation_warning():
+    rt = SessionRuntime(MagicMock())
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        iterator = rt.iter_events()
+    assert iterator is not None

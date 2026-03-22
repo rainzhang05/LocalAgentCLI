@@ -99,7 +99,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
-6. **Task-state visibility**: Agent route, phase, current step, pending approval, approval mode, and rollback availability are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
+6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, approval mode, and rollback availability are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
 
 ### Runtime Phase Contract
 
@@ -110,6 +110,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 | `planning` | The controller is triaging or building the initial task plan |
 | `executing` | The agent is actively running or streaming the next step |
 | `waiting_approval` | A tool call is paused for explicit approval |
+| `retrying` | The loop is retrying the current step after a model or tool failure |
 | `replanning` | The planner is revising the remaining plan after a denial or repeated failure |
 | `recovering` | The loop is handling a blocked, denied, cancelled, or failed tool result before continuing |
 | `stopped` | The task ended because the user explicitly stopped it |

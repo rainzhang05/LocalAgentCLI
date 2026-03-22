@@ -519,6 +519,19 @@ class TestShellUIStatusToolbar:
         assert "agent: multi-step task/waiting approval/patch_apply" in toolbar
         assert "undo: 2" in toolbar
 
+    def test_prompt_toolbar_shows_retrying_state_with_count(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._session_manager.current.metadata["agent_task_state"] = {
+            "route": "multi_step_task",
+            "phase": "retrying",
+            "retry_count": 2,
+            "wait_reason": "retrying after recent failure",
+        }
+
+        toolbar = ui._prompt_toolbar_text()
+
+        assert "agent: multi-step task/retrying/retry 2" in toolbar
+
     def test_active_target_label_for_provider(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
         ui._session_manager.current.provider = "openai"

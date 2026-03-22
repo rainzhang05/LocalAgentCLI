@@ -1,6 +1,6 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-21 — **Session durability (shipped):** JSON session files (`format_version`), optional named autosave, append-only runtime JSONL under the cache dir (not merged into chat history). **Agent tools:** read-only parallel batches use a bounded pool (up to 16 workers) so concurrent I/O-bound tools still run on single-CPU hosts. Also: exec persist-on-exit, fork metadata, MCP discovery, sandbox, shell/streaming polish.)
+> **Last updated**: 2026-03-22 — **MCP (stdio):** per-request read timeouts, subprocess env merged with `os.environ` when `[mcp_servers.*].env` is set, deterministic disambiguation when sanitized MCP tool names collide; product doc `docs/mcp.md` describes configuration, safety, and intentional skills posture (`AGENTS.md` + pinned instructions; no separate skills runtime). **Session durability (shipped):** JSON session files (`format_version`), optional named autosave, append-only runtime JSONL under the cache dir (not merged into chat history). **Agent tools:** read-only parallel batches use a bounded pool (up to 16 workers) so concurrent I/O-bound tools still run on single-CPU hosts. Also: exec persist-on-exit, fork metadata, sandbox, shell/streaming polish.)
 >
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
@@ -108,7 +108,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Tool base class (ABC) | 2026-03-18 |
-| `[x]` | Tool registry | 2026-03-21 — `ToolRouter` merges built-in, dynamic, and MCP stdio tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration |
+| `[x]` | Tool registry | 2026-03-22 — `ToolRouter` merges built-in, dynamic, and MCP stdio tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration; MCP client honors `timeout`, merges env with parent process, and avoids qualified-name collisions |
 | `[x]` | `file_read` tool | 2026-03-18 |
 | `[x]` | `file_search` tool | 2026-03-18 |
 | `[x]` | `directory_list` tool | 2026-03-18 |
@@ -153,7 +153,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-21 — 800 tests total across unit, component, integration, and CLI coverage, now including submission/event runtime, saved-session exec resume/fork, append-only runtime event logging, dynamic tool-router coverage, MCP-backed tool discovery, session-change lifecycle, and one-shot entrypoint regressions alongside readiness provenance, provider discovery state, startup default-target repair warnings, agent route/phase visibility, approval persistence, richer approval previews with explicit truncation labels, `/agent undo` flows, and warning-style stopped/timed-out rendering; full suite passes at 83.80% coverage |
+| `[x]` | Unit tests | 2026-03-22 — 847 tests including MCP env merge, approval/sandbox integration for MCP tools, and colliding sanitized MCP name disambiguation; full suite passes at ~83.7% coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -185,9 +185,10 @@ After implementing a component:
 | `[x]` | `docs/model-system.md` | 2026-03-19 — normalized stream chunk schema, shared generation collector, conservative capability inference, local capability-provenance storage, backend cancellation behavior, and editable Hugging Face token flow documented |
 | `[x]` | `docs/remote-providers.md` | 2026-03-19 — model-aware capability checks, retry/close hardening, ordered mixed-block handling, normalized error/output semantics, CLI-wide default-target model selection flow, and remote readiness provenance documented |
 | `[x]` | `docs/agent-system.md` | 2026-03-19 — agent triage, direct-answer fast path, synthesized single-step execution, named runtime phases, persisted task-state snapshots, and readiness-aware agent entry requirements documented |
-| `[x]` | `docs/tool-system.md` | Complete |
-| `[x]` | `docs/safety-and-permissions.md` | 2026-03-20 — approval persistence, risk/rollback preview context, explicit workspace-boundary blocking, `/agent undo` rollback surfaces, and current approval prompt actions (`Approve`, `Deny`, `View details`, `Approve all`) documented |
-| `[x]` | `docs/session-and-config.md` | 2026-03-19 — CLI-wide default-target storage, explicit startup repair warnings, and interactive `/config` editing documented |
+| `[x]` | `docs/tool-system.md` | 2026-03-22 — links to MCP extensibility doc; parameter schema and parallel read-only batch rules unchanged |
+| `[x]` | `docs/mcp.md` | 2026-03-22 — stdio MCP config, naming, `readOnlyHint`, sandbox and approval behavior, limitations, project guidance vs future skills |
+| `[x]` | `docs/safety-and-permissions.md` | 2026-03-22 — MCP `readOnlyHint` approval table rows; autonomous mode wording includes MCP tools that require approval |
+| `[x]` | `docs/session-and-config.md` | 2026-03-22 — `[mcp_servers]` example comments reference MCP doc and optional `env` / `timeout` keys |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |

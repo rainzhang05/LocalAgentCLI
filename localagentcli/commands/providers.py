@@ -6,6 +6,7 @@ from rich.console import Console
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.config.manager import ConfigManager
+from localagentcli.models.provider_readiness import resolve_remote_model_readiness
 from localagentcli.models.readiness import (
     build_target_readiness,
     format_capability_brief,
@@ -538,60 +539,6 @@ def _select_provider_option(
     if not options:
         return None
     return select_option(message, options, default=default)
-
-
-def resolve_remote_model_readiness(
-    provider: RemoteProvider,
-    model_name: str,
-):
-    """Resolve readiness for one selected provider model."""
-    selected = (model_name or "").strip()
-    provider.set_active_model(selected or None)
-    if not selected:
-        capabilities = provider.capabilities()
-        return build_target_readiness(
-            kind="provider",
-            selection_state="model_unselected",
-            capabilities=capabilities,
-            capability_provenance=unknown_capability_provenance(
-                capabilities,
-                reason="No provider model is selected.",
-            ),
-            summary="No provider model selected.",
-            guidance="Use /set or /set default to choose one.",
-        )
-
-    for model in provider.list_models():
-        if model.id == selected or model.name == selected:
-            guidance = (
-                "Run /providers test to refresh discovery, then use /set to choose an "
-                "API-discovered model."
-                if model.selection_state == "legacy_fallback"
-                else "Use /set to choose another model if this target does not fit the task."
-            )
-            return build_target_readiness(
-                kind="provider",
-                selection_state=model.selection_state,
-                capabilities=model.capabilities,
-                capability_provenance=model.capability_provenance,
-                guidance=guidance,
-            )
-
-    capabilities = provider.capabilities()
-    return build_target_readiness(
-        kind="provider",
-        selection_state="unknown",
-        capabilities=capabilities,
-        capability_provenance=unknown_capability_provenance(
-            capabilities,
-            reason=f"The selected provider model '{selected}' was not returned by live discovery.",
-        ),
-        summary=f"Model '{selected}' was not returned by provider discovery.",
-        guidance=(
-            "Run /providers test to refresh discovery, then use /set to choose an "
-            "API-discovered model."
-        ),
-    )
 
 
 def _provider_discovery_report(provider: RemoteProvider, *, selected_model: str) -> str:

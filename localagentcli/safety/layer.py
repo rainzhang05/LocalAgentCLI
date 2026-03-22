@@ -9,6 +9,7 @@ from pathlib import Path
 
 from localagentcli.safety.approval import ApprovalManager, RiskLevel
 from localagentcli.safety.boundary import WorkspaceBoundary, WorkspaceBoundaryError
+from localagentcli.safety.posture import SandboxPosture, parse_sandbox_mode
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.tools.base import Tool, ToolResult
 
@@ -60,6 +61,9 @@ class SafetyLayer:
         re.compile(r"\bnpm\s+install\b", re.IGNORECASE),
         re.compile(r"\bgit\s+push\s+--force\b", re.IGNORECASE),
         re.compile(r"\bgit\s+reset\s+--hard\b", re.IGNORECASE),
+        re.compile(r"\bchmod\b[^;\n|&]*\b777\b", re.IGNORECASE),
+        re.compile(r"\bdocker\s+(?:rm|rmi|system\s+prune)\b", re.IGNORECASE),
+        re.compile(r"\bkubectl\s+delete\b", re.IGNORECASE),
     )
     HIGH_RISK_FILE_PATTERNS = (
         re.compile(r"(^|/)\.env$", re.IGNORECASE),
@@ -74,13 +78,17 @@ class SafetyLayer:
         approval_manager: ApprovalManager,
         boundary: WorkspaceBoundary,
         rollback: RollbackManager,
-        sandbox_mode: str = "workspace-write",
+        sandbox_mode: str | SandboxPosture = SandboxPosture.WORKSPACE_WRITE,
     ):
         self._approval = approval_manager
         self._boundary = boundary
         self._rollback = rollback
         self._pending_changes: dict[str, list[_PendingRollback]] = {}
-        self._sandbox_mode = sandbox_mode
+        self._sandbox_posture = (
+            sandbox_mode
+            if isinstance(sandbox_mode, SandboxPosture)
+            else parse_sandbox_mode(sandbox_mode)
+        )
 
     @property
     def rollback(self) -> RollbackManager:
@@ -89,7 +97,7 @@ class SafetyLayer:
 
     def check_and_approve(self, tool: Tool, args: dict) -> ApprovalResult:
         """Run boundary validation, risk classification, and approval checks."""
-        policy_block = self._sandbox_policy_block(tool)
+        policy_block = self._sandbox_posture.side_effect_block_reason(tool)
         if policy_block is not None:
             return ApprovalResult(
                 status="blocked",
@@ -127,12 +135,21 @@ class SafetyLayer:
 
     @property
     def sandbox_mode(self) -> str:
-        """Return the current runtime sandbox mode."""
-        return self._sandbox_mode
+        """Return the current runtime sandbox mode string (config-compatible)."""
+        return self._sandbox_posture.value
 
-    def set_sandbox_mode(self, sandbox_mode: str) -> None:
+    @property
+    def sandbox_posture(self) -> SandboxPosture:
+        """Return the active typed sandbox posture."""
+        return self._sandbox_posture
+
+    def set_sandbox_mode(self, sandbox_mode: str | SandboxPosture) -> None:
         """Update the active runtime sandbox mode."""
-        self._sandbox_mode = sandbox_mode
+        self._sandbox_posture = (
+            sandbox_mode
+            if isinstance(sandbox_mode, SandboxPosture)
+            else parse_sandbox_mode(sandbox_mode)
+        )
 
     def pre_action(self, tool: Tool, args: dict) -> None:
         """Create backups before a modifying tool executes."""
@@ -269,9 +286,3 @@ class SafetyLayer:
     def _action_key(self, tool: Tool, args: dict) -> str:
         return f"{tool.name}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
 
-    def _sandbox_policy_block(self, tool: Tool) -> str | None:
-        if self._sandbox_mode == "danger-full-access":
-            return None
-        if self._sandbox_mode == "read-only" and not tool.is_read_only:
-            return "Runtime sandbox mode 'read-only' blocks side-effecting tools."
-        return None

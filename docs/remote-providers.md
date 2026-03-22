@@ -146,6 +146,27 @@ Remote model readiness uses provider-specific provenance:
 
 This keeps the runtime APIs stable while making it explicit when the CLI is relying on heuristics, configured flags, or compatibility-only fallback data.
 
+### Readiness posture and tradeoffs
+
+Each selected remote model now carries a compact operator posture derived from
+its discovery state and tool-use confidence:
+
+- `ready`: agent mode can run tool steps on this target
+- `degraded`: chat remains available, but agent mode is blocked until discovery
+    and selection are refreshed
+- `blocked`: chat remains available, but this target is not trusted or capable
+    for agent tool execution
+
+Operator-facing surfaces (`/mode agent`, dispatch-time runtime checks,
+`/providers list`, and `/providers test`) include:
+
+- readiness posture
+- a one-line tradeoff summary (`chat still available` vs `agent blocked`)
+- actionable next-step guidance
+
+This keeps model selection transparent without changing the stable capability
+fields consumed by existing runtime paths.
+
 ---
 
 ## Provider Scope

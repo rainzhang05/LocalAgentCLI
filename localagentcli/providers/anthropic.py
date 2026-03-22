@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -63,7 +65,7 @@ class AnthropicProvider(RemoteProvider):
         options: dict | None = None,
     ):
         super().__init__(name, base_url, api_key, default_model, options)
-        timeout = self._options.get("timeout", 30)
+        timeout = float(self._options.get("timeout", 30))
         self._client = httpx.Client(
             base_url=self._base_url,
             headers={
@@ -73,6 +75,24 @@ class AnthropicProvider(RemoteProvider):
             },
             timeout=timeout,
         )
+        self._async_client: httpx.AsyncClient | None = None
+
+    def _sync_timeout(self) -> float:
+        return float(self._options.get("timeout", 30))
+
+    async def _ensure_async_client(self, timeout: float) -> httpx.AsyncClient:
+        if self._async_client is not None:
+            return self._async_client
+        self._async_client = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={
+                "x-api-key": self._api_key,
+                "anthropic-version": self.ANTHROPIC_VERSION,
+                "content-type": "application/json",
+            },
+            timeout=timeout,
+        )
+        return self._async_client
 
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         """POST /v1/messages without streaming."""
@@ -189,6 +209,188 @@ class AnthropicProvider(RemoteProvider):
         """GET /v1/models and parse the response."""
         try:
             response = self._request_with_retries(lambda: self._client.get("/v1/models"))
+            response.raise_for_status()
+            data = response.json()
+            models: list[RemoteModelInfo] = []
+            for model_data in data.get("data", []):
+                model_id = model_data.get("id", "")
+                if not model_id:
+                    continue
+                capabilities = self._capabilities_for_model(model_id)
+                models.append(
+                    RemoteModelInfo(
+                        id=model_id,
+                        name=model_data.get("display_name") or model_data.get("name") or model_id,
+                        capabilities=capabilities,
+                        capability_provenance=inferred_remote_capability_provenance(
+                            capabilities,
+                            provider_label="Anthropic",
+                        ),
+                        selection_state="api_discovered",
+                    )
+                )
+            if models:
+                return models
+        except Exception:
+            logger.debug("Failed to list models from %s", self._name)
+        if self._default_model:
+            capabilities = self._capabilities_for_model(self._default_model)
+            return [
+                RemoteModelInfo(
+                    id=self._default_model,
+                    name=self._default_model,
+                    capabilities=capabilities,
+                    capability_provenance=legacy_fallback_capability_provenance(capabilities),
+                    selection_state="legacy_fallback",
+                )
+            ]
+        return []
+
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        self._reset_cancel()
+        body = self._build_request_body(messages, stream=False, **kwargs)
+        timeout = self._request_timeout_value(kwargs)
+        client = await self._ensure_async_client(timeout)
+        try:
+            response = await self._arequest_with_retries(
+                lambda: client.post("/v1/messages", json=body)
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+
+        data = response.json()
+        text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: list[dict] = []
+        for block in data.get("content", []):
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "thinking":
+                reasoning_parts.append(block.get("thinking", ""))
+            elif block.get("type") == "tool_use":
+                tool_calls.append(
+                    {
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
+                        },
+                    }
+                )
+
+        return GenerationResult(
+            text="".join(text_parts),
+            reasoning="".join(reasoning_parts),
+            tool_calls=tool_calls,
+            usage=data.get("usage", {}),
+            finish_reason=data.get("stop_reason", ""),
+        )
+
+    async def astream_generate(  # type: ignore[misc, override]
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        self._reset_cancel()
+        body = self._build_request_body(messages, stream=True, **kwargs)
+        blocks: dict[int, _AnthropicBlockState] = {}
+        timeout = self._request_timeout_value(kwargs)
+        client = await self._ensure_async_client(timeout)
+        context = None
+        try:
+
+            def _stream_factory():
+                return client.stream("POST", "/v1/messages", json=body)
+
+            context, resp = await self._aopen_stream_with_retries(_stream_factory)
+            resp.raise_for_status()
+            self._track_async_stream(resp)
+            try:
+                event_type = ""
+                async for line in resp.aiter_lines():
+                    if self._cancel_requested:
+                        yield StreamChunk(
+                            text="Generation interrupted.",
+                            kind="notification",
+                            importance="secondary",
+                        )
+                        yield StreamChunk(
+                            kind="done", is_done=True, payload={"finish_reason": "cancelled"}
+                        )
+                        return
+                    if line.startswith("event: "):
+                        event_type = line[7:].strip()
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    for chunk in self._parse_sse_event(event_type, line[6:], blocks):
+                        yield chunk
+                        if chunk.is_done:
+                            return
+            finally:
+                self._untrack_async_stream()
+        except httpx.HTTPStatusError as e:
+            yield StreamChunk(
+                text=f"API error: {e.response.status_code}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                text="Generation interrupted.",
+                kind="notification",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "cancelled"})
+            raise
+        finally:
+            if context is not None:
+                await context.__aexit__(None, None, None)
+
+    async def atest_connection(self) -> ConnectionTestResult:
+        start = time.monotonic()
+        timeout = self._sync_timeout()
+        client = await self._ensure_async_client(timeout)
+        try:
+            response = await self._arequest_with_retries(lambda: client.get("/v1/models"))
+            response.raise_for_status()
+            latency = max((time.monotonic() - start) * 1000, 0.001)
+            model_count = len(response.json().get("data", []))
+            return ConnectionTestResult(
+                success=True,
+                message=f"Connected. {model_count} models available.",
+                latency_ms=latency,
+            )
+        except httpx.HTTPStatusError as e:
+            latency = max((time.monotonic() - start) * 1000, 0.001)
+            if e.response.status_code == 401:
+                msg = "Authentication failed. Check your API key."
+            else:
+                msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+            return ConnectionTestResult(success=False, message=msg, latency_ms=latency)
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            latency = max((time.monotonic() - start) * 1000, 0.001)
+            return ConnectionTestResult(
+                success=False,
+                message=f"Connection failed: {e}",
+                latency_ms=latency,
+            )
+
+    async def alist_models(self) -> list[RemoteModelInfo]:
+        try:
+            timeout = self._sync_timeout()
+            client = await self._ensure_async_client(timeout)
+            response = await self._arequest_with_retries(lambda: client.get("/v1/models"))
             response.raise_for_status()
             data = response.json()
             models: list[RemoteModelInfo] = []

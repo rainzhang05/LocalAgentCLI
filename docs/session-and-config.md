@@ -84,7 +84,7 @@ autosave_debounce_seconds = 2       # Minimum quiet period before writing (secon
 | `model.active_model` | string | `""` | CLI-wide default target identifier. For local targets this is `<name>@<version>`; for remote targets this is the selected remote model id. |
 | `provider.active_provider` | string | `""` | CLI-wide default remote provider name. Empty means the default target is local or unset. |
 | `safety.approval_mode` | string | `"balanced"` | Approval mode (`balanced` or `autonomous`) |
-| `safety.sandbox_mode` | string | `"workspace-write"` | Runtime sandbox posture for tool execution |
+| `safety.sandbox_mode` | string | `"workspace-write"` | Runtime sandbox posture: `workspace-write`, `read-only`, or `danger-full-access` (invalid values are rejected when validated) |
 | `generation.temperature` | float | `0.7` | Sampling temperature |
 | `generation.max_tokens` | int | `4096` | Maximum tokens to generate |
 | `generation.top_p` | float | `1.0` | Nucleus sampling threshold |

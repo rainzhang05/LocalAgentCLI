@@ -31,6 +31,7 @@ _DEFAULT_STATUS_BATCH_LIMIT = 12
 _CATCHUP_STATUS_BATCH_LIMIT = 4
 _CATCHUP_BACKLOG_HIGH_WATER = 10
 _CATCHUP_BACKLOG_LOW_WATER = 4
+_MIN_LINE_WIDTH = 8
 
 
 class StreamRenderer:
@@ -118,7 +119,7 @@ class StreamRenderer:
 
     def render_status(self, message: str) -> None:
         """Render a neutral status line (batched until the next flush boundary)."""
-        self._status_batch.append(message)
+        self._status_batch.append(self._fit_single_line(message, reserve=2))
         self._adjust_status_pacing()
         if len(self._status_batch) >= self._status_batch_limit:
             self._prepare_block_output()
@@ -157,6 +158,9 @@ class StreamRenderer:
             else:
                 lane_lines = list(self._secondary_entries)[self._rendered_secondary_count :]
             if lane_lines:
+                panel_width = self._available_width(reserve=6)
+                if panel_width is not None:
+                    lane_lines = [_truncate_with_ellipsis(line, panel_width) for line in lane_lines]
                 self._console.print(
                     Panel(
                         "\n".join(lane_lines),
@@ -274,9 +278,10 @@ class StreamRenderer:
         lines = []
         for step in plan.steps:
             marker = self._symbols.get(step.status, self._symbols["pending"])
-            line = f"{step.index}. {marker} {step.description}"
+            line = self._fit_single_line(f"{step.index}. {marker} {step.description}", reserve=6)
             if step.result and step.status in {"completed", "failed"}:
-                line = f"{line}\n   {step.result}"
+                result_line = self._fit_single_line(step.result, reserve=9)
+                line = f"{line}\n   {result_line}"
             lines.append(line)
         body = "\n".join(lines) if lines else "(no steps)"
         self._console.print(Panel(Text(body), title=title, border_style="cyan"))
@@ -289,11 +294,26 @@ class StreamRenderer:
 
     def _append_secondary(self, detail: str) -> None:
         """Append a dimmed secondary entry while keeping only a rolling window."""
+        panel_width = self._available_width(reserve=6)
         for line in detail.splitlines() or [detail]:
             cleaned = line.strip()
             if cleaned:
+                if panel_width is not None:
+                    cleaned = _truncate_with_ellipsis(cleaned, panel_width)
                 self._secondary_entries.append(cleaned)
         self._adjust_status_pacing()
+
+    def _available_width(self, *, reserve: int = 0) -> int | None:
+        width = _console_width(self._console)
+        if width is None:
+            return None
+        return max(width - max(reserve, 0), _MIN_LINE_WIDTH)
+
+    def _fit_single_line(self, text: str, *, reserve: int = 0) -> str:
+        width = self._available_width(reserve=reserve)
+        if width is None:
+            return text
+        return _truncate_with_ellipsis(text, width)
 
     def flush_agent_event_tail(self) -> None:
         """Emit batched status lines and queued secondary after an agent event pass."""
@@ -364,6 +384,30 @@ def _console_encoding(console: Console) -> str | None:
     if isinstance(encoding, str) and encoding:
         return encoding
     return None
+
+
+def _console_width(console: Console) -> int | None:
+    """Best-effort lookup of terminal width for narrow-layout safeguards."""
+    width = getattr(console, "width", None)
+    if isinstance(width, int) and width > 0:
+        return width
+    size = getattr(console, "size", None)
+    if size is not None:
+        columns = getattr(size, "width", None)
+        if isinstance(columns, int) and columns > 0:
+            return columns
+    return None
+
+
+def _truncate_with_ellipsis(text: str, max_width: int) -> str:
+    """Truncate one line to a fixed width, preserving readability."""
+    if max_width <= 0:
+        return ""
+    if len(text) <= max_width:
+        return text
+    if max_width <= 2:
+        return text[:max_width]
+    return f"{text[: max_width - 1]}…"
 
 
 def _humanize_route(route: str) -> str:

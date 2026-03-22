@@ -60,12 +60,14 @@ inactivity = 600                # Seconds of agent inactivity before pause
 # base_url = "https://api.openai.com/v1"
 
 [mcp_servers]
-# MCP stdio servers are stored as nested tables
+# MCP stdio servers are stored as nested tables (see docs/mcp.md).
 # Example:
 # [mcp_servers.demo]
 # command = "python"
 # args = ["server.py"]
 # cwd = "/path/to/project"
+# env = { KEY = "value" }   # optional; merged over the process environment
+# timeout = 30              # optional; per-request read timeout (seconds)
 
 [sessions]
 autosave_named = false              # When true, debounce-save named sessions during interactive chat/agent work

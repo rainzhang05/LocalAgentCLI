@@ -30,6 +30,9 @@ class TargetReadiness:
     capabilities: dict[str, CapabilityAssessment]
     summary: str
     guidance: str = ""
+    operator_posture: Literal["ready", "degraded", "blocked"] = "blocked"
+    tradeoff: str = ""
+    agent_recommendation: str = ""
 
 
 def local_capability_provenance(*, reasoning_supported: bool) -> dict[str, dict[str, str]]:
@@ -219,6 +222,11 @@ def build_target_readiness(
         default_builder=default_builder,
     )
     tool_use = assessments["tool_use"]
+    posture, tradeoff, recommendation = _derive_operator_readiness(
+        kind=kind,
+        selection_state=selection_state,
+        assessments=assessments,
+    )
     computed_summary = summary or (
         f"Agent mode {'available' if is_agent_ready(assessments) else 'unavailable'}: "
         f"tool use {yes_no(tool_use.supported)} [{tool_use.tier}]."
@@ -229,6 +237,9 @@ def build_target_readiness(
         capabilities=assessments,
         summary=computed_summary,
         guidance=guidance,
+        operator_posture=posture,
+        tradeoff=tradeoff,
+        agent_recommendation=recommendation,
     )
 
 
@@ -260,6 +271,18 @@ def selection_state_label(selection_state: str) -> str:
     if selection_state == "model_unselected":
         return "model unselected"
     return selection_state.replace("_", " ")
+
+
+def readiness_posture_label(readiness: TargetReadiness) -> str:
+    """Render a human-readable readiness posture."""
+    return readiness.operator_posture.replace("_", " ")
+
+
+def format_readiness_tradeoff(readiness: TargetReadiness) -> str:
+    """Render one concise tradeoff line for operator-facing surfaces."""
+    if readiness.tradeoff:
+        return f"{readiness_posture_label(readiness)} - {readiness.tradeoff}"
+    return readiness_posture_label(readiness)
 
 
 def yes_no(value: bool) -> str:
@@ -294,3 +317,40 @@ def _uniform_capability_provenance(
 
 def _valid_tiers() -> set[str]:
     return {"verified", "inferred", "configured", "legacy_fallback", "unknown"}
+
+
+def _derive_operator_readiness(
+    *,
+    kind: Literal["local", "provider"],
+    selection_state: str,
+    assessments: Mapping[str, CapabilityAssessment],
+) -> tuple[Literal["ready", "degraded", "blocked"], str, str]:
+    tool_use = assessments["tool_use"]
+    if is_agent_ready(assessments):
+        return (
+            "ready",
+            "Agent mode can run tool steps with trusted tool-use readiness.",
+            "Agent mode is available for this target.",
+        )
+
+    if selection_state in {"legacy_fallback", "unknown", "model_unselected"}:
+        return (
+            "degraded",
+            "Chat mode remains available, but agent mode is blocked until model discovery and "
+            "selection are refreshed.",
+            "Refresh discovery and choose an API-discovered model before running agent tasks.",
+        )
+
+    if kind == "local":
+        return (
+            "blocked",
+            "Local target remains usable for chat, but this model cannot run agent tool steps.",
+            "Switch to a tool-capable local or provider target.",
+        )
+
+    return (
+        "blocked",
+        "Provider target remains usable for chat, but tool-use readiness is not trusted for "
+        "agent mode.",
+        f"Pick a provider model with trusted tool use (currently {tool_use.tier}).",
+    )

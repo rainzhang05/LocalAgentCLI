@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections import deque
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -118,6 +119,11 @@ class SessionRuntime:
 
     def iter_events(self) -> Iterator[RuntimeEvent]:
         """Sync wrapper (runs the shared async iterator under asyncio.run)."""
+        warnings.warn(
+            "SessionRuntime.iter_events() is deprecated; use aiter_events() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         import asyncio
 
         agen = self.aiter_events()

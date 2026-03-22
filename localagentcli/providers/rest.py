@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any, Iterator
 
 import httpx
@@ -67,7 +69,7 @@ class GenericRESTProvider(RemoteProvider):
         self._model_id_field: str = self._options.get("model_id_field", "id")
         self._model_name_field: str = self._options.get("model_name_field", "id")
 
-        timeout = self._options.get("timeout", 30)
+        timeout = float(self._options.get("timeout", 30))
         headers: dict[str, str] = {"Authorization": f"Bearer {self._api_key}"}
         custom_headers = self._options.get("custom_headers", {})
         if isinstance(custom_headers, dict):
@@ -77,6 +79,21 @@ class GenericRESTProvider(RemoteProvider):
             headers=headers,
             timeout=timeout,
         )
+        self._async_client: httpx.AsyncClient | None = None
+        self._async_headers = dict(headers)
+
+    def _sync_timeout(self) -> float:
+        return float(self._options.get("timeout", 30))
+
+    async def _ensure_async_client(self, timeout: float) -> httpx.AsyncClient:
+        if self._async_client is not None:
+            return self._async_client
+        self._async_client = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=dict(self._async_headers),
+            timeout=timeout,
+        )
+        return self._async_client
 
     def generate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         """Send request using configured mapping."""
@@ -183,6 +200,191 @@ class GenericRESTProvider(RemoteProvider):
         """Try to discover models from a configured endpoint, then fall back."""
         try:
             response = self._request_with_retries(lambda: self._client.get(self._models_endpoint))
+            response.raise_for_status()
+            payload = response.json()
+            raw_models = payload
+            if not isinstance(raw_models, list):
+                extracted = extract_field(payload, self._models_field)
+                raw_models = extracted if isinstance(extracted, list) else []
+
+            models: list[RemoteModelInfo] = []
+            for raw_model in raw_models:
+                if isinstance(raw_model, str):
+                    model_id = raw_model
+                    model_name = raw_model
+                elif isinstance(raw_model, dict):
+                    model_id = str(extract_field(raw_model, self._model_id_field) or "").strip()
+                    model_name = str(
+                        extract_field(raw_model, self._model_name_field) or model_id
+                    ).strip()
+                else:
+                    continue
+
+                if not model_id:
+                    continue
+                capabilities = self.capabilities()
+                models.append(
+                    RemoteModelInfo(
+                        id=model_id,
+                        name=model_name or model_id,
+                        capabilities=capabilities,
+                        capability_provenance=configured_remote_capability_provenance(capabilities),
+                        selection_state="api_discovered",
+                    )
+                )
+            if models:
+                return models
+        except Exception:
+            logger.debug("Failed to list models from %s", self._name)
+
+        if self._default_model:
+            capabilities = self.capabilities()
+            return [
+                RemoteModelInfo(
+                    id=self._default_model,
+                    name=self._default_model,
+                    capabilities=capabilities,
+                    capability_provenance=legacy_fallback_capability_provenance(capabilities),
+                    selection_state="legacy_fallback",
+                )
+            ]
+        return []
+
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
+        self._reset_cancel()
+        body = self._build_request_body(messages, stream=False, **kwargs)
+        timeout = self._request_timeout_value(kwargs)
+        client = await self._ensure_async_client(timeout)
+        try:
+            response = await self._arequest_with_retries(
+                lambda: client.post(self._endpoint, json=body)
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            return GenerationResult(text="", finish_reason="error", usage={"error": str(e)})
+
+        data = response.json()
+        content_field = self._response_mapping.get("content_field", "choices[0].message.content")
+        reasoning_field = self._response_mapping.get("reasoning_field", "")
+        tool_calls_field = self._response_mapping.get("tool_calls_field", "")
+        text = extract_field(data, content_field)
+        reasoning = extract_field(data, reasoning_field) if reasoning_field else None
+        tool_calls = extract_field(data, tool_calls_field) if tool_calls_field else []
+        return GenerationResult(
+            text=str(text) if text is not None else "",
+            reasoning=str(reasoning) if isinstance(reasoning, str) else "",
+            tool_calls=tool_calls if isinstance(tool_calls, list) else [],
+            finish_reason="stop",
+        )
+
+    async def astream_generate(  # type: ignore[misc, override]
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        self._reset_cancel()
+        body = self._build_request_body(messages, stream=True, **kwargs)
+        stream_field = self._response_mapping.get(
+            "stream_content_field", "choices[0].delta.content"
+        )
+        reasoning_field = self._response_mapping.get("stream_reasoning_field", "")
+        tool_calls_field = self._response_mapping.get("stream_tool_calls_field", "")
+        timeout = self._request_timeout_value(kwargs)
+        client = await self._ensure_async_client(timeout)
+        context = None
+        try:
+
+            def _stream_factory():
+                return client.stream("POST", self._endpoint, json=body)
+
+            context, resp = await self._aopen_stream_with_retries(_stream_factory)
+            resp.raise_for_status()
+            self._track_async_stream(resp)
+            try:
+                async for line in resp.aiter_lines():
+                    if self._cancel_requested:
+                        yield StreamChunk(
+                            text="Generation interrupted.",
+                            kind="notification",
+                            importance="secondary",
+                        )
+                        yield StreamChunk(
+                            kind="done", is_done=True, payload={"finish_reason": "cancelled"}
+                        )
+                        return
+                    for chunk in self._parse_sse_line(
+                        line,
+                        stream_field,
+                        reasoning_field,
+                        tool_calls_field,
+                    ):
+                        yield chunk
+                        if chunk.is_done:
+                            return
+            finally:
+                self._untrack_async_stream()
+        except httpx.HTTPStatusError as e:
+            yield StreamChunk(
+                text=f"API error: {e.response.status_code}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            yield StreamChunk(
+                text=f"Connection error: {e}",
+                kind="error",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "error"})
+        except asyncio.CancelledError:
+            yield StreamChunk(
+                text="Generation interrupted.",
+                kind="notification",
+                importance="secondary",
+            )
+            yield StreamChunk(kind="done", is_done=True, payload={"finish_reason": "cancelled"})
+            raise
+        finally:
+            if context is not None:
+                await context.__aexit__(None, None, None)
+
+    async def atest_connection(self) -> ConnectionTestResult:
+        start = time.monotonic()
+        timeout = self._sync_timeout()
+        client = await self._ensure_async_client(timeout)
+        try:
+            body = self._build_request_body([ModelMessage(role="user", content="Hi")], stream=False)
+            response = await self._arequest_with_retries(
+                lambda: client.post(self._endpoint, json=body)
+            )
+            response.raise_for_status()
+            latency = (time.monotonic() - start) * 1000
+            return ConnectionTestResult(
+                success=True,
+                message="Connected successfully.",
+                latency_ms=latency,
+            )
+        except httpx.HTTPStatusError as e:
+            latency = (time.monotonic() - start) * 1000
+            if e.response.status_code == 401:
+                msg = "Authentication failed. Check your API key."
+            else:
+                msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+            return ConnectionTestResult(success=False, message=msg, latency_ms=latency)
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            latency = (time.monotonic() - start) * 1000
+            return ConnectionTestResult(
+                success=False,
+                message=f"Connection failed: {e}",
+                latency_ms=latency,
+            )
+
+    async def alist_models(self) -> list[RemoteModelInfo]:
+        try:
+            timeout = self._sync_timeout()
+            client = await self._ensure_async_client(timeout)
+            response = await self._arequest_with_retries(lambda: client.get(self._models_endpoint))
             response.raise_for_status()
             payload = response.json()
             raw_models = payload

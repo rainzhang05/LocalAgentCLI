@@ -273,6 +273,29 @@ class TestStreamRendererStatusCoalescing:
         assert "alpha" in console.print.call_args_list[0].args[0].renderable
         assert "ℹ tick" in console.print.call_args_list[1].args[0]
 
+    def test_truncates_status_lines_on_narrow_terminal(self):
+        console = MagicMock()
+        console.width = 20
+        renderer = StreamRenderer(console)
+
+        renderer.render_status("x" * 120)
+        renderer.flush_pending_details()
+
+        printed = console.print.call_args.args[0]
+        assert "…" in printed
+
+    def test_truncates_secondary_details_on_narrow_terminal(self):
+        console = MagicMock()
+        console.width = 24
+        renderer = StreamRenderer(console)
+
+        renderer.render_secondary("detail " + ("y" * 120))
+        renderer.flush_pending_details()
+
+        panel = console.print.call_args.args[0]
+        assert isinstance(panel, Panel)
+        assert "…" in panel.renderable
+
 
 class TestStreamRendererAgentEvents:
     def test_task_routed_renders_status(self):

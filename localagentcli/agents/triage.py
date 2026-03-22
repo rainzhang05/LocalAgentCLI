@@ -161,6 +161,53 @@ class TaskTriageClassifier:
             classification = "single_step_task"
         return TaskTriage(classification, str(parsed.get("reason", "")).strip())
 
+    async def aclassify(
+        self,
+        task: str,
+        context: list[ModelMessage],
+        generation_options: dict[str, object] | None = None,
+    ) -> TaskTriage:
+        """Async triage using heuristics with a low-cost model fallback."""
+        heuristic = self._classify_heuristically(task)
+        if heuristic is not None:
+            return heuristic
+        return await self._aclassify_with_model(task, context, generation_options or {})
+
+    async def _aclassify_with_model(
+        self,
+        task: str,
+        context: list[ModelMessage],
+        generation_options: dict[str, object],
+    ) -> TaskTriage:
+        options: dict[str, object] = {
+            "temperature": 0.0,
+            "max_tokens": 120,
+        }
+        options.update(generation_options)
+        result = await self._model.agenerate(
+            [
+                ModelMessage(role="system", content=_TRIAGE_PROMPT),
+                *context[-6:],
+                ModelMessage(role="user", content=task),
+            ],
+            **options,
+        )
+        payload = self._extract_json(result.text)
+        if payload is None:
+            return TaskTriage("single_step_task", "triage fallback")
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return TaskTriage("single_step_task", "triage fallback")
+        classification_raw = str(parsed.get("classification", "single_step_task")).strip()
+        if classification_raw == "direct_answer":
+            classification: TaskTriageOutcome = "direct_answer"
+        elif classification_raw == "multi_step_task":
+            classification = "multi_step_task"
+        else:
+            classification = "single_step_task"
+        return TaskTriage(classification, str(parsed.get("reason", "")).strip())
+
     def _extract_json(self, text: str) -> str | None:
         text = text.strip()
         if not text:

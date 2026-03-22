@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -191,6 +192,23 @@ class TestCreatePromptSession:
         assert kwargs["key_bindings"] is not None
 
     @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.get_terminal_size")
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_narrow_terminal_reduces_command_menu_height(
+        self,
+        mock_prompt_session,
+        mock_terminal_size,
+        _mock_supports,
+    ):
+        router = CommandRouter()
+        mock_terminal_size.return_value = os.terminal_size((60, 24))
+
+        create_prompt_session(router, ["/help"])
+
+        kwargs = mock_prompt_session.call_args.kwargs
+        assert kwargs["reserve_space_for_menu"] < COMMAND_MENU_HEIGHT
+
+    @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=True)
     @patch("localagentcli.shell.prompt.PromptSession")
     def test_wires_dynamic_toolbar_provider(self, mock_prompt_session, _mock_supports):
         router = CommandRouter()
@@ -372,6 +390,28 @@ class TestPromptHelpers:
         assert confirm_choice("Continue?") is True
         assert confirm_choice("Continue?") is False
         assert confirm_choice("Continue?") is None
+
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt.get_terminal_size")
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_narrow_terminal_reduces_selection_menu_height(
+        self,
+        mock_prompt_session,
+        mock_terminal_size,
+        _mock_supports,
+    ):
+        mock_terminal_size.return_value = os.terminal_size((58, 24))
+        session = MagicMock()
+        session.prompt.side_effect = KeyboardInterrupt
+        mock_prompt_session.return_value = session
+
+        prompt_module.select_option(
+            "Choose",
+            [SelectionOption(value="a", label="alpha")],
+        )
+
+        kwargs = mock_prompt_session.call_args.kwargs
+        assert kwargs["reserve_space_for_menu"] < prompt_module.CHOICE_MENU_HEIGHT
 
 
 class TestShellUIInit:

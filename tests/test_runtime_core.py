@@ -9,6 +9,7 @@ from rich.console import Console
 
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import StreamChunk
+from localagentcli.models.readiness import build_target_readiness
 from localagentcli.runtime import (
     RuntimeMessage,
     RuntimeServices,
@@ -137,6 +138,68 @@ class TestSessionExecutionRuntime:
         assert turn.route == "direct_answer"
         assert turn.compaction_count == 2
         controller.adispatch_input.assert_called_once_with("answer directly")
+
+    async def test_async_agent_gate_reports_tradeoff_for_unknown_provider(self, config, storage):
+        runtime, emitted = _make_runtime(config, storage)
+        runtime._services.session_manager.current.provider = "openai"
+        runtime._services.session_manager.current.model = "gpt-4o"
+        runtime._active_provider = MagicMock()
+
+        readiness = build_target_readiness(
+            kind="provider",
+            selection_state="unknown",
+            capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+            capability_provenance={
+                "tool_use": {"tier": "unknown", "reason": "Discovery missing."},
+                "reasoning": {"tier": "unknown", "reason": "Discovery missing."},
+                "streaming": {"tier": "unknown", "reason": "Discovery missing."},
+            },
+            guidance="Run /providers test.",
+        )
+
+        import localagentcli.runtime.core as runtime_core
+
+        original = runtime_core.aresolve_remote_model_readiness
+        runtime_core.aresolve_remote_model_readiness = AsyncMock(return_value=readiness)
+        try:
+            allowed = await runtime._async_ensure_agent_dispatch_allowed()
+        finally:
+            runtime_core.aresolve_remote_model_readiness = original
+
+        assert allowed is False
+        assert any("Readiness posture:" in message.text for message in emitted)
+        assert any("Tradeoff:" in message.text for message in emitted)
+
+    async def test_async_agent_gate_reports_tradeoff_for_untrusted_tool_use(self, config, storage):
+        runtime, emitted = _make_runtime(config, storage)
+        runtime._services.session_manager.current.provider = "openai"
+        runtime._services.session_manager.current.model = "gpt-4o"
+        runtime._active_provider = MagicMock()
+
+        readiness = build_target_readiness(
+            kind="provider",
+            selection_state="api_discovered",
+            capabilities={"tool_use": True, "reasoning": False, "streaming": True},
+            capability_provenance={
+                "tool_use": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                "reasoning": {"tier": "legacy_fallback", "reason": "Fallback only."},
+                "streaming": {"tier": "legacy_fallback", "reason": "Fallback only."},
+            },
+            guidance="Run /providers test.",
+        )
+
+        import localagentcli.runtime.core as runtime_core
+
+        original = runtime_core.aresolve_remote_model_readiness
+        runtime_core.aresolve_remote_model_readiness = AsyncMock(return_value=readiness)
+        try:
+            allowed = await runtime._async_ensure_agent_dispatch_allowed()
+        finally:
+            runtime_core.aresolve_remote_model_readiness = original
+
+        assert allowed is False
+        assert any("tool use: yes [legacy_fallback]" in message.text for message in emitted)
+        assert any("Tradeoff:" in message.text for message in emitted)
 
 
 class TestSessionRuntime:

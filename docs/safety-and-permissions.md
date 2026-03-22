@@ -48,11 +48,35 @@ explicitly with `--approval-policy`. The current headless options are:
 - `deny`: reject approval-requiring actions and let the agent recover or fail
 - `auto`: auto-submit approval responses without prompting
 
-Runtime sandbox posture is controlled separately through `safety.sandbox_mode`:
+Runtime sandbox posture is controlled separately through `safety.sandbox_mode`
+(config values are validated against the supported set when settings are saved):
 - `workspace-write`: the normal default posture
-- `read-only`: block side-effecting tools at the safety gate
+- `read-only`: block side-effecting tools at the safety gate (including in
+  autonomous approval mode)
 - `danger-full-access`: disable the additional sandbox-mode block, while still
   preserving the normal approval and workspace-boundary rules
+
+### Execution containment
+
+What the product enforces today:
+
+- **Application-layer policy**: the safety layer runs before tools execute. It
+  enforces workspace path rules, approval mode, high-risk classification,
+  optional read-only sandbox posture, and rollback backups for supported file
+  tools.
+- **Workspace-bound execution context**: file tools and `shell_execute` use
+  paths and working directories rooted in the configured workspace (see
+  Workspace Boundary below).
+
+What is **not** guaranteed:
+
+- **OS-level isolation** for `shell_execute` or MCP subprocesses. Commands run
+  as the same operating-system user and process privileges as the CLI. There is
+  no Seatbelt, Landlock, container wrapper, or separate sandbox user account in
+  the shipped product.
+- **Network or filesystem containment** beyond what normal Unix/Windows process
+  permissions already impose. Operators who need stronger containment should run
+  the CLI inside an external sandbox or VM they trust.
 
 ---
 
@@ -168,6 +192,9 @@ These actions **always** require explicit user approval, even in autonomous mode
 | Delete operations (`rm`, `rmdir`, file deletion) | Destructive and potentially irreversible |
 | System-wide commands (e.g., `sudo`, `systemctl`, modifying `/etc`) | Affects the entire system, not just the workspace |
 | External downloads (`curl`, `wget`, `pip install`, `npm install`) | Introduces external code/data |
+| Overly permissive modes (`chmod` with `777` in the command) | Broadly weakens file protections |
+| Container/image removal (`docker rm`, `docker rmi`, `docker system prune`) | Destructive to local containers/images |
+| Cluster deletes (`kubectl delete`) | Destructive to cluster resources |
 | Credential access (reading `.env`, secrets, keys) | Sensitive data exposure |
 | Git force operations (`git push --force`, `git reset --hard`) | Can destroy remote or local history |
 
@@ -184,6 +211,9 @@ class SafetyLayer:
         r'\bcurl\b', r'\bwget\b', r'\bpip\s+install\b',
         r'\bnpm\s+install\b', r'\bgit\s+push\s+--force\b',
         r'\bgit\s+reset\s+--hard\b',
+        r'\bchmod\b[^;\n|&]*\b777\b',
+        r'\bdocker\s+(?:rm|rmi|system\s+prune)\b',
+        r'\bkubectl\s+delete\b',
     ]
 
     HIGH_RISK_FILE_PATTERNS = [

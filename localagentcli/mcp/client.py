@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +41,13 @@ class McpServerConfig:
     timeout: float = 15.0
 
 
+def _subprocess_env(config_env: dict[str, str]) -> dict[str, str] | None:
+    """Child environment: inherit when no overrides; else merge over os.environ."""
+    if not config_env:
+        return None
+    return {**os.environ, **config_env}
+
+
 class StdioMcpClient:
     """Very small synchronous MCP stdio client for tools/list and tools/call."""
 
@@ -56,7 +67,7 @@ class StdioMcpClient:
             stderr=subprocess.PIPE,
             text=True,
             cwd=self._config.cwd,
-            env={**self._config.env} or None,
+            env=_subprocess_env(self._config.env),
             bufsize=1,
         )
         self.request(
@@ -89,10 +100,21 @@ class StdioMcpClient:
         return discovered
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        payload = self.request(
-            "tools/call",
-            {"name": name, "arguments": arguments},
-        )
+        try:
+            payload = self.request(
+                "tools/call",
+                {"name": name, "arguments": arguments},
+            )
+        except TimeoutError as exc:
+            return ToolResult.error_result(
+                f"MCP tool '{name}' timed out",
+                str(exc),
+            )
+        except RuntimeError as exc:
+            return ToolResult.error_result(
+                f"MCP tool '{name}' failed",
+                str(exc),
+            )
         content = payload.get("content", [])
         text_parts: list[str] = []
         if isinstance(content, list):
@@ -166,11 +188,9 @@ class StdioMcpClient:
         process.stdin.flush()
 
     def _read_message(self) -> dict[str, Any]:
-        process = self._require_process()
-        if process.stdout is None:
-            raise RuntimeError("MCP process stdout is unavailable.")
-        line = process.stdout.readline()
+        line = self._read_line_bounded()
         if not line:
+            process = self._require_process()
             stderr = ""
             if process.stderr is not None:
                 stderr = process.stderr.read().strip()
@@ -179,6 +199,44 @@ class StdioMcpClient:
         if not isinstance(parsed, dict):
             raise RuntimeError("MCP server returned a non-object JSON message.")
         return parsed
+
+    def _read_line_bounded(self) -> str:
+        process = self._require_process()
+        if process.stdout is None:
+            raise RuntimeError("MCP process stdout is unavailable.")
+        stdout = process.stdout
+        timeout = max(float(self._config.timeout), 0.1)
+
+        def read_line() -> str:
+            return stdout.readline()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(read_line)
+            try:
+                line: str = future.result(timeout=timeout)
+            except FuturesTimeoutError:
+                self._reset_process_after_failure()
+                raise TimeoutError(
+                    f"MCP I/O timed out after {timeout} seconds (server={self._config.name!r})."
+                ) from None
+        return line
+
+    def _reset_process_after_failure(self) -> None:
+        """Terminate the server process so a subsequent start() can respawn."""
+        process = self._process
+        self._process = None
+        if process is None:
+            return
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except Exception:
+            pass
+        process.terminate()
+        try:
+            process.wait(timeout=1)
+        except Exception:
+            process.kill()
 
     def _require_process(self) -> subprocess.Popen[str]:
         process = self._process
@@ -223,10 +281,12 @@ class McpManager:
     def build_dynamic_tool_specs(self) -> list[DynamicToolSpec]:
         specs: list[DynamicToolSpec] = []
         self._tools.clear()
+        used_qualified: set[str] = set()
         for server in self._servers:
             client = self._client(server.name)
             for tool in client.list_tools():
-                qualified = f"mcp__{server.name}__{_sanitize_tool_name(tool.name)}"
+                qualified = _make_qualified_tool_name(server.name, tool.name, used_qualified)
+                used_qualified.add(qualified)
                 self._tools[qualified] = (server.name, tool)
                 specs.append(
                     DynamicToolSpec(
@@ -264,6 +324,21 @@ def _sanitize_tool_name(name: str) -> str:
     allowed = [char if char.isalnum() or char == "_" else "_" for char in name]
     collapsed = "".join(allowed).strip("_")
     return collapsed or "tool"
+
+
+def _make_qualified_tool_name(server_name: str, tool_name: str, used: set[str]) -> str:
+    """Build a model-visible tool name; disambiguate collisions deterministically."""
+    base = _sanitize_tool_name(tool_name)
+    qualified = f"mcp__{server_name}__{base}"
+    if qualified not in used:
+        return qualified
+    suffix = hashlib.sha256(f"{server_name}\0{tool_name}".encode()).hexdigest()[:8]
+    candidate = f"mcp__{server_name}__{base}__{suffix}"
+    counter = 0
+    while candidate in used:
+        counter += 1
+        candidate = f"mcp__{server_name}__{base}__{suffix}_{counter}"
+    return candidate
 
 
 def _coerce_schema(raw_schema: Any) -> dict[str, Any]:

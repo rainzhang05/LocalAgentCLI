@@ -30,7 +30,8 @@ All persistent data is stored under `~/.localagent/`:
 ├── cache/                   # Temporary data
 │   ├── rollback/            # File backups for undo (see safety-and-permissions.md)
 │   │   └── <session-id>/
-│   └── downloads/           # In-progress model downloads
+│   └── downloads/           # In-progress model downloads + installer telemetry sidecar
+│       └── install_telemetry.jsonl
 └── secrets/                 # Encrypted API keys (fallback; see remote-providers.md)
     └── keys.enc
 ```
@@ -46,7 +47,7 @@ All persistent data is stored under `~/.localagent/`:
 | `models/` | Model weights and metadata | Until user removes model |
 | `sessions/` | Saved session snapshots | Until user deletes session |
 | `logs/` | Runtime logs and exports | Configurable retention (default: 30 days) |
-| `cache/` | Temporary data (rollbacks, downloads) | Short-lived (auto-cleaned) |
+| `cache/` | Temporary data (rollbacks, downloads, installer telemetry sidecar) | Short-lived (auto-cleaned) |
 | `secrets/` | Encrypted API keys | Until user removes provider |
 
 ---

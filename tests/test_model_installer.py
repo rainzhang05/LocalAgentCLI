@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,8 +13,10 @@ from rich.console import Console
 from localagentcli.models.detector import ModelDetector
 from localagentcli.models.installer import (
     ModelInstaller,
+    _DownloadTelemetry,
     _fmt_size,
     _format_download_label,
+    _format_download_summary,
     _make_fast_tqdm_class,
 )
 from localagentcli.models.registry import ModelRegistry
@@ -211,6 +214,25 @@ class TestInstallFromHF:
         ]
         assert (target_dir / "weights" / "model-00001.safetensors").exists()
 
+    def test_install_success_writes_telemetry_log(self, installer: ModelInstaller, cache_dir: Path):
+        def fake_download(repo_id, local_dir, **kwargs):
+            target = Path(local_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "model.gguf").write_bytes(b"\x00" * 100)
+
+        with patch.object(installer, "_download_hf", side_effect=fake_download):
+            result = installer.install_from_hf("repo/model")
+
+        assert result.success is True
+        telemetry_log = cache_dir / "downloads" / "install_telemetry.jsonl"
+        assert telemetry_log.exists()
+        records = [
+            json.loads(line) for line in telemetry_log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert records
+        assert records[-1]["source"] == "huggingface"
+        assert records[-1]["status"] == "success"
+
 
 # ---------------------------------------------------------------------------
 # URL install
@@ -239,6 +261,26 @@ class TestInstallFromURL:
 
         assert result.success is False
         assert "Download failed" in result.message
+
+    def test_download_failure_writes_telemetry_log(
+        self,
+        installer: ModelInstaller,
+        cache_dir: Path,
+    ):
+        with patch.object(
+            installer, "_download_url", side_effect=RuntimeError("Connection refused")
+        ):
+            result = installer.install_from_url("https://bad-url.com/model.gguf")
+
+        assert result.success is False
+        telemetry_log = cache_dir / "downloads" / "install_telemetry.jsonl"
+        assert telemetry_log.exists()
+        records = [
+            json.loads(line) for line in telemetry_log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert records[-1]["source"] == "url"
+        assert records[-1]["status"] == "failed"
+        assert "Connection refused" in str(records[-1]["error"])
 
     def test_custom_name(self, installer: ModelInstaller):
         def fake_download(url, target_path):
@@ -303,6 +345,30 @@ class TestDownloadLabelFormatting:
         label = _format_download_label("weights/model.safetensors")
         assert "Downloading" in label
         assert "model.safetensors" in label
+
+
+class TestDownloadTelemetrySummary:
+    def test_summary_includes_speed_and_cached_bytes(self):
+        summary = _format_download_summary(
+            _DownloadTelemetry(
+                source="huggingface",
+                status="success",
+                started_at="2026-03-22T00:00:00+00:00",
+                finished_at="2026-03-22T00:00:02+00:00",
+                duration_seconds=2.0,
+                model_name="demo",
+                version="v1",
+                bytes_downloaded=10_485_760,
+                bytes_cached=1_048_576,
+                bytes_total=11_534_336,
+                files_total=4,
+                files_cached=1,
+                repo="repo/demo",
+            )
+        )
+        assert "avg=" in summary
+        assert "cached=" in summary
+        assert "files=4" in summary
 
     def test_mb(self):
         assert _fmt_size(1_048_576) == "1.0 MB"

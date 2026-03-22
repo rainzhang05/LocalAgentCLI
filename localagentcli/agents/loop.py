@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from localagentcli.agents.events import (
     AgentEvent,
@@ -37,6 +39,16 @@ from localagentcli.tools.router import ToolRouter
 # Bounded fan-out for read-only parallel batches (I/O-bound tools still benefit on 1-CPU hosts).
 _PARALLEL_READ_ONLY_MAX_WORKERS = 16
 
+
+@dataclass
+class _AsyncStepDone:
+    """Internal marker emitted at the end of _arun_step_async."""
+
+    summary: str | None
+    new_messages: list[ModelMessage]
+    errors: int
+
+
 _STEP_PROMPT = (
     "You are LocalAgentCLI operating in agent mode. "
     "Work on the current step using the available tools when needed. "
@@ -63,10 +75,28 @@ class AgentLoop:
         self._safety = safety
         self._max_consecutive_errors = max_consecutive_errors
         self._stop_requested = False
+        self._approval_wait: asyncio.Future[bool] | None = None
+        self._async_tool_batch: tuple[list[ModelMessage], bool] | None = None
 
     def stop(self) -> None:
         """Request that the loop stop at the next safe point."""
         self._stop_requested = True
+        if self._approval_wait is not None and not self._approval_wait.done():
+            self._approval_wait.cancel()
+
+    def supply_tool_approval(self, approved: bool) -> None:
+        """Resume async loop after an approval decision (used by AgentController)."""
+        fut = self._approval_wait
+        if fut is not None and not fut.done():
+            fut.set_result(approved)
+
+    async def _await_tool_approval(self) -> bool:
+        loop = asyncio.get_running_loop()
+        self._approval_wait = loop.create_future()
+        try:
+            return await self._approval_wait
+        finally:
+            self._approval_wait = None
 
     def run(
         self,
@@ -188,6 +218,404 @@ class AgentLoop:
                 current.result = "Stopped by user."
         plan.status = "stopped"
         yield TaskStopped(reason="Task stopped by user.", plan=plan)
+
+    async def arun(
+        self,
+        task: str,
+        context: list[ModelMessage],
+        plan: TaskPlan | None = None,
+        generation_options: dict[str, object] | None = None,
+        planning_options: dict[str, object] | None = None,
+        inactivity_timeout: int | None = None,
+        session: Session | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Async execute loop (non-blocking model I/O, tools via asyncio.to_thread)."""
+        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 1200}
+        if generation_options:
+            options.update(generation_options)
+
+        if plan is None:
+            yield PhaseChanged(phase="planning", summary="Planning task.")
+            plan = await self._planner.acreate_plan(
+                task,
+                context,
+                generation_options=planning_options,
+            )
+        else:
+            yield PhaseChanged(phase="planning", summary="Prepared execution plan.")
+        plan.status = "executing"
+        transcript = list(context)
+        last_activity = time.monotonic()
+        yield PlanGenerated(plan)
+        yield PhaseChanged(phase="executing", summary="Executing plan.")
+
+        while not self._stop_requested:
+            if inactivity_timeout and (time.monotonic() - last_activity) > inactivity_timeout:
+                plan.status = "timed_out"
+                yield TaskTimedOut(
+                    reason="Agent task timed out due to inactivity.",
+                    plan=plan,
+                )
+                return
+            step = plan.next_step()
+            if step is None:
+                plan.status = "completed"
+                summary = self._summarize_plan(plan)
+                yield TaskComplete(summary=summary, plan=plan)
+                return
+
+            step.status = "in_progress"
+            yield StepStarted(step=step)
+
+            step_summary: str | None = None
+            new_messages: list[ModelMessage] = []
+            errors = 0
+            async for piece in self._arun_step_async(
+                task, plan, step, transcript, options, session
+            ):
+                if isinstance(piece, _AsyncStepDone):
+                    step_summary = piece.summary
+                    new_messages = piece.new_messages
+                    errors = piece.errors
+                    break
+                yield piece
+            transcript.extend(new_messages)
+            last_activity = time.monotonic()
+
+            if self._stop_requested:
+                break
+
+            if step_summary is None:
+                if errors >= self._max_consecutive_errors:
+                    yield PhaseChanged(
+                        phase="replanning",
+                        summary=f"Replanning after repeated failures in step {step.index}.",
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    revised = await self._planner.arevise_plan(
+                        task,
+                        plan,
+                        f"Step {step.index} encountered repeated tool failures.",
+                        generation_options=planning_options,
+                    )
+                    self._preserve_completed_steps(plan, revised)
+                    plan = revised
+                    plan.status = "executing"
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=f"Replanned after repeated failures in step {step.index}.",
+                    )
+                    yield PhaseChanged(phase="executing", summary="Continuing with revised plan.")
+                    continue
+
+                plan.update_step(step.index, "failed", "Step did not complete successfully.")
+                plan.status = "failed"
+                yield PhaseChanged(
+                    phase="failed",
+                    summary=f"Failed while executing step {step.index}.",
+                    step_index=step.index,
+                    step_description=step.description,
+                )
+                yield PlanUpdated(
+                    plan=plan,
+                    changes=f"Step {step.index} failed: {step.description}",
+                )
+                yield TaskFailed(
+                    reason=f"Failed while executing step {step.index}: {step.description}",
+                    plan=plan,
+                )
+                return
+
+            plan.update_step(step.index, "completed", step_summary)
+            yield PlanUpdated(
+                plan=plan,
+                changes=f"Completed step {step.index}: {step.description}",
+            )
+
+        if plan.next_step() is not None:
+            current = next(
+                (s for s in plan.steps if s.status == "in_progress"),
+                None,
+            )
+            if current is not None:
+                current.status = "skipped"
+                current.result = "Stopped by user."
+        plan.status = "stopped"
+        yield TaskStopped(reason="Task stopped by user.", plan=plan)
+
+    async def _arun_step_async(
+        self,
+        task: str,
+        plan: TaskPlan,
+        step: PlanStep,
+        transcript: list[ModelMessage],
+        options: dict[str, object],
+        session: Session | None,
+    ) -> AsyncIterator[AgentEvent | _AsyncStepDone]:
+        """Mirror _run_step: model rounds with tool events, then emit _AsyncStepDone."""
+        conversation: list[ModelMessage] = []
+        consecutive_errors = 0
+
+        for _ in range(self._max_consecutive_errors + 1):
+            if self._stop_requested:
+                yield _AsyncStepDone(None, conversation, consecutive_errors)
+                return
+
+            result = await self._model.agenerate(
+                self._build_messages(task, plan, step, transcript, conversation, session),
+                tools=self._tools.get_tool_definitions(),
+                tool_choice="auto",
+                **options,
+            )
+
+            if result.finish_reason == "error":
+                consecutive_errors += 1
+                if result.usage.get("error"):
+                    conversation.append(
+                        ModelMessage(
+                            role="assistant",
+                            content="",
+                            metadata={"error": result.usage["error"]},
+                        )
+                    )
+                continue
+
+            if result.reasoning.strip():
+                yield ReasoningOutput(text=result.reasoning.strip())
+
+            assistant_message = ModelMessage(role="assistant", content=result.text or "")
+            if result.tool_calls:
+                assistant_message.metadata["tool_calls"] = result.tool_calls
+                conversation.append(assistant_message)
+                self._async_tool_batch = None
+                async for event in self._ahandle_tool_calls_async(result):
+                    yield event
+                batch: tuple[list[ModelMessage], bool] = self._async_tool_batch or ([], False)
+                tool_messages, had_error = batch
+                self._async_tool_batch = None
+                conversation.extend(tool_messages)
+                if had_error:
+                    consecutive_errors += 1
+                else:
+                    consecutive_errors = 0
+                continue
+
+            text = (result.text or "").strip()
+            if text:
+                conversation.append(assistant_message)
+                yield _AsyncStepDone(text, conversation, consecutive_errors)
+                return
+
+            if conversation:
+                yield _AsyncStepDone(
+                    self._summarize_observations(conversation),
+                    conversation,
+                    consecutive_errors,
+                )
+                return
+
+        yield _AsyncStepDone(None, conversation, consecutive_errors)
+
+    async def _ahandle_tool_calls_async(
+        self,
+        result: GenerationResult,
+    ) -> AsyncIterator[AgentEvent]:
+        messages: list[ModelMessage] = []
+        had_error = False
+        try:
+            if self._parallel_read_only_batch_eligible(result):
+                prepared: list[tuple[str, str, dict, Tool]] = []
+                for raw_call in result.tool_calls:
+                    call_id, tool_name, arguments, parse_error = self._normalize_tool_call(raw_call)
+                    tool = self._tools.get_tool(tool_name) if tool_name else None
+                    if tool is None or parse_error is not None:
+                        raise RuntimeError("parallel read-only batch invariant violated")
+                    decision = self._safety.check_and_approve(tool, arguments)
+                    if not decision.approved:
+                        raise RuntimeError("parallel read-only batch invariant violated")
+                    resolved = tool.name
+                    prepared.append((call_id, resolved, arguments, tool))
+                    yield ToolCallRequested(
+                        tool_name=resolved,
+                        arguments=arguments,
+                        requires_approval=False,
+                        risk_level=decision.risk_level.value,
+                        warnings=decision.warnings,
+                        risk_reason=decision.risk_reason,
+                        rollback_summary=decision.rollback_summary,
+                    )
+
+                max_workers = min(len(prepared), _PARALLEL_READ_ONLY_MAX_WORKERS)
+                sem = asyncio.Semaphore(max_workers)
+
+                async def run_one(tool: Tool, arguments: dict) -> ToolResult:
+                    async with sem:
+                        return await asyncio.to_thread(self._execute_tool_safely, tool, arguments)
+
+                tool_results = await asyncio.gather(
+                    *[run_one(tool, arguments) for _cid, _n, arguments, tool in prepared]
+                )
+
+                for (call_id, resolved_name, _arguments, _tool), tool_result in zip(
+                    prepared, tool_results, strict=True
+                ):
+                    yield ToolCallResult(
+                        tool_name=resolved_name,
+                        result=tool_result,
+                        rollback_entries=len(self._safety.rollback.get_history()),
+                    )
+                    messages.append(
+                        ModelMessage(
+                            role="tool",
+                            content=self._tool_payload(resolved_name, tool_result),
+                            metadata={"tool_call_id": call_id, "tool_name": resolved_name},
+                        )
+                    )
+                    had_error = had_error or tool_result.status != "success"
+                    if tool_result.status in {"denied", "error", "timeout"}:
+                        yield PhaseChanged(
+                            phase="recovering",
+                            summary=(
+                                f"Recovering after {tool_result.status} tool result: "
+                                f"{resolved_name}."
+                            ),
+                        )
+            else:
+                for raw_call in result.tool_calls:
+                    call_id, tool_name, arguments, parse_error = self._normalize_tool_call(raw_call)
+                    tool = self._tools.get_tool(tool_name) if tool_name else None
+                    if tool is None:
+                        tool_result = ToolResult.error_result(
+                            f"Unknown tool '{tool_name or 'unknown'}'",
+                            parse_error or "The requested tool is not registered.",
+                        )
+                        yield ToolCallResult(
+                            tool_name=tool_name or "unknown",
+                            result=tool_result,
+                            rollback_entries=len(self._safety.rollback.get_history()),
+                        )
+                        messages.append(
+                            ModelMessage(
+                                role="tool",
+                                content=self._tool_payload(tool_name or "unknown", tool_result),
+                                metadata={
+                                    "tool_call_id": call_id,
+                                    "tool_name": tool_name or "unknown",
+                                },
+                            )
+                        )
+                        had_error = True
+                        continue
+                    if parse_error is not None:
+                        tool_result = ToolResult.error_result(
+                            f"Invalid arguments for tool '{tool_name}'",
+                            parse_error,
+                        )
+                        yield ToolCallResult(
+                            tool_name=tool_name or "unknown",
+                            result=tool_result,
+                            rollback_entries=len(self._safety.rollback.get_history()),
+                        )
+                        messages.append(
+                            ModelMessage(
+                                role="tool",
+                                content=self._tool_payload(tool_name or "unknown", tool_result),
+                                metadata={
+                                    "tool_call_id": call_id,
+                                    "tool_name": tool_name or "unknown",
+                                },
+                            )
+                        )
+                        had_error = True
+                        continue
+
+                    resolved_tool_name = tool.name
+                    decision = self._safety.check_and_approve(tool, arguments)
+                    requires_approval = decision.requires_approval
+                    if decision.blocked:
+                        tool_result = ToolResult.error_result(
+                            f"Blocked tool '{resolved_tool_name}'",
+                            decision.reason or "The requested action violated a safety rule.",
+                        )
+                        yield ToolCallResult(
+                            tool_name=resolved_tool_name,
+                            result=tool_result,
+                            rollback_entries=len(self._safety.rollback.get_history()),
+                        )
+                        yield PhaseChanged(
+                            phase="recovering",
+                            summary=f"Recovering after blocked tool call: {resolved_tool_name}.",
+                        )
+                        messages.append(
+                            ModelMessage(
+                                role="tool",
+                                content=self._tool_payload(resolved_tool_name, tool_result),
+                                metadata={
+                                    "tool_call_id": call_id,
+                                    "tool_name": resolved_tool_name,
+                                },
+                            )
+                        )
+                        had_error = True
+                        continue
+
+                    request = ToolCallRequested(
+                        tool_name=resolved_tool_name,
+                        arguments=arguments,
+                        requires_approval=requires_approval,
+                        risk_level=decision.risk_level.value,
+                        warnings=decision.warnings,
+                        risk_reason=decision.risk_reason,
+                        rollback_summary=decision.rollback_summary,
+                    )
+                    if requires_approval:
+                        yield PhaseChanged(
+                            phase="waiting_approval",
+                            summary=f"Waiting for approval: {resolved_tool_name}.",
+                        )
+                        yield request
+                        approved = await self._await_tool_approval()
+                    else:
+                        yield request
+                        approved = True
+
+                    if approved:
+                        tool_result = await asyncio.to_thread(
+                            self._execute_tool_safely, tool, arguments
+                        )
+                    else:
+                        tool_result = ToolResult.denied(
+                            f"User denied tool '{tool_name}'",
+                            output=json.dumps(arguments, indent=2, sort_keys=True),
+                        )
+
+                    yield ToolCallResult(
+                        tool_name=resolved_tool_name,
+                        result=tool_result,
+                        rollback_entries=len(self._safety.rollback.get_history()),
+                    )
+                    messages.append(
+                        ModelMessage(
+                            role="tool",
+                            content=self._tool_payload(resolved_tool_name, tool_result),
+                            metadata={
+                                "tool_call_id": call_id,
+                                "tool_name": resolved_tool_name,
+                            },
+                        )
+                    )
+                    had_error = had_error or tool_result.status != "success"
+                    if tool_result.status in {"denied", "error", "timeout"}:
+                        yield PhaseChanged(
+                            phase="recovering",
+                            summary=(
+                                f"Recovering after {tool_result.status} tool result: "
+                                f"{resolved_tool_name}."
+                            ),
+                        )
+        finally:
+            self._async_tool_batch = (messages, had_error)
 
     def _run_step(
         self,

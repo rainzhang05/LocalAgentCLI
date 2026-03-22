@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from typing import Iterator
 
@@ -70,6 +70,26 @@ class ChatController:
             options.update(generation_options)
         return self._stream_response(messages, options)
 
+    async def ahandle_input(
+        self,
+        user_input: str,
+        generation_options: dict[str, object] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Process one chat turn and yield model stream chunks (async)."""
+        self._session.history.append(
+            Message(role="user", content=user_input, timestamp=datetime.now())
+        )
+        self._session.touch()
+        self.compact_if_needed()
+        self._notify_autosave()
+
+        messages = build_conversation_model_messages(self._session)
+        options = dict(self._generation_config)
+        if generation_options:
+            options.update(generation_options)
+        async for chunk in self._astream_response(messages, options):
+            yield chunk
+
     def compact_if_needed(self) -> int:
         """Compact session history if it exceeds the configured threshold."""
         self._last_compaction_count = 0
@@ -126,6 +146,44 @@ class ChatController:
         chunks: list[StreamChunk] = []
 
         for chunk in self._model.stream_generate(messages, **generation_options):
+            chunks.append(chunk)
+            if chunk.text:
+                if chunk.kind == "reasoning":
+                    reasoning_parts.append(chunk.text)
+                elif chunk.kind == "final_text":
+                    assistant_parts.append(chunk.text)
+            yield chunk
+
+        assistant_text = "".join(assistant_parts).strip()
+        reasoning_text = "".join(reasoning_parts).strip()
+        if assistant_text or reasoning_text:
+            metadata: dict[str, object] = {
+                "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+            }
+            if reasoning_text:
+                metadata["reasoning"] = reasoning_text
+            self._session.history.append(
+                Message(
+                    role="assistant",
+                    content=assistant_text,
+                    timestamp=datetime.now(),
+                    metadata=metadata,
+                )
+            )
+            self._session.touch()
+            self._notify_autosave()
+
+    async def _astream_response(
+        self,
+        messages: list[ModelMessage],
+        generation_options: dict[str, object],
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream the assistant response and write it back to session history (async)."""
+        assistant_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        chunks: list[StreamChunk] = []
+
+        async for chunk in self._model.astream_generate(messages, **generation_options):
             chunks.append(chunk)
             if chunk.text:
                 if chunk.kind == "reasoning":

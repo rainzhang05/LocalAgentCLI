@@ -46,6 +46,7 @@ The `/providers add` command launches an interactive wizard:
 5. **Configure options** (optional):
    - Custom headers
    - Timeout settings
+    - Prompt caching controls (provider-specific)
    - For Generic REST: request/response field mappings
 6. **Test connection**: Optional connectivity test
 
@@ -72,6 +73,22 @@ Provider entries are stored in `~/.localagent/config.toml` under the `[providers
 ### Request timeouts
 
 For model calls, **`providers.<name>.options.timeout`** (seconds) overrides the global **`[timeouts].model_response`** value when set. The effective value is passed through generation options as `request_timeout` on the async request path. Slash-command and other sync provider entrypoints may still use a dedicated sync client so they do not nest `asyncio.run` inside an active event loop.
+
+### Prompt caching (provider-specific)
+
+Prompt caching is now available for remote provider payloads where supported.
+
+- **Anthropic**: set `providers.<name>.options.prompt_cache = true` to wrap the
+    system prompt in a cache-controlled text block. Optional
+    `providers.<name>.options.prompt_cache_type` overrides the cache-control type
+    (`ephemeral` by default).
+- **OpenAI-compatible**: optional pass-through fields are supported for
+    compatible backends:
+    - `providers.<name>.options.prompt_cache`
+    - `providers.<name>.options.prompt_cache_key`
+
+For OpenAI-compatible services, these fields are forwarded only when explicitly
+configured.
 
 ---
 

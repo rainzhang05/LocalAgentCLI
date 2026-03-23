@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from localagentcli.models.model_info import ModelInfo
+from localagentcli.tools.adaptation import adapt_tool_definitions
 from localagentcli.tools.base import Tool, ToolResult
 
 
@@ -28,9 +30,16 @@ class ToolRegistry:
         """Return all registered tools."""
         return list(self._tools.values())
 
-    def get_tool_definitions(self) -> list[dict]:
-        """Return model-facing tool definitions."""
-        return [tool.definition() for tool in self._tools.values()]
+    def get_tool_definitions(self, model_info: ModelInfo | None = None) -> list[dict]:
+        """Return model-facing tool definitions.
+
+        When `model_info` is supplied, definitions are adapted for the active
+        model (capability gates + minimum token budget for advanced tools).
+        """
+        tools = list(self._tools.values())
+        if model_info is None:
+            return [tool.definition() for tool in tools]
+        return adapt_tool_definitions(tools, model_info)
 
     def execute(self, name: str, **kwargs: object) -> ToolResult:
         """Execute a named tool or return an error result if it is unknown."""

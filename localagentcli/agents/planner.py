@@ -141,7 +141,7 @@ class TaskPlanner:
         generation_options: dict[str, object] | None = None,
     ) -> TaskPlan:
         """Ask the model for an initial task plan."""
-        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        options: dict[str, object] = {"temperature": 0.1}
         if generation_options:
             options.update(generation_options)
         result = self._model.generate(
@@ -162,7 +162,7 @@ class TaskPlanner:
         generation_options: dict[str, object] | None = None,
     ) -> TaskPlan:
         """Ask the model for a revised plan after a failed or denied step."""
-        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        options: dict[str, object] = {"temperature": 0.1}
         if generation_options:
             options.update(generation_options)
         result = self._model.generate(
@@ -189,7 +189,7 @@ class TaskPlanner:
         context: list[ModelMessage],
         generation_options: dict[str, object] | None = None,
     ) -> TaskPlan:
-        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        options: dict[str, object] = {"temperature": 0.1}
         if generation_options:
             options.update(generation_options)
         result = await self._model.agenerate(
@@ -209,7 +209,7 @@ class TaskPlanner:
         observation: str,
         generation_options: dict[str, object] | None = None,
     ) -> TaskPlan:
-        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 600}
+        options: dict[str, object] = {"temperature": 0.1}
         if generation_options:
             options.update(generation_options)
         result = await self._model.agenerate(

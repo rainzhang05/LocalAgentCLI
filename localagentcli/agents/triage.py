@@ -134,7 +134,6 @@ class TaskTriageClassifier:
     ) -> TaskTriage:
         options: dict[str, object] = {
             "temperature": 0.0,
-            "max_tokens": 120,
         }
         options.update(generation_options)
         result = self._model.generate(
@@ -181,7 +180,6 @@ class TaskTriageClassifier:
     ) -> TaskTriage:
         options: dict[str, object] = {
             "temperature": 0.0,
-            "max_tokens": 120,
         }
         options.update(generation_options)
         result = await self._model.agenerate(

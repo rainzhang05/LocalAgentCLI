@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import pty
-import select
 import subprocess
 import time
 from dataclasses import dataclass
@@ -53,6 +51,11 @@ def _run_streaming_command_posix(
     cwd: str,
     timeout: int,
 ) -> _StreamingCommandResult:
+    # POSIX-only imports are kept local so Windows can import this module
+    # without requiring termios/tty support.
+    import pty
+    import select
+
     master_fd, slave_fd = pty.openpty()
     process = subprocess.Popen(  # noqa: S602
         command,

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.models.provider_readiness import (
     aresolve_remote_model_readiness,
     resolve_remote_model_readiness,
 )
-from localagentcli.providers.base import RemoteModelInfo
 from tests.test_provider_base import StubRemoteProvider
 
 
@@ -15,17 +15,17 @@ def _caps() -> dict:
 
 
 class _EmptyDiscovery(StubRemoteProvider):
-    def list_models(self) -> list[RemoteModelInfo]:
+    def list_models(self) -> list[ModelInfo]:
         return []
 
-    async def alist_models(self) -> list[RemoteModelInfo]:
+    async def alist_models(self) -> list[ModelInfo]:
         return []
 
 
 class _OneModel(StubRemoteProvider):
-    def list_models(self) -> list[RemoteModelInfo]:
+    def list_models(self) -> list[ModelInfo]:
         return [
-            RemoteModelInfo(
+            ModelInfo(
                 id="m1",
                 name="One",
                 capabilities=_caps(),
@@ -33,7 +33,7 @@ class _OneModel(StubRemoteProvider):
             )
         ]
 
-    async def alist_models(self) -> list[RemoteModelInfo]:
+    async def alist_models(self) -> list[ModelInfo]:
         return self.list_models()
 
 

@@ -15,6 +15,7 @@ from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import AgentEvent
 from localagentcli.config.manager import ConfigManager
+from localagentcli.features import FeatureRegistry
 from localagentcli.mcp import McpManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import (
@@ -91,6 +92,7 @@ class RuntimeServices:
     session_manager: SessionManager
     dynamic_tool_specs: list[DynamicToolSpec]
     mcp_manager: McpManager | None
+    feature_registry: FeatureRegistry
 
     @classmethod
     def create(
@@ -150,6 +152,7 @@ class RuntimeServices:
             session_manager=session_manager,
             dynamic_tool_specs=[],
             mcp_manager=McpManager.from_config(config.get("mcp_servers", {})),
+            feature_registry=FeatureRegistry(config.get("features", {})),
         )
 
     def parse_name_version(self, model_name: str) -> tuple[str, str | None]:

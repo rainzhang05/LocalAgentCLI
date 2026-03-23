@@ -308,6 +308,26 @@ class TestOpenAIBuildRequestBody:
         assert body["tools"][0]["function"]["name"] == "file_read"
         assert body["tool_choice"] == "auto"
 
+    def test_prompt_cache_fields_can_be_passed_through_options(self):
+        provider = _make_provider(
+            options={"prompt_cache": "true", "prompt_cache_key": "workspace-1"}
+        )
+        body = provider._build_request_body([ModelMessage(role="user", content="Hi")])
+
+        assert body["prompt_cache"] is True
+        assert body["prompt_cache_key"] == "workspace-1"
+
+    def test_prompt_cache_kwargs_override_options(self):
+        provider = _make_provider(options={"prompt_cache": False, "prompt_cache_key": "old-key"})
+        body = provider._build_request_body(
+            [ModelMessage(role="user", content="Hi")],
+            prompt_cache=True,
+            prompt_cache_key="new-key",
+        )
+
+        assert body["prompt_cache"] is True
+        assert body["prompt_cache_key"] == "new-key"
+
 
 # ---------------------------------------------------------------------------
 # _parse_sse_line() tests

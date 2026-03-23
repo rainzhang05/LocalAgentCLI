@@ -213,15 +213,7 @@ class AgentController:
             )
 
         self._session.metadata["approval_mode"] = self._approval.mode
-        plan = (
-            TaskPlan(
-                task=task_input,
-                steps=[PlanStep(index=1, description=task_input)],
-                status="planning",
-            )
-            if triage.outcome == "single_step_task"
-            else None
-        )
+        plan = self._initial_execution_plan(task_input)
         self._generator = self._loop.run(
             task_input,
             context,
@@ -296,15 +288,7 @@ class AgentController:
             )
 
         self._session.metadata["approval_mode"] = self._approval.mode
-        plan = (
-            TaskPlan(
-                task=task_input,
-                steps=[PlanStep(index=1, description=task_input)],
-                status="planning",
-            )
-            if triage.outcome == "single_step_task"
-            else None
-        )
+        plan = self._initial_execution_plan(task_input)
 
         async def _events() -> AsyncIterator[AgentEvent]:
             self._async_agent_active = True
@@ -327,6 +311,14 @@ class AgentController:
                 self._async_agent_active = False
 
         return AgentDispatch(triage=triage, events=_events())
+
+    def _initial_execution_plan(self, task_input: str) -> TaskPlan:
+        """Seed execution with a local bootstrap step instead of a planner round-trip."""
+        return TaskPlan(
+            task=task_input,
+            steps=[PlanStep(index=1, description=task_input)],
+            status="planning",
+        )
 
     def apply_tool_approval(self, approved: bool, *, autonomous_all: bool = False) -> None:
         """Resume async agent loop after a tool approval decision (no sync iterator)."""

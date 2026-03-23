@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Literal
 
+from localagentcli.models.model_info import ModelInfo
+
 BACKEND_DEPENDENCIES: dict[str, list[str]] = {
     "mlx": ["mlx", "mlx_lm"],
     "gguf": ["llama_cpp"],
@@ -174,6 +176,11 @@ class ModelBackend(ABC):
     @abstractmethod
     def capabilities(self) -> dict:
         """Return a dict of all capability flags."""
+        ...
+
+    @abstractmethod
+    def model_info(self) -> ModelInfo:
+        """Normalized metadata about model capabilities and limits."""
         ...
 
 

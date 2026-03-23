@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from localagentcli.agents.context_window import recent_context_with_system
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage
 
@@ -139,7 +140,7 @@ class TaskTriageClassifier:
         result = self._model.generate(
             [
                 ModelMessage(role="system", content=_TRIAGE_PROMPT),
-                *context[-6:],
+                *recent_context_with_system(context, 6),
                 ModelMessage(role="user", content=task),
             ],
             **options,
@@ -185,7 +186,7 @@ class TaskTriageClassifier:
         result = await self._model.agenerate(
             [
                 ModelMessage(role="system", content=_TRIAGE_PROMPT),
-                *context[-6:],
+                *recent_context_with_system(context, 6),
                 ModelMessage(role="user", content=task),
             ],
             **options,

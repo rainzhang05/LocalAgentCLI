@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.tools import (
     DirectoryListTool,
     FileReadTool,
@@ -78,3 +79,34 @@ class TestToolRegistry:
 
         assert result.status == "error"
         assert "Unknown tool" in result.summary
+
+    def test_get_tool_definitions_adapts_for_small_model_budget(self, tmp_path):
+        registry = ToolRegistry(
+            [
+                FileReadTool(tmp_path),
+                PatchApplyTool(tmp_path),
+            ]
+        )
+
+        names = [
+            definition["name"]
+            for definition in registry.get_tool_definitions(
+                ModelInfo(
+                    id="small",
+                    default_max_tokens=1024,
+                    capabilities={"tool_use": True},
+                )
+            )
+        ]
+
+        assert "file_read" in names
+        assert "patch_apply" not in names
+
+    def test_get_tool_definitions_empty_when_tool_use_capability_disabled(self, tmp_path):
+        registry = ToolRegistry([FileReadTool(tmp_path), PatchApplyTool(tmp_path)])
+
+        definitions = registry.get_tool_definitions(
+            ModelInfo(id="no-tools", capabilities={"tool_use": False})
+        )
+
+        assert definitions == []

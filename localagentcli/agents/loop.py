@@ -24,8 +24,10 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
+from localagentcli.agents.profiles import build_generation_profile
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.safety.layer import SafetyLayer
 from localagentcli.session.state import Session
 from localagentcli.session.task_context import (
@@ -109,9 +111,11 @@ class AgentLoop:
         session: Session | None = None,
     ) -> Generator[AgentEvent, bool, None]:
         """Execute the full understand/plan/execute/observe loop."""
-        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 1200}
-        if generation_options:
-            options.update(generation_options)
+        options = build_generation_profile(
+            phase="step",
+            base_config=generation_options,
+            model_info=self._resolve_model_info(),
+        )
 
         if plan is None:
             yield PhaseChanged(phase="planning", summary="Planning task.")
@@ -230,10 +234,11 @@ class AgentLoop:
         session: Session | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Async execute loop (non-blocking model I/O, tools via asyncio.to_thread)."""
-        # Use provided generation options or basic defaults
-        options: dict[str, object] = {"temperature": 0.1}
-        if generation_options:
-            options.update(generation_options)
+        options = build_generation_profile(
+            phase="step",
+            base_config=generation_options,
+            model_info=self._resolve_model_info(),
+        )
 
         if plan is None:
             yield PhaseChanged(phase="planning", summary="Planning task.")
@@ -1011,3 +1016,15 @@ class AgentLoop:
             ],
         ]
         revised._renumber()
+
+    def _resolve_model_info(self) -> ModelInfo:
+        """Best-effort model info lookup for standalone loop usage in tests and adapters."""
+        resolver = getattr(self._model, "model_info", None)
+        if callable(resolver):
+            try:
+                info = resolver()
+            except Exception:
+                info = None
+            if isinstance(info, ModelInfo):
+                return info
+        return ModelInfo(id="unknown-model")

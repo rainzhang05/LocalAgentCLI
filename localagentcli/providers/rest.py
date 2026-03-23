@@ -17,13 +17,13 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.models.readiness import (
     configured_remote_capability_provenance,
     legacy_fallback_capability_provenance,
 )
 from localagentcli.providers.base import (
     ConnectionTestResult,
-    RemoteModelInfo,
     RemoteProvider,
 )
 
@@ -196,7 +196,7 @@ class GenericRESTProvider(RemoteProvider):
                 latency_ms=latency,
             )
 
-    def list_models(self) -> list[RemoteModelInfo]:
+    def list_models(self) -> list[ModelInfo]:
         """Try to discover models from a configured endpoint, then fall back."""
         try:
             response = self._request_with_retries(lambda: self._client.get(self._models_endpoint))
@@ -207,7 +207,7 @@ class GenericRESTProvider(RemoteProvider):
                 extracted = extract_field(payload, self._models_field)
                 raw_models = extracted if isinstance(extracted, list) else []
 
-            models: list[RemoteModelInfo] = []
+            models: list[ModelInfo] = []
             for raw_model in raw_models:
                 if isinstance(raw_model, str):
                     model_id = raw_model
@@ -224,7 +224,7 @@ class GenericRESTProvider(RemoteProvider):
                     continue
                 capabilities = self.capabilities()
                 models.append(
-                    RemoteModelInfo(
+                    ModelInfo(
                         id=model_id,
                         name=model_name or model_id,
                         capabilities=capabilities,
@@ -240,7 +240,7 @@ class GenericRESTProvider(RemoteProvider):
         if self._default_model:
             capabilities = self.capabilities()
             return [
-                RemoteModelInfo(
+                ModelInfo(
                     id=self._default_model,
                     name=self._default_model,
                     capabilities=capabilities,
@@ -390,7 +390,7 @@ class GenericRESTProvider(RemoteProvider):
                 latency_ms=latency,
             )
 
-    async def alist_models(self) -> list[RemoteModelInfo]:
+    async def alist_models(self) -> list[ModelInfo]:
         try:
             timeout = self._sync_timeout()
             client = await self._ensure_async_client(timeout)
@@ -402,7 +402,7 @@ class GenericRESTProvider(RemoteProvider):
                 extracted = extract_field(payload, self._models_field)
                 raw_models = extracted if isinstance(extracted, list) else []
 
-            models: list[RemoteModelInfo] = []
+            models: list[ModelInfo] = []
             for raw_model in raw_models:
                 if isinstance(raw_model, str):
                     model_id = raw_model
@@ -419,7 +419,7 @@ class GenericRESTProvider(RemoteProvider):
                     continue
                 capabilities = self.capabilities()
                 models.append(
-                    RemoteModelInfo(
+                    ModelInfo(
                         id=model_id,
                         name=model_name or model_id,
                         capabilities=capabilities,
@@ -435,7 +435,7 @@ class GenericRESTProvider(RemoteProvider):
         if self._default_model:
             capabilities = self.capabilities()
             return [
-                RemoteModelInfo(
+                ModelInfo(
                     id=self._default_model,
                     name=self._default_model,
                     capabilities=capabilities,

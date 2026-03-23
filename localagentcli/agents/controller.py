@@ -22,6 +22,7 @@ from localagentcli.agents.events import (
 )
 from localagentcli.agents.loop import AgentLoop
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
+from localagentcli.agents.profiles import build_generation_profile
 from localagentcli.agents.triage import TaskTriage, TaskTriageClassifier
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage, StreamChunk
@@ -698,51 +699,11 @@ class AgentController:
 
     def _profile(self, phase: str) -> dict[str, object]:
         """Derive an internal generation profile for a specific agent phase."""
-        base = dict(self._generation_config)
-        temperature = self._coerce_float(base.get("temperature"), 0.7)
-        top_p = self._coerce_float(base.get("top_p"), 1.0)
-
-        # Rely on the model's native default maximum tokens, or fallback to the provided config
-        default_tokens = self._model.model_info().default_max_tokens
-        max_tokens = self._coerce_int(base.get("max_tokens"), default_tokens)
-
-        if phase == "triage":
-            return {
-                "temperature": min(temperature, 0.1),
-                "max_tokens": min(max_tokens, 512),
-                "top_p": top_p,
-            }
-        if phase == "planning":
-            return {
-                "temperature": min(temperature, 0.1),
-                "max_tokens": min(max_tokens, 2048),
-                "top_p": top_p,
-            }
-        if phase == "step":
-            return {
-                "temperature": min(temperature, 0.2),
-                "max_tokens": max_tokens,
-                "top_p": top_p,
-            }
-        return {
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "top_p": top_p,
-        }
-
-    @staticmethod
-    def _coerce_float(value: object, default: float) -> float:
-        """Best-effort numeric coercion for generation profiles."""
-        if isinstance(value, bool):
-            return float(default)
-        if isinstance(value, int | float):
-            return float(value)
-        if isinstance(value, str):
-            try:
-                return float(value)
-            except ValueError:
-                return default
-        return default
+        return build_generation_profile(
+            phase=phase,
+            base_config=self._generation_config,
+            model_info=self._model.model_info(),
+        )
 
     @staticmethod
     def _coerce_int(value: object, default: int) -> int:

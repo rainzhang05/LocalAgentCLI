@@ -80,12 +80,16 @@ class AgentLoop:
         planner: TaskPlanner,
         safety: SafetyLayer,
         max_consecutive_errors: int = 5,
+        max_step_rounds: int = 24,
+        unified_turn_loop: bool = True,
     ):
         self._model = model
         self._tools = tools
         self._planner = planner
         self._safety = safety
         self._max_consecutive_errors = max_consecutive_errors
+        self._max_step_rounds = max(1, max_step_rounds)
+        self._unified_turn_loop = unified_turn_loop
         self._stop_requested = False
         self._approval_wait: asyncio.Future[bool] | None = None
         self._async_tool_batch: tuple[list[ModelMessage], bool] | None = None
@@ -171,6 +175,36 @@ class AgentLoop:
                 break
 
             if step_summary is None:
+                if self._unified_turn_loop:
+                    plan.update_step(
+                        step.index, "failed", "Unified turn loop could not complete step."
+                    )
+                    plan.status = "failed"
+                    yield PhaseChanged(
+                        phase="failed",
+                        summary=(
+                            f"Unified turn loop could not complete step {step.index} "
+                            f"within {self._max_step_rounds} rounds."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Step {step.index} failed after unified turn-loop "
+                            "budget was exhausted."
+                        ),
+                    )
+                    yield TaskFailed(
+                        reason=(
+                            f"Failed while executing step {step.index}: {step.description} "
+                            f"(unified turn-loop budget exhausted)."
+                        ),
+                        plan=plan,
+                    )
+                    return
+
                 if errors >= self._max_consecutive_errors:
                     yield PhaseChanged(
                         phase="replanning",
@@ -294,6 +328,36 @@ class AgentLoop:
                 break
 
             if step_summary is None:
+                if self._unified_turn_loop:
+                    plan.update_step(
+                        step.index, "failed", "Unified turn loop could not complete step."
+                    )
+                    plan.status = "failed"
+                    yield PhaseChanged(
+                        phase="failed",
+                        summary=(
+                            f"Unified turn loop could not complete step {step.index} "
+                            f"within {self._max_step_rounds} rounds."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Step {step.index} failed after unified turn-loop "
+                            "budget was exhausted."
+                        ),
+                    )
+                    yield TaskFailed(
+                        reason=(
+                            f"Failed while executing step {step.index}: {step.description} "
+                            f"(unified turn-loop budget exhausted)."
+                        ),
+                        plan=plan,
+                    )
+                    return
+
                 if errors >= self._max_consecutive_errors:
                     yield PhaseChanged(
                         phase="replanning",
@@ -365,14 +429,16 @@ class AgentLoop:
         conversation: list[ModelMessage] = []
         consecutive_errors = 0
 
-        for _ in range(self._max_consecutive_errors + 1):
+        for _ in range(self._max_step_rounds):
             if self._stop_requested:
                 yield _AsyncStepDone(None, conversation, consecutive_errors)
                 return
 
+            model_info = self._resolve_model_info()
+
             result = await self._model.agenerate(
                 self._build_messages(task, plan, step, transcript, conversation, session),
-                tools=self._tools.get_tool_definitions(),
+                tools=self._tools.get_tool_definitions(model_info),
                 tool_choice="auto",
                 **options,
             )
@@ -396,6 +462,8 @@ class AgentLoop:
                             metadata={"error": result.usage["error"]},
                         )
                     )
+                if consecutive_errors >= self._max_consecutive_errors:
+                    break
                 continue
 
             if result.reasoning.strip():
@@ -423,6 +491,8 @@ class AgentLoop:
                         step_index=step.index,
                         step_description=step.description,
                     )
+                    if consecutive_errors >= self._max_consecutive_errors:
+                        break
                 else:
                     consecutive_errors = 0
                 continue
@@ -655,13 +725,15 @@ class AgentLoop:
         conversation: list[ModelMessage] = []
         consecutive_errors = 0
 
-        for _ in range(self._max_consecutive_errors + 1):
+        for _ in range(self._max_step_rounds):
             if self._stop_requested:
                 return None, conversation, consecutive_errors
 
+            model_info = self._resolve_model_info()
+
             result = self._model.generate(
                 self._build_messages(task, plan, step, transcript, conversation, session),
-                tools=self._tools.get_tool_definitions(),
+                tools=self._tools.get_tool_definitions(model_info),
                 tool_choice="auto",
                 **options,
             )
@@ -685,6 +757,8 @@ class AgentLoop:
                             metadata={"error": result.usage["error"]},
                         )
                     )
+                if consecutive_errors >= self._max_consecutive_errors:
+                    break
                 continue
 
             if result.reasoning.strip():
@@ -707,6 +781,8 @@ class AgentLoop:
                         step_index=step.index,
                         step_description=step.description,
                     )
+                    if consecutive_errors >= self._max_consecutive_errors:
+                        break
                 else:
                     consecutive_errors = 0
                 continue
@@ -730,7 +806,6 @@ class AgentLoop:
         return (yield from self._handle_tool_calls_sequential(result))
 
     def _parallel_read_only_batch_eligible(self, result: GenerationResult) -> bool:
-        """True when every call can run concurrently: read-only and auto-approved."""
         raw_calls = result.tool_calls
         if len(raw_calls) < 2:
             return False

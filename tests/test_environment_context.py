@@ -8,9 +8,10 @@ from localagentcli.session.environment_context import get_environment_context_xm
 
 
 def test_environment_context_includes_cwd():
-    # Pass a valid path
-    xml = get_environment_context_xml("/fake/workspace/path")
-    assert "<cwd>/fake/workspace/path</cwd>" in xml
+    workspace = "/fake/workspace/path"
+    xml = get_environment_context_xml(workspace)
+    expected = str(Path(workspace).resolve())
+    assert f"<cwd>{expected}</cwd>" in xml
 
 
 def test_environment_context_determines_cwd_if_not_provided():

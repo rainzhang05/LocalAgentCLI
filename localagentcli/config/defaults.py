@@ -27,6 +27,7 @@ DEFAULT_CONFIG: dict = {
         "temperature": 0.7,
         "max_tokens": 4096,
         "top_p": 1.0,
+        "reasoning_effort": "",
     },
     "timeouts": {
         "shell_command": 120,
@@ -57,6 +58,7 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "generation.temperature": (float, lambda v: 0.0 <= v <= 2.0),
     "generation.max_tokens": (int, lambda v: v > 0),
     "generation.top_p": (float, lambda v: 0.0 <= v <= 1.0),
+    "generation.reasoning_effort": (str, lambda v: v in ("", "low", "medium", "high")),
     "timeouts.shell_command": (int, lambda v: v > 0),
     "timeouts.model_response": (int, lambda v: v > 0),
     "timeouts.inactivity": (int, lambda v: v > 0),

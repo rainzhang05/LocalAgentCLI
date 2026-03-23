@@ -25,6 +25,7 @@ from localagentcli.agents.events import (
 )
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.agents.profiles import build_generation_profile
+from localagentcli.agents.truncation import truncate_for_model_output
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.models.model_info import ModelInfo
@@ -997,11 +998,16 @@ class AgentLoop:
         return call_id, tool_name, {}, "Tool arguments must be a JSON object."
 
     def _tool_payload(self, tool_name: str, result: ToolResult) -> str:
+        model_info = self._resolve_model_info()
+        truncated_output = truncate_for_model_output(result.output, model_info)
         payload = {
             "tool": tool_name,
             "status": result.status,
             "summary": result.summary,
-            "output": result.output[:4000],
+            "output": truncated_output.text,
+            "output_truncated": truncated_output.was_truncated,
+            "output_original_chars": truncated_output.original_chars,
+            "output_retained_chars": truncated_output.retained_chars,
             "error": result.error,
             "exit_code": result.exit_code,
             "files_changed": result.files_changed,

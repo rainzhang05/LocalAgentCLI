@@ -29,6 +29,8 @@ from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.models.model_info import ModelInfo
 from localagentcli.safety.layer import SafetyLayer
+from localagentcli.session.environment_context import get_environment_context_xml
+from localagentcli.session.instructions import build_system_instructions
 from localagentcli.session.state import Session
 from localagentcli.session.task_context import (
     AGENT_TASK_RUNTIME_HEADING,
@@ -944,8 +946,31 @@ class AgentLoop:
             runtime = format_agent_task_runtime_section(session)
             if runtime:
                 content = f"{content}\n\n{AGENT_TASK_RUNTIME_HEADING}\n{runtime}"
-        system = ModelMessage(role="system", content=content)
-        return [system, *transcript, *conversation]
+
+        transcript_system: list[str] = []
+        transcript_messages: list[ModelMessage] = []
+        for message in transcript:
+            if message.role == "system":
+                text = message.content.strip()
+                if text:
+                    transcript_system.append(text)
+                continue
+            transcript_messages.append(message)
+
+        if session is not None:
+            env_xml = get_environment_context_xml(session.workspace)
+            if not transcript_system:
+                transcript_system.extend(build_system_instructions(session))
+                if env_xml.strip():
+                    transcript_system.append(env_xml)
+            elif env_xml.strip() and not any(
+                "<environment_context>" in existing for existing in transcript_system
+            ):
+                transcript_system.append(env_xml)
+
+        system_parts = [content, *transcript_system]
+        system = ModelMessage(role="system", content="\n\n".join(system_parts))
+        return [system, *transcript_messages, *conversation]
 
     def _normalize_tool_call(
         self,

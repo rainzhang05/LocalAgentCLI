@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage
 from localagentcli.session.state import Message
 from localagentcli.session.tokens import estimate_tokens_for_messages
+
+_TRANSCRIPT_HEAD_MESSAGES = 16
+_TRANSCRIPT_TAIL_MESSAGES = 24
 
 
 def _default_generation_headroom(context_limit: int) -> int:
@@ -120,9 +124,15 @@ class ContextCompactor:
     def _format_transcript(messages: list[Message]) -> str:
         """Convert messages into a compact transcript string."""
         lines: list[str] = []
-        for message in messages:
-            content = " ".join(message.content.split())
-            lines.append(f"[{message.role}] {content}")
+        head, tail, omitted_middle = ContextCompactor._segment_messages_for_transcript(messages)
+        for message in head:
+            lines.append(ContextCompactor._format_message_line(message))
+        if omitted_middle > 0:
+            lines.append(
+                f"[system] ... {omitted_middle} middle messages omitted during compaction ..."
+            )
+        for message in tail:
+            lines.append(ContextCompactor._format_message_line(message))
         return "\n".join(lines)
 
     @staticmethod
@@ -130,8 +140,68 @@ class ContextCompactor:
         """Fallback summary when model-based summarization is unavailable."""
         lines = [f"Summary of {len(messages)} earlier messages:"]
         for message in messages[-12:]:
-            content = " ".join(message.content.split())
-            if len(content) > 160:
-                content = f"{content[:157]}..."
-            lines.append(f"- {message.role}: {content}")
+            rendered = ContextCompactor._format_message_line(message)
+            if len(rendered) > 220:
+                rendered = f"{rendered[:217]}..."
+            lines.append(f"- {rendered}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _segment_messages_for_transcript(
+        messages: list[Message],
+    ) -> tuple[list[Message], list[Message], int]:
+        total = len(messages)
+        if total <= _TRANSCRIPT_HEAD_MESSAGES + _TRANSCRIPT_TAIL_MESSAGES + 4:
+            return list(messages), [], 0
+        head = list(messages[:_TRANSCRIPT_HEAD_MESSAGES])
+        tail = list(messages[-_TRANSCRIPT_TAIL_MESSAGES:])
+        omitted = total - len(head) - len(tail)
+        return head, tail, max(omitted, 0)
+
+    @staticmethod
+    def _format_message_line(message: Message) -> str:
+        if message.role != "tool":
+            content = " ".join(message.content.split())
+            return f"[{message.role}] {content}"
+
+        tool_name = str(message.metadata.get("tool_name", "tool") or "tool")
+        status = str(message.metadata.get("status", "") or "")
+        header = f"[tool:{tool_name}]" if not status else f"[tool:{tool_name} status={status}]"
+
+        parsed = ContextCompactor._parse_tool_content(message.content)
+        summary = ContextCompactor._compact_text(str(parsed.get("summary", "") or ""), 160)
+        error = ContextCompactor._compact_text(str(parsed.get("error", "") or ""), 160)
+        output_preview = ContextCompactor._compact_text(str(parsed.get("output", "") or ""), 220)
+
+        details: list[str] = []
+        if summary:
+            details.append(f"summary={summary}")
+        if error:
+            details.append(f"error={error}")
+        if output_preview:
+            details.append(f"output={output_preview}")
+        if not details:
+            raw = ContextCompactor._compact_text(" ".join(message.content.split()), 220)
+            if raw:
+                details.append(f"raw={raw}")
+
+        return f"{header} {'; '.join(details)}" if details else header
+
+    @staticmethod
+    def _parse_tool_content(content: str) -> dict:
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+        return {}
+
+    @staticmethod
+    def _compact_text(text: str, limit: int) -> str:
+        if not text:
+            return ""
+        flattened = " ".join(text.split())
+        if len(flattened) <= limit:
+            return flattened
+        return f"{flattened[: max(limit - 3, 0)]}..."

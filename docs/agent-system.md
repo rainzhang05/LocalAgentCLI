@@ -81,6 +81,8 @@ In agent mode, user input first flows through the shared runtime submission/even
 
 The selected route is surfaced immediately in the shell activity stream and persisted in session metadata so the prompt toolbar and `/status` can describe the current or last task without re-parsing history.
 
+When recent-history windowing trims long transcripts during triage/planning, the runtime preserves a leading system context message so workspace instructions and environment context are not accidentally dropped from model-visible input.
+
 The loop continues until the task is complete, fails, or the user intervenes.
 
 ### Entry Requirements
@@ -282,6 +284,8 @@ class AgentLoop:
 ```
 
 **Runtime task status in step prompts:** When `AgentController` runs the loop, it passes the active `Session`. For each step, the first system message includes the usual task/plan/step instructions plus an **Agent task status (runtime):** block when `session.metadata["agent_task_state"]` exists, `session.mode == "agent"`, and the recorded task is **active**. The block lists fields such as route, phase, step index and description, pending tool (if any), approval mode, rollback count, and a truncated summary so the model sees up-to-date execution state alongside the transcript. Formatting lives in `localagentcli/session/task_context.py`.
+
+The step system message also merges any system-role context already present in the transcript (for example repository instructions and environment context produced by shared conversation assembly). If that upstream system context is absent, the loop falls back to session-derived workspace/pinned instructions plus a freshly generated `<environment_context>` block.
 
 ### TaskPlan
 

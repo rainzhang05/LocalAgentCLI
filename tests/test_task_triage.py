@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from localagentcli.agents.triage import TaskTriageClassifier
-from localagentcli.models.backends.base import GenerationResult
+from localagentcli.models.backends.base import GenerationResult, ModelMessage
 
 
 class FakeTriageModel:
@@ -48,3 +48,19 @@ class TestTaskTriageClassifier:
 
         assert result.outcome == "multi_step_task"
         assert model.calls
+
+    def test_model_fallback_preserves_system_context_when_history_window_is_trimmed(self):
+        model = FakeTriageModel('{"classification":"single_step_task"}')
+        classifier = TaskTriageClassifier(model)
+        context = [
+            ModelMessage(role="system", content="workspace-instructions-and-env"),
+            *[ModelMessage(role="user", content=f"message-{index}") for index in range(12)],
+        ]
+
+        classifier.classify("Please help with this task", context)
+
+        sent_messages = model.calls[0][0]
+        assert any(
+            message.role == "system" and message.content == "workspace-instructions-and-env"
+            for message in sent_messages[1:]
+        )

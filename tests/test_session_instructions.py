@@ -79,10 +79,10 @@ def test_build_conversation_model_messages_merges_system_layers(tmp_path: Path):
 
     assert len(messages) == 2
     assert messages[0].role == "system"
-    assert messages[0].content.split("\n\n") == [
-        "Repo line.",
-        "Pinned line.",
-        "History system.",
-    ]
+    parts = messages[0].content.split("\n\n")
+    assert parts[0] == "Repo line."
+    assert parts[1] == "Pinned line."
+    assert "<environment_context>" in parts[2]
+    assert parts[3] == "History system."
     assert messages[1].role == "user"
     assert messages[1].content == "Hi"

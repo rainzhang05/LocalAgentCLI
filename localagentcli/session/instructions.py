@@ -102,7 +102,10 @@ def build_conversation_model_messages(session: Session) -> list[ModelMessage]:
     History entries with role ``system`` are folded into the leading system message
     in order (after workspace and pinned text). Other roles are passed through.
     """
+    from localagentcli.session.environment_context import get_environment_context_xml
+
     system_parts = build_system_instructions(session)
+    system_parts.append(get_environment_context_xml(session.workspace))
     conversation: list[ModelMessage] = []
 
     for message in session.history:

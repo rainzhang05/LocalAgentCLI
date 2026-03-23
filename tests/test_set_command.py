@@ -10,8 +10,8 @@ from localagentcli.commands.router import CommandRouter
 from localagentcli.commands.set_cmd import SetHandler
 from localagentcli.commands.set_cmd import register as register_set
 from localagentcli.models.detector import HardwareDetector
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.models.registry import ModelEntry, ModelRegistry
-from localagentcli.providers.base import RemoteModelInfo
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderEntry, ProviderRegistry
 from localagentcli.shell.prompt import SelectionOption
@@ -134,7 +134,7 @@ def test_set_activates_provider_model(config, session_manager, storage, monkeypa
         {
             "list_models": staticmethod(
                 lambda: [
-                    RemoteModelInfo(
+                    ModelInfo(
                         id="gpt-4o",
                         name="GPT-4o",
                         capabilities={"tool_use": True, "streaming": True},
@@ -213,7 +213,7 @@ def test_set_provider_model_picker_starts_empty(config, session_manager, storage
         {
             "list_models": staticmethod(
                 lambda: [
-                    RemoteModelInfo(
+                    ModelInfo(
                         id="gpt-4o",
                         name="GPT-4o",
                         capabilities={"tool_use": True, "streaming": True},
@@ -274,7 +274,7 @@ def test_set_provider_picker_descriptions_include_readiness(
         {
             "list_models": staticmethod(
                 lambda: [
-                    RemoteModelInfo(
+                    ModelInfo(
                         id="gpt-4o",
                         name="GPT-4o",
                         capabilities={"tool_use": True, "reasoning": False, "streaming": True},

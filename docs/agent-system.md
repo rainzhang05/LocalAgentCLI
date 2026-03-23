@@ -104,6 +104,8 @@ The loop continues until the task is complete, fails, or the user intervenes.
 6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, approval mode, and rollback availability are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
 7. **Model-aware generation profiles**: Triage, planning, and step execution each use phase-specific generation profiles derived from shared config and `ModelInfo.default_max_tokens`; this avoids hardcoded loop token limits and keeps controller and loop behavior aligned.
 8. **Structured step briefings**: Step execution prompts use a fixed structure (execution rules, output contract, task objective, plan status, current step focus) before layered system/session context, reducing ambiguity during long tool-using turns.
+9. **Model-adapted tool exposure**: Per-round tool definitions are filtered by active `ModelInfo` (tool-use capability gates, required capability tags, minimum token-budget thresholds) before the model receives tool schemas.
+10. **Unified turn loop budget**: Each step can span multiple model↔tool rounds in one continuous execution loop up to a configurable round budget, reducing dependence on separate replanning calls for in-step progress.
 
 ### Runtime Phase Contract
 
@@ -172,6 +174,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 #### 3. Execute Step
 - The agent selects the next step from the plan
 - It constructs the tool call(s) needed for the step
+- Tool definitions sent to the model are adapted for the active model capabilities/token budget before each round
 - Tool calls are routed through the Safety Layer for approval
 - If approval is required, the visible phase becomes `waiting_approval` until the user approves, denies, or cancels the prompt
 - The tool executes and returns a `ToolResult`
@@ -192,7 +195,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
   - Retry the current step (with modifications)
   - Abort the task (with explanation)
 - Recovery after denials, blocked actions, cancelled tools, and timeouts is surfaced as `recovering`
-- Revisions to the remaining plan are surfaced as `replanning`
+- Revisions to the remaining plan are surfaced as `replanning` when replanning is enabled for the loop mode
 - Plan updates are displayed to the user
 
 ### Agent Capabilities
@@ -207,6 +210,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 | Direct-answer fast path | Simple prompts in agent mode can bypass planning entirely while still using full session context |
 | Task-state persistence | Route, phase, step, pending tool, approval mode, and rollback count are persisted for the toolbar and `/status` |
 | No separate initial planner turn | First execution starts from a local bootstrap step; planner model calls are deferred to recovery/replanning |
+| Unified multi-round step execution | A single step can run multiple model/tool rounds before finalizing, bounded by a configurable round limit |
 
 ### AgentController
 

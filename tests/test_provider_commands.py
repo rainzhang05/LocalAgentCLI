@@ -16,7 +16,8 @@ from localagentcli.commands.providers import (
     ProvidersUseHandler,
 )
 from localagentcli.config.manager import ConfigManager
-from localagentcli.providers.base import ConnectionTestResult, RemoteModelInfo
+from localagentcli.models.model_info import ModelInfo
+from localagentcli.providers.base import ConnectionTestResult
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import (
     ProviderEntry,
@@ -110,7 +111,7 @@ class TestProvidersList:
         handler = ProvidersListHandler(registry, session_manager, config)
         mock_provider = MagicMock()
         mock_provider.list_models.return_value = [
-            RemoteModelInfo(
+            ModelInfo(
                 id="gpt-4o",
                 name="GPT-4o",
                 capabilities={"tool_use": True, "reasoning": False, "streaming": True},
@@ -313,7 +314,7 @@ class TestProvidersUse:
         handler = ProvidersUseHandler(registry, session_manager)
         mock_provider = MagicMock()
         mock_provider.list_models.return_value = [
-            RemoteModelInfo(
+            ModelInfo(
                 id="gpt-4o",
                 name="GPT-4o",
                 capabilities={"tool_use": True, "reasoning": False, "streaming": True},
@@ -377,7 +378,7 @@ class TestProvidersTest:
             success=True, message="Connected.", latency_ms=50.0
         )
         mock_provider.list_models.return_value = [
-            RemoteModelInfo(
+            ModelInfo(
                 id="gpt-4o",
                 name="GPT-4o",
                 capabilities={"tool_use": True, "reasoning": False, "streaming": True},
@@ -410,7 +411,7 @@ class TestProvidersTest:
             success=True, message="Connected.", latency_ms=20.0
         )
         mock_provider.list_models.return_value = [
-            RemoteModelInfo(
+            ModelInfo(
                 id="gpt-4o",
                 name="GPT-4o",
                 capabilities={"tool_use": True, "reasoning": False, "streaming": True},

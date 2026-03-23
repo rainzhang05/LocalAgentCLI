@@ -6,6 +6,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from localagentcli.models.model_info import ModelInfo
+from localagentcli.tools.adaptation import adapt_tool_definitions
 from localagentcli.tools.base import Tool, ToolResult
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.schema import validate_function_parameters_schema
@@ -21,6 +23,8 @@ class DynamicToolSpec:
     executor: Callable[..., ToolResult]
     requires_approval: bool = True
     is_read_only: bool = False
+    required_model_capabilities: tuple[str, ...] = ()
+    minimum_model_default_max_tokens: int = 0
 
 
 class DynamicTool(Tool):
@@ -49,6 +53,14 @@ class DynamicTool(Tool):
     @property
     def is_read_only(self) -> bool:
         return self._spec.is_read_only
+
+    @property
+    def required_model_capabilities(self) -> tuple[str, ...]:
+        return self._spec.required_model_capabilities
+
+    @property
+    def minimum_model_default_max_tokens(self) -> int:
+        return self._spec.minimum_model_default_max_tokens
 
     def execute(self, **kwargs: object) -> ToolResult:
         return self._spec.executor(**kwargs)
@@ -91,9 +103,16 @@ class ToolRouter:
         """Return all visible tool implementations."""
         return [*self._builtins.list_tools(), *self._dynamic.values()]
 
-    def get_tool_definitions(self) -> list[dict]:
-        """Return model-facing tool definitions for the current turn."""
-        return [tool.definition() for tool in self.list_tools()]
+    def get_tool_definitions(self, model_info: ModelInfo | None = None) -> list[dict]:
+        """Return model-facing tool definitions for the current turn.
+
+        When `model_info` is supplied, definitions are adapted for the active
+        model (capability gates + minimum token budget for advanced tools).
+        """
+        tools = self.list_tools()
+        if model_info is None:
+            return [tool.definition() for tool in tools]
+        return adapt_tool_definitions(tools, model_info)
 
     def execute(self, name: str, **kwargs: object) -> ToolResult:
         """Execute a named tool or return an error result if it is unknown."""

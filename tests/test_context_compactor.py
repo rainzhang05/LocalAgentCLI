@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from localagentcli.models.backends.base import GenerationResult
@@ -59,3 +60,31 @@ class TestContextCompactor:
 
         assert compacted[0].is_summary is True
         assert compacted[0].content.startswith("Summary of 2 earlier messages:")
+
+    def test_format_transcript_omits_redundant_middle_messages(self):
+        transcript = ContextCompactor._format_transcript(_messages(60, "payload"))
+
+        assert "middle messages omitted during compaction" in transcript
+        assert "[user] payload 0" in transcript
+        assert "[user] payload 59" in transcript
+
+    def test_format_transcript_preserves_tool_schema_fields(self):
+        tool_message = Message(
+            role="tool",
+            content=json.dumps(
+                {
+                    "tool": "file_read",
+                    "status": "success",
+                    "summary": "Read file",
+                    "output": "alpha beta gamma",
+                }
+            ),
+            metadata={"tool_name": "file_read", "status": "success"},
+            timestamp=datetime.now(),
+        )
+
+        transcript = ContextCompactor._format_transcript([tool_message])
+
+        assert "[tool:file_read status=success]" in transcript
+        assert "summary=Read file" in transcript
+        assert "output=alpha beta gamma" in transcript

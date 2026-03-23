@@ -129,6 +129,7 @@ def test_build_messages_merges_transcript_system_content_into_primary_system(tmp
 
     assert messages[0].role == "system"
     assert "workspace-instructions-and-env" in messages[0].content
+    assert "Session instructions and environment context:" in messages[0].content
     assert all(message.role != "system" for message in messages[1:])
 
 
@@ -163,6 +164,28 @@ def test_build_messages_falls_back_to_session_instructions_when_transcript_has_n
     assert "Follow AGENTS.md exactly." in messages[0].content
     assert "Keep edits minimal." in messages[0].content
     assert "<environment_context>" in messages[0].content
+
+
+def test_build_messages_uses_enriched_step_prompt_sections(tmp_path: Path):
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(_LoopModel(), registry, TaskPlanner(_LoopModel()), safety)
+    plan = TaskPlan(task="Do work", steps=[PlanStep(index=1, description="Step one")])
+    step = plan.steps[0]
+
+    messages = loop._build_messages("Do work", plan, step, [], [], None)
+
+    content = messages[0].content
+    assert "Execution rules:" in content
+    assert "Output contract:" in content
+    assert "Task objective:" in content
+    assert "Plan status:" in content
+    assert "Current step focus:" in content
 
 
 def test_run_uses_model_default_max_tokens_when_generation_options_not_provided(

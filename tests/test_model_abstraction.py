@@ -15,6 +15,7 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.model_info import ModelInfo
 
 # ---------------------------------------------------------------------------
 # StreamChunk tests
@@ -161,6 +162,9 @@ class ConcreteBackend(ModelBackend):
             "reasoning": self.supports_reasoning(),
             "streaming": self.supports_streaming(),
         }
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(id="test_model", name="Test Model", capabilities=self.capabilities())
 
 
 class TestModelBackendABC:

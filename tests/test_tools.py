@@ -123,29 +123,78 @@ class TestPatchApplyTool:
         assert result.status == "error"
         assert "more than one location" in result.error
 
+    def test_applies_patch_operations_with_anchors(self, tmp_path: Path):
+        path = tmp_path / "module.py"
+        path.write_text(
+            "class Demo:\n    def value(self):\n        return 1\n",
+            encoding="utf-8",
+        )
+
+        patch = "\n".join(
+            [
+                "@@ class Demo",
+                "@@ def value",
+                "-return 1",
+                "+return 2",
+            ]
+        )
+
+        result = PatchApplyTool(tmp_path).execute("module.py", patch=patch)
+
+        assert result.status == "success"
+        assert "return 2" in path.read_text(encoding="utf-8")
+
+    def test_patch_mode_supports_insert_after_anchor(self, tmp_path: Path):
+        path = tmp_path / "module.py"
+        path.write_text("def build():\n    return 1\n", encoding="utf-8")
+
+        patch = "\n".join(
+            [
+                "@@ def build",
+                "+    value = 2",
+            ]
+        )
+
+        result = PatchApplyTool(tmp_path).execute("module.py", patch=patch)
+
+        assert result.status == "success"
+        assert "value = 2" in path.read_text(encoding="utf-8")
+
 
 class TestShellExecuteTool:
     def test_runs_successfully(self, tmp_path: Path, monkeypatch):
         captured = {}
 
-        def fake_run(*args, **kwargs):
-            captured["args"] = args
-            captured["kwargs"] = kwargs
-            return subprocess.CompletedProcess(args[0], 0, stdout="done\n", stderr="")
+        def fake_stream(command, cwd, timeout):
+            captured["command"] = command
+            captured["cwd"] = cwd
+            captured["timeout"] = timeout
 
-        monkeypatch.setattr("localagentcli.tools.shell_execute.subprocess.run", fake_run)
+            class _Result:
+                return_code = 0
+                output = "done"
+                timed_out = False
+
+            return _Result()
+
+        monkeypatch.setattr("localagentcli.tools.shell_execute._run_streaming_command", fake_stream)
 
         result = ShellExecuteTool(tmp_path).execute("echo done", timeout=10)
 
         assert result.status == "success"
         assert result.output == "done"
-        assert captured["kwargs"]["cwd"] == tmp_path.resolve()
+        assert captured["cwd"] == str(tmp_path.resolve())
 
     def test_timeout_maps_to_timeout_status(self, tmp_path: Path, monkeypatch):
-        def fake_run(*args, **kwargs):
-            raise subprocess.TimeoutExpired(cmd=args[0], timeout=1, output="partial", stderr="oops")
+        def fake_stream(_command, _cwd, _timeout):
+            class _Result:
+                return_code = 124
+                output = "partial\noops"
+                timed_out = True
 
-        monkeypatch.setattr("localagentcli.tools.shell_execute.subprocess.run", fake_run)
+            return _Result()
+
+        monkeypatch.setattr("localagentcli.tools.shell_execute._run_streaming_command", fake_stream)
 
         result = ShellExecuteTool(tmp_path).execute("sleep 1", timeout=1)
 

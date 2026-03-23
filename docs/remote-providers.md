@@ -86,6 +86,7 @@ Prompt caching is now available for remote provider payloads where supported.
     compatible backends:
     - `providers.<name>.options.prompt_cache`
     - `providers.<name>.options.prompt_cache_key`
+    - `providers.<name>.options.reasoning_effort` (`low` / `medium` / `high`)
 
 For OpenAI-compatible services, these fields are forwarded only when explicitly
 configured.

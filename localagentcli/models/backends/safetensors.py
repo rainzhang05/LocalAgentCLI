@@ -13,6 +13,7 @@ from localagentcli.models.backends.base import (
     StreamChunk,
     backend_install_hint,
 )
+from localagentcli.models.model_info import ModelInfo
 
 
 class SafetensorsBackend(ModelBackend):
@@ -181,6 +182,14 @@ class SafetensorsBackend(ModelBackend):
             "platform": "all",
             "device": self._device,
         }
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(
+            id=str(self._model_path) if self._model_path else "safetensors_model",
+            name=self._model_path.name if self._model_path else "Safetensors Model",
+            capabilities=self.capabilities(),
+            selection_state="local_safetensors",
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

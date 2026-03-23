@@ -141,6 +141,31 @@ class TestValidateConfigValue:
                 assert part in current, f"Schema key '{key}' not in defaults"
                 current = current[part]
 
+    def test_feature_key_valid_bool(self):
+        ok, msg = validate_config_value("features.dummy_feature", True)
+        assert ok, msg
+        assert msg == ""
+
+    def test_feature_key_string_coercion(self):
+        for val in ("true", "1", "yes", "on"):
+            ok, msg = validate_config_value("features.dummy_feature", val)
+            assert ok
+            assert msg == ""
+        for val in ("false", "0", "no", "off"):
+            ok, msg = validate_config_value("features.dummy_feature", val)
+            assert ok
+            assert msg == ""
+
+    def test_feature_key_invalid_string(self):
+        ok, msg = validate_config_value("features.dummy_feature", "invalid")
+        assert not ok
+        assert "expects bool" in msg
+
+    def test_feature_key_wrong_type(self):
+        ok, msg = validate_config_value("features.dummy_feature", 123)
+        assert not ok
+        assert "expects bool, got int" in msg
+
 
 class TestCoerceValue:
     """Tests for value coercion."""
@@ -170,3 +195,10 @@ class TestCoerceValue:
     def test_coerce_shell_bool(self):
         assert coerce_value("shell.persistent_details_lane", "true") is True
         assert coerce_value("shell.persistent_details_lane", "false") is False
+
+    def test_coerce_features_bool(self):
+        assert coerce_value("features.dummy_feature", "true") is True
+        assert coerce_value("features.dummy_feature", "1") is True
+        assert coerce_value("features.dummy_feature", "false") is False
+        assert coerce_value("features.dummy_feature", "0") is False
+        assert coerce_value("features.dummy_feature", "bad") == "bad"

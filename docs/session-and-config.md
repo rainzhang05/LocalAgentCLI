@@ -45,6 +45,7 @@ sandbox_mode = "workspace-write"  # "workspace-write" | "read-only" | "danger-fu
 temperature = 0.7
 max_tokens = 4096
 top_p = 1.0
+reasoning_effort = ""          # "" | "low" | "medium" | "high"
 # Additional generation parameters can be added here
 
 [timeouts]
@@ -96,6 +97,7 @@ persistent_details_lane = false     # When true, re-render the recent Details wi
 | `generation.temperature` | float | `0.7` | Sampling temperature |
 | `generation.max_tokens` | int | `4096` | Maximum tokens to generate |
 | `generation.top_p` | float | `1.0` | Nucleus sampling threshold |
+| `generation.reasoning_effort` | string | `""` | Optional reasoning depth hint (`low`, `medium`, `high`) passed through when the active model supports reasoning effort controls |
 | `timeouts.shell_command` | int | `120` | Shell command timeout (seconds) |
 | `timeouts.model_response` | int | `300` | Model response timeout (seconds) |
 | `timeouts.inactivity` | int | `600` | Agent inactivity timeout (seconds) |
@@ -314,7 +316,9 @@ class ContextCompactor:
 2. **Recent messages preserved**: The most recent N messages are never summarized (configurable via `_keep_recent`)
 3. **Summaries are recursive**: If a summary itself becomes old enough, it can be summarized again in a subsequent compaction
 4. **Important steps retained**: In agent mode, tool call results and key observations are flagged as important and are included in summaries with higher detail
-5. **Transparency**: When compaction occurs, the user sees an inline activity log message: `"Context compacted: summarized N messages"`
+5. **Middle-turn reduction before summary**: For very large histories, compaction transcript construction keeps head/tail context and inserts an explicit omitted-middle marker, reducing redundancy while preserving recency
+6. **Tool-schema-aware transcript formatting**: Tool-role messages are rendered with structured fields (`tool`, `status`, `summary`, `error`, output preview) instead of flattening to unstructured plain text, which preserves agent-observation signal
+7. **Transparency**: When compaction occurs, the user sees an inline activity log message: `"Context compacted: summarized N messages"`
 
 **Regression coverage:** Pytest covers compaction on chat input and on agent-mode dispatch when history exceeds the configured threshold, including direct-answer and multi-step `handle_task` paths after compaction (`tests/test_compaction_integration.py`).
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from localagentcli.agents.events import TaskComplete
 from localagentcli.agents.loop import AgentLoop
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
-from localagentcli.models.backends.base import GenerationResult
+from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.models.model_info import ModelInfo
 from localagentcli.safety.approval import ApprovalManager
 from localagentcli.safety.boundary import WorkspaceBoundary
@@ -107,6 +107,62 @@ def test_build_messages_includes_runtime_block_when_session_active(tmp_path: Pat
     assert AGENT_TASK_RUNTIME_HEADING in messages[0].content
     assert "phase: executing" in messages[0].content
     assert "summary: Running step." in messages[0].content
+
+
+def test_build_messages_merges_transcript_system_content_into_primary_system(tmp_path: Path):
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(_LoopModel(), registry, TaskPlanner(_LoopModel()), safety)
+    plan = TaskPlan(task="Do work", steps=[PlanStep(index=1, description="Step one")])
+    step = plan.steps[0]
+    transcript = [
+        ModelMessage(role="system", content="workspace-instructions-and-env"),
+        ModelMessage(role="user", content="prior user turn"),
+    ]
+
+    messages = loop._build_messages("Do work", plan, step, transcript, [], None)
+
+    assert messages[0].role == "system"
+    assert "workspace-instructions-and-env" in messages[0].content
+    assert all(message.role != "system" for message in messages[1:])
+
+
+def test_build_messages_falls_back_to_session_instructions_when_transcript_has_no_system(
+    tmp_path: Path,
+):
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(_LoopModel(), registry, TaskPlanner(_LoopModel()), safety)
+    plan = TaskPlan(task="Do work", steps=[PlanStep(index=1, description="Step one")])
+    step = plan.steps[0]
+    session = _session_agent(
+        tmp_path,
+        metadata={"workspace_instruction": "Follow AGENTS.md exactly."},
+    )
+    session.pinned_instructions.append("Keep edits minimal.")
+
+    messages = loop._build_messages(
+        "Do work",
+        plan,
+        step,
+        [ModelMessage(role="user", content="prior user turn")],
+        [],
+        session,
+    )
+
+    assert "Follow AGENTS.md exactly." in messages[0].content
+    assert "Keep edits minimal." in messages[0].content
+    assert "<environment_context>" in messages[0].content
 
 
 def test_run_uses_model_default_max_tokens_when_generation_options_not_provided(

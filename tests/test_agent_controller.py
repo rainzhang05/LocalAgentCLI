@@ -17,6 +17,7 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.models.backends.base import GenerationResult, StreamChunk
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.session.instructions import build_conversation_model_messages
 from localagentcli.session.state import Session
 from localagentcli.tools import create_default_tool_registry
@@ -38,6 +39,13 @@ class FakeAgentModel:
 
     def supports_tools(self) -> bool:
         return True
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(
+            id="fake-model",
+            name="Fake Model",
+            capabilities={"tool_use": True, "reasoning": False, "streaming": False},
+        )
 
 
 def _make_session(workspace: Path) -> Session:

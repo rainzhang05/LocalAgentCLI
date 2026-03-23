@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from localagentcli.commands.mode import register as register_mode
 from localagentcli.commands.router import CommandRouter
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.models.registry import ModelEntry, ModelRegistry
-from localagentcli.providers.base import RemoteModelInfo
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderEntry, ProviderRegistry
 
@@ -91,7 +91,7 @@ class TestModeCommands:
                 "set_active_model": staticmethod(lambda _model: None),
                 "list_models": staticmethod(
                     lambda: [
-                        RemoteModelInfo(
+                        ModelInfo(
                             id="gpt-4o",
                             name="GPT-4o",
                             capabilities={"tool_use": True, "reasoning": False, "streaming": True},

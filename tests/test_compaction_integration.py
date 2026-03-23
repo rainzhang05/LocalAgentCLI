@@ -16,6 +16,7 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.models.backends.base import GenerationResult, StreamChunk
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.session.state import Message, Session
 from localagentcli.tools import create_default_tool_registry
 
@@ -36,6 +37,13 @@ class _FakeMultiStepModel:
 
     def supports_tools(self) -> bool:
         return True
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(
+            id="fake-multi",
+            name="Fake Multi",
+            capabilities={"tool_use": True, "reasoning": False, "streaming": False},
+        )
 
 
 def _session(workspace: Path, history: list[Message]) -> Session:
@@ -69,6 +77,13 @@ class _CompactionDirectAnswerModel:
 
     def supports_tools(self) -> bool:
         return False
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(
+            id="fake-direct",
+            name="Fake Direct",
+            capabilities={"tool_use": False, "reasoning": False, "streaming": True},
+        )
 
 
 def test_agent_dispatch_compacts_large_history_before_direct_answer(tmp_path: Path):

@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from localagentcli.agents.events import TaskComplete
+from localagentcli.agents.events import TaskComplete, ToolCallResult
 from localagentcli.agents.loop import AgentLoop
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
@@ -46,6 +46,27 @@ class _LoopRunModel:
 
     def model_info(self) -> ModelInfo:
         return ModelInfo(id="loop-run", default_max_tokens=self.default_max_tokens)
+
+
+class _LoopScriptedModel:
+    def __init__(self, responses: list[GenerationResult], default_max_tokens: int = 4096):
+        self._responses = list(responses)
+        self.default_max_tokens = default_max_tokens
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, messages: list, **kwargs):
+        self.calls.append(dict(kwargs))
+        return self._responses.pop(0)
+
+    def stream_generate(self, messages: list, **kwargs):
+        raise AssertionError("not used")
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(
+            id="loop-scripted",
+            default_max_tokens=self.default_max_tokens,
+            capabilities={"tool_use": True, "reasoning": False},
+        )
 
 
 def _session_agent(tmp_path: Path, metadata: dict) -> Session:
@@ -234,3 +255,68 @@ def test_tool_payload_uses_model_aware_truncation(tmp_path: Path):
     assert payload["output_original_chars"] == 8000
     assert payload["output_retained_chars"] < payload["output_original_chars"]
     assert "chars truncated" in payload["output"]
+
+
+def test_loop_adapts_tool_definitions_for_small_models(tmp_path: Path):
+    model = _LoopRunModel(default_max_tokens=1024)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(model, registry, TaskPlanner(model), safety)
+    plan = TaskPlan(task="Inspect files", steps=[PlanStep(index=1, description="Inspect files")])
+
+    events = list(loop.run("Inspect files", [], plan=plan))
+
+    assert isinstance(events[-1], TaskComplete)
+    tool_names = [definition["name"] for definition in model.calls[0]["tools"]]
+    assert "file_read" in tool_names
+    assert "patch_apply" not in tool_names
+
+
+def test_unified_turn_loop_allows_many_tool_rounds_before_final_output(tmp_path: Path):
+    (tmp_path / "notes.txt").write_text("alpha\n", encoding="utf-8")
+    responses = [
+        GenerationResult(
+            text="",
+            tool_calls=[
+                {
+                    "id": f"call_{index}",
+                    "type": "function",
+                    "function": {
+                        "name": "file_read",
+                        "arguments": '{"path":"notes.txt"}',
+                    },
+                }
+            ],
+        )
+        for index in range(7)
+    ]
+    responses.append(GenerationResult(text="All checks complete."))
+
+    model = _LoopScriptedModel(responses)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        max_consecutive_errors=2,
+        max_step_rounds=16,
+        unified_turn_loop=True,
+    )
+    plan = TaskPlan(task="Inspect", steps=[PlanStep(index=1, description="Inspect")])
+
+    events = list(loop.run("Inspect", [], plan=plan))
+
+    assert isinstance(events[-1], TaskComplete)
+    assert sum(isinstance(event, ToolCallResult) for event in events) == 7

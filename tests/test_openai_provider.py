@@ -239,6 +239,14 @@ class TestOpenAICapabilities:
 
         assert provider.supports_reasoning() is True
 
+    def test_model_info_exposes_reasoning_levels_for_reasoning_models(self):
+        provider = _make_provider(default_model="gpt-5")
+
+        info = provider.model_info()
+
+        assert info.capabilities["reasoning"] is True
+        assert info.supported_reasoning_levels == ["low", "medium", "high"]
+
 
 # ---------------------------------------------------------------------------
 # _format_messages() tests
@@ -327,6 +335,24 @@ class TestOpenAIBuildRequestBody:
 
         assert body["prompt_cache"] is True
         assert body["prompt_cache_key"] == "new-key"
+
+    def test_reasoning_effort_is_passed_for_reasoning_models(self):
+        provider = _make_provider(default_model="gpt-5")
+        body = provider._build_request_body(
+            [ModelMessage(role="user", content="Hi")],
+            reasoning_effort="high",
+        )
+
+        assert body["reasoning_effort"] == "high"
+
+    def test_reasoning_effort_is_not_passed_for_non_reasoning_models(self):
+        provider = _make_provider(default_model="gpt-4o")
+        body = provider._build_request_body(
+            [ModelMessage(role="user", content="Hi")],
+            reasoning_effort="high",
+        )
+
+        assert "reasoning_effort" not in body
 
 
 # ---------------------------------------------------------------------------

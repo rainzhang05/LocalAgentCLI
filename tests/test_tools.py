@@ -201,6 +201,33 @@ class TestShellExecuteTool:
         assert result.status == "timeout"
         assert "partial" in result.output
 
+    def test_run_streaming_command_uses_fallback_on_windows(self, monkeypatch):
+        from localagentcli.tools import shell_execute as module
+
+        class _Result:
+            return_code = 0
+            output = "ok"
+            timed_out = False
+
+        monkeypatch.setattr(module.os, "name", "nt", raising=False)
+        monkeypatch.setattr(
+            module,
+            "_run_streaming_command_fallback",
+            lambda command, cwd, timeout: _Result(),
+        )
+        called = {"posix": False}
+
+        def _posix(*_args, **_kwargs):
+            called["posix"] = True
+            return _Result()
+
+        monkeypatch.setattr(module, "_run_streaming_command_posix", _posix)
+
+        result = module._run_streaming_command("echo ok", ".", 10)
+
+        assert result.output == "ok"
+        assert called["posix"] is False
+
 
 class TestTestExecuteTool:
     def test_detects_pytest_and_builds_command(self, tmp_path: Path, monkeypatch):

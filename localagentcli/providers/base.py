@@ -7,7 +7,7 @@ import time
 from abc import abstractmethod
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar, cast
 
@@ -19,6 +19,7 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.model_info import ModelInfo
 
 _ResponseT = TypeVar("_ResponseT", bound=httpx.Response)
 _CONNECTION_POLICIES = {"reuse", "close_after_turn"}
@@ -44,17 +45,6 @@ class ConnectionTestResult:
     success: bool
     message: str
     latency_ms: float = 0.0
-
-
-@dataclass
-class RemoteModelInfo:
-    """Metadata about a model available from a remote provider."""
-
-    id: str
-    name: str
-    capabilities: dict = field(default_factory=dict)
-    capability_provenance: dict = field(default_factory=dict)
-    selection_state: str = "api_discovered"
 
 
 class RemoteProvider(ModelBackend):
@@ -204,6 +194,15 @@ class RemoteProvider(ModelBackend):
     # ModelBackend no-ops (remote providers have no local model)
     # ------------------------------------------------------------------
 
+    def model_info(self) -> ModelInfo:
+        """Return a generalized ModelInfo for the active remote model."""
+        return ModelInfo(
+            id=self.active_model,
+            name=self.active_model,
+            selection_state="active_remote_model",
+            capabilities={},
+        )
+
     def load(self, model_path: Path, **kwargs: object) -> None:
         """No-op for remote providers."""
 
@@ -262,7 +261,7 @@ class RemoteProvider(ModelBackend):
         ...
 
     @abstractmethod
-    def list_models(self) -> list[RemoteModelInfo]:
+    def list_models(self) -> list[ModelInfo]:
         """List available models from this provider."""
         ...
 
@@ -272,7 +271,7 @@ class RemoteProvider(ModelBackend):
         ...
 
     @abstractmethod
-    async def alist_models(self) -> list[RemoteModelInfo]:
+    async def alist_models(self) -> list[ModelInfo]:
         """Async model listing."""
         ...
 

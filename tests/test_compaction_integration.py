@@ -124,9 +124,6 @@ def test_agent_handle_task_compacts_large_history_before_multi_step(tmp_path: Pa
             # Compaction summarization runs before triage/planning.
             GenerationResult(text="Compacted history summary"),
             GenerationResult(
-                text=('{"steps":[{"description":"Read notes"},{"description":"Report findings"}]}')
-            ),
-            GenerationResult(
                 text="",
                 tool_calls=[
                     {
@@ -139,8 +136,7 @@ def test_agent_handle_task_compacts_large_history_before_multi_step(tmp_path: Pa
                     }
                 ],
             ),
-            GenerationResult(text="Read notes successfully."),
-            GenerationResult(text="Reported the contents to the user."),
+            GenerationResult(text="Read notes and reported findings."),
         ]
     )
     controller = AgentController(
@@ -158,7 +154,7 @@ def test_agent_handle_task_compacts_large_history_before_multi_step(tmp_path: Pa
     assert isinstance(events[0], TaskRouted)
     assert any(isinstance(event, PhaseChanged) and event.phase == "planning" for event in events)
     assert any(isinstance(event, PlanGenerated) for event in events)
-    assert sum(isinstance(event, StepStarted) for event in events) == 2
+    assert sum(isinstance(event, StepStarted) for event in events) == 1
     assert any(
         isinstance(event, ToolCallRequested) and not event.requires_approval for event in events
     )

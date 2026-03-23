@@ -469,7 +469,23 @@ class OpenAIProvider(RemoteProvider):
             ]
         if "tool_choice" in kwargs:
             body["tool_choice"] = kwargs["tool_choice"]
+        prompt_cache = kwargs.get("prompt_cache", self._options.get("prompt_cache"))
+        if prompt_cache is not None:
+            body["prompt_cache"] = self._coerce_prompt_cache(prompt_cache)
+        prompt_cache_key = kwargs.get("prompt_cache_key", self._options.get("prompt_cache_key"))
+        if isinstance(prompt_cache_key, str) and prompt_cache_key.strip():
+            body["prompt_cache_key"] = prompt_cache_key.strip()
         return body
+
+    @staticmethod
+    def _coerce_prompt_cache(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if isinstance(value, int | float):
+            return bool(value)
+        return False
 
     @staticmethod
     def _format_messages(messages: list[ModelMessage]) -> list[dict]:

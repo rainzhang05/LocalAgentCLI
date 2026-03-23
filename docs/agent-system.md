@@ -100,6 +100,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
 6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, approval mode, and rollback availability are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
+7. **Model-aware generation profiles**: Triage, planning, and step execution each use phase-specific generation profiles derived from shared config and `ModelInfo.default_max_tokens`; this avoids hardcoded loop token limits and keeps controller and loop behavior aligned.
 
 ### Runtime Phase Contract
 

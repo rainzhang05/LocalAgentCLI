@@ -127,12 +127,8 @@ class AgentLoop:
         )
 
         if plan is None:
-            yield PhaseChanged(phase="planning", summary="Planning task.")
-            plan = self._planner.create_plan(
-                task,
-                context,
-                generation_options=planning_options,
-            )
+            yield PhaseChanged(phase="planning", summary="Prepared adaptive execution plan.")
+            plan = self._bootstrap_plan(task)
         else:
             yield PhaseChanged(phase="planning", summary="Prepared execution plan.")
         plan.status = "executing"
@@ -250,12 +246,8 @@ class AgentLoop:
         )
 
         if plan is None:
-            yield PhaseChanged(phase="planning", summary="Planning task.")
-            plan = await self._planner.acreate_plan(
-                task,
-                context,
-                generation_options=planning_options,
-            )
+            yield PhaseChanged(phase="planning", summary="Prepared adaptive execution plan.")
+            plan = self._bootstrap_plan(task)
         else:
             yield PhaseChanged(phase="planning", summary="Prepared execution plan.")
         plan.status = "executing"
@@ -1052,6 +1044,14 @@ class AgentLoop:
             ],
         ]
         revised._renumber()
+
+    def _bootstrap_plan(self, task: str) -> TaskPlan:
+        """Create an initial execution plan without a separate model planning turn."""
+        return TaskPlan(
+            task=task,
+            steps=[PlanStep(index=1, description=task)],
+            status="planning",
+        )
 
     def _resolve_model_info(self) -> ModelInfo:
         """Best-effort model info lookup for standalone loop usage in tests and adapters."""

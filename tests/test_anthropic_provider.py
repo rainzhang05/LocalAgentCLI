@@ -373,6 +373,31 @@ class TestAnthropicBuildRequestBody:
         assert body["tools"][0]["input_schema"] == {"type": "object", "properties": {}}
         assert body["tool_choice"] == "auto"
 
+    def test_prompt_cache_wraps_system_text_when_enabled(self):
+        provider = _make_provider(options={"prompt_cache": True})
+        body = provider._build_request_body(
+            [
+                ModelMessage(role="system", content="You are helpful."),
+                ModelMessage(role="user", content="Hi"),
+            ]
+        )
+
+        assert isinstance(body["system"], list)
+        assert body["system"][0]["type"] == "text"
+        assert body["system"][0]["text"] == "You are helpful."
+        assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_prompt_cache_type_can_be_overridden(self):
+        provider = _make_provider(options={"prompt_cache": True, "prompt_cache_type": "user"})
+        body = provider._build_request_body(
+            [
+                ModelMessage(role="system", content="System layer."),
+                ModelMessage(role="user", content="Hi"),
+            ]
+        )
+
+        assert body["system"][0]["cache_control"] == {"type": "user"}
+
 
 # ---------------------------------------------------------------------------
 # _parse_sse_event() tests

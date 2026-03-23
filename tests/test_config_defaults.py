@@ -75,6 +75,15 @@ class TestValidateConfigValue:
         ok, msg = validate_config_value("generation.max_tokens", "8192")
         assert ok
 
+    def test_reasoning_effort_valid_values(self):
+        for value in ("", "low", "medium", "high"):
+            ok, msg = validate_config_value("generation.reasoning_effort", value)
+            assert ok, msg
+
+    def test_reasoning_effort_invalid_value(self):
+        ok, msg = validate_config_value("generation.reasoning_effort", "extreme")
+        assert not ok
+
     def test_bad_string_coercion(self):
         ok, msg = validate_config_value("generation.temperature", "notanumber")
         assert not ok
@@ -175,6 +184,9 @@ class TestCoerceValue:
 
     def test_coerce_string_to_int(self):
         assert coerce_value("generation.max_tokens", "4096") == 4096
+
+    def test_reasoning_effort_remains_string(self):
+        assert coerce_value("generation.reasoning_effort", "medium") == "medium"
 
     def test_no_coercion_for_string_type(self):
         assert coerce_value("general.default_mode", "chat") == "chat"

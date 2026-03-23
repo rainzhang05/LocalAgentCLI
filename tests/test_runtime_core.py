@@ -69,6 +69,16 @@ class TestSessionExecutionRuntime:
         assert isinstance(opts["request_timeout"], float)
         assert opts["request_timeout"] > 0
 
+    def test_build_generation_options_includes_reasoning_effort_when_configured(
+        self, config, storage
+    ):
+        config.set("generation.reasoning_effort", "high")
+        runtime, _emitted = _make_runtime(config, storage)
+
+        opts = runtime.build_generation_options()
+
+        assert opts["reasoning_effort"] == "high"
+
     async def test_run_chat_turn_uses_shared_generation_options(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)
         backend = FakeBackend()

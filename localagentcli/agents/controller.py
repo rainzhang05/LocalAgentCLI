@@ -700,25 +700,28 @@ class AgentController:
         """Derive an internal generation profile for a specific agent phase."""
         base = dict(self._generation_config)
         temperature = self._coerce_float(base.get("temperature"), 0.7)
-        max_tokens = self._coerce_int(base.get("max_tokens"), 4096)
         top_p = self._coerce_float(base.get("top_p"), 1.0)
+
+        # Rely on the model's native default maximum tokens, or fallback to the provided config
+        default_tokens = self._model.model_info().default_max_tokens
+        max_tokens = self._coerce_int(base.get("max_tokens"), default_tokens)
 
         if phase == "triage":
             return {
                 "temperature": min(temperature, 0.1),
-                "max_tokens": min(max_tokens, 120),
+                "max_tokens": min(max_tokens, 512),
                 "top_p": top_p,
             }
         if phase == "planning":
             return {
                 "temperature": min(temperature, 0.1),
-                "max_tokens": min(max_tokens, 600),
+                "max_tokens": min(max_tokens, 2048),
                 "top_p": top_p,
             }
         if phase == "step":
             return {
                 "temperature": min(temperature, 0.2),
-                "max_tokens": min(max_tokens, 1600),
+                "max_tokens": max_tokens,
                 "top_p": top_p,
             }
         return {

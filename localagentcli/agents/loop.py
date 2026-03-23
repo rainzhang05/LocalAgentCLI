@@ -230,7 +230,8 @@ class AgentLoop:
         session: Session | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Async execute loop (non-blocking model I/O, tools via asyncio.to_thread)."""
-        options: dict[str, object] = {"temperature": 0.1, "max_tokens": 1200}
+        # Use provided generation options or basic defaults
+        options: dict[str, object] = {"temperature": 0.1}
         if generation_options:
             options.update(generation_options)
 

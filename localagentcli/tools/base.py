@@ -171,6 +171,16 @@ class Tool(ABC):
         """Whether the tool has no side effects."""
         return False
 
+    @property
+    def required_model_capabilities(self) -> tuple[str, ...]:
+        """Model capability keys required before exposing this tool to the model."""
+        return ()
+
+    @property
+    def minimum_model_default_max_tokens(self) -> int:
+        """Minimum model default token budget required to expose this tool."""
+        return 0
+
     def definition(self) -> dict:
         """Return the model-facing tool definition."""
         if not self._parameters_schema_validated:

@@ -114,7 +114,7 @@ After implementing a component:
 | `[x]` | `directory_list` tool | 2026-03-18 |
 | `[x]` | `file_write` tool | 2026-03-18 |
 | `[x]` | `patch_apply` tool | 2026-03-23 — supports diff-style patch operations with optional `@@` anchors, context-aware matching, and indentation-tolerant replacement while keeping legacy exact single-match `old_text/new_text` mode |
-| `[x]` | `shell_execute` tool | 2026-03-23 — PTY-backed incremental capture on POSIX with bounded output buffering and timeout-safe termination; cross-platform fallback retained |
+| `[x]` | `shell_execute` tool | 2026-03-23 — PTY-backed incremental capture on POSIX with bounded output buffering and timeout-safe termination; cross-platform fallback retained; POSIX-only modules are imported lazily so Windows test/CI import paths do not require `termios` |
 | `[x]` | `test_execute` tool | 2026-03-18 |
 | `[x]` | `git_status` tool | 2026-03-18 |
 | `[x]` | `git_diff` tool | 2026-03-18 |

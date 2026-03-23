@@ -1,4 +1,4 @@
-"""Tests for RemoteProvider ABC, ConnectionTestResult, and RemoteModelInfo."""
+"""Tests for RemoteProvider ABC, ConnectionTestResult, and ModelInfo."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.providers.base import (
     ConnectionTestResult,
-    RemoteModelInfo,
     RemoteProvider,
     effective_model_request_timeout,
 )
@@ -54,8 +54,8 @@ class StubRemoteProvider(RemoteProvider):
     def test_connection(self) -> ConnectionTestResult:
         return ConnectionTestResult(success=True, message="OK")
 
-    def list_models(self) -> list[RemoteModelInfo]:
-        return [RemoteModelInfo(id="test-model", name="Test Model")]
+    def list_models(self) -> list[ModelInfo]:
+        return [ModelInfo(id="test-model", name="Test Model")]
 
     async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         return GenerationResult(text="stub response")
@@ -69,8 +69,8 @@ class StubRemoteProvider(RemoteProvider):
     async def atest_connection(self) -> ConnectionTestResult:
         return ConnectionTestResult(success=True, message="OK")
 
-    async def alist_models(self) -> list[RemoteModelInfo]:
-        return [RemoteModelInfo(id="test-model", name="Test Model")]
+    async def alist_models(self) -> list[ModelInfo]:
+        return [ModelInfo(id="test-model", name="Test Model")]
 
 
 # ---------------------------------------------------------------------------
@@ -108,25 +108,25 @@ class TestConnectionTestResult:
 
 
 # ---------------------------------------------------------------------------
-# RemoteModelInfo tests
+# ModelInfo tests
 # ---------------------------------------------------------------------------
 
 
-class TestRemoteModelInfo:
+class TestModelInfo:
     def test_basic(self):
-        m = RemoteModelInfo(id="gpt-4o", name="GPT-4o")
+        m = ModelInfo(id="gpt-4o", name="GPT-4o")
         assert m.id == "gpt-4o"
         assert m.name == "GPT-4o"
         assert m.capabilities == {}
 
     def test_with_capabilities(self):
         caps = {"tool_use": True, "reasoning": False, "streaming": True}
-        m = RemoteModelInfo(id="gpt-4o", name="GPT-4o", capabilities=caps)
+        m = ModelInfo(id="gpt-4o", name="GPT-4o", capabilities=caps)
         assert m.capabilities == caps
 
     def test_capabilities_independent(self):
-        m1 = RemoteModelInfo(id="a", name="a")
-        m2 = RemoteModelInfo(id="b", name="b")
+        m1 = ModelInfo(id="a", name="a")
+        m2 = ModelInfo(id="b", name="b")
         m1.capabilities["x"] = True
         assert "x" not in m2.capabilities
 

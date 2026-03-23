@@ -470,8 +470,19 @@ class AnthropicProvider(RemoteProvider):
             "stream": stream,
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
+        prompt_cache_enabled = self._prompt_cache_enabled(kwargs)
+        prompt_cache_type = self._prompt_cache_type(kwargs)
         if system_text:
-            body["system"] = system_text
+            if prompt_cache_enabled:
+                body["system"] = [
+                    {
+                        "type": "text",
+                        "text": system_text,
+                        "cache_control": {"type": prompt_cache_type},
+                    }
+                ]
+            else:
+                body["system"] = system_text
         if "temperature" in kwargs:
             body["temperature"] = kwargs["temperature"]
         tool_definitions = kwargs.get("tools")
@@ -488,6 +499,23 @@ class AnthropicProvider(RemoteProvider):
         if "tool_choice" in kwargs:
             body["tool_choice"] = kwargs["tool_choice"]
         return body
+
+    def _prompt_cache_enabled(self, kwargs: dict[str, object]) -> bool:
+        value = kwargs.get("prompt_cache", self._options.get("prompt_cache", False))
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            return lowered in {"1", "true", "yes", "on"}
+        if isinstance(value, int | float):
+            return bool(value)
+        return False
+
+    def _prompt_cache_type(self, kwargs: dict[str, object]) -> str:
+        value = kwargs.get("prompt_cache_type", self._options.get("prompt_cache_type"))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return "ephemeral"
 
     @staticmethod
     def _format_messages(

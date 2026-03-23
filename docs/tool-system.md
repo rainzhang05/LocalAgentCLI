@@ -30,6 +30,16 @@ Every tool’s `parameters_schema` must follow a small JSON Schema subset checke
 
 When the model returns **two or more** tool calls in one assistant turn, `AgentLoop` may run them concurrently **only if every call** in that batch is read-only (`Tool.is_read_only` is true), passes safety checks without requiring approval, and is not blocked. In that case the loop emits all `ToolCallRequested` events first (in model call order), then executes tools on a bounded thread pool, then emits `ToolCallResult` events and `role="tool"` messages in the same order. If any call in the batch is not eligible (for example a write tool, an unknown tool, a parse error, or a call that needs approval including high-risk reads), the **entire** batch is handled sequentially with the usual interleaved request, execute, and result flow.
 
+### Model-aware tool adaptation
+
+Before each model round, tool definitions are adapted using active `ModelInfo`:
+
+- if `capabilities.tool_use` is explicitly `False`, no tools are exposed
+- tools may declare `required_model_capabilities` (for example `("reasoning",)`) and are hidden when missing
+- tools may declare `minimum_model_default_max_tokens` and are hidden for small-budget models
+
+This adaptation is applied by `ToolRegistry.get_tool_definitions(model_info=...)` and `ToolRouter.get_tool_definitions(model_info=...)`.
+
 ---
 
 ## Core Tools
@@ -67,8 +77,14 @@ When the model returns **two or more** tool calls in one assistant turn, `AgentL
 
 #### `patch_apply`
 - **Purpose**: Apply a targeted edit to a file
-- **Arguments**: `path` (str, required), `old_text` (str, required), `new_text` (str, required)
-- **Behavior**: Finds `old_text` in the file and replaces it with `new_text`. The `old_text` must match exactly one location in the file. If it matches zero or more than one location, the tool returns an error.
+- **Arguments**:
+    - `path` (str, required)
+    - `patch` (str, optional) — diff-style operations using `@@` anchors and `-`/`+` lines
+    - `old_text`/`new_text` (str, optional compatibility mode)
+- **Behavior**:
+    - Patch mode parses one or more operations, resolves optional anchors, applies context-aware replacement, and tolerates indentation-only mismatches by reindenting replacement lines against the matched region.
+    - Legacy mode keeps exact single-match replacement semantics for `old_text`/`new_text`.
+    - Ambiguous matches still error explicitly.
 - **Safety**: Requires approval (modifies filesystem)
 - **Pre-action**: Safety Layer creates a backup before patching
 - **Preferred over `file_write`**: For edits to existing files, `patch_apply` is preferred because it shows exactly what changes and is less error-prone than full overwrites.
@@ -84,7 +100,7 @@ The system uses a hybrid approach:
 #### `shell_execute`
 - **Purpose**: Run a shell command
 - **Arguments**: `command` (str, required), `timeout` (int, optional — seconds, default from config), `working_dir` (str, optional — defaults to workspace root)
-- **Behavior**: Executes the command in a subprocess within the workspace. Captures stdout, stderr, and exit code. Streams output in real time via the activity log.
+- **Behavior**: Executes the command in a subprocess within the workspace. On POSIX, command I/O is captured via PTY with incremental polling and bounded output buffering; on non-POSIX hosts, a subprocess fallback is used. Returns combined output and exit code in a structured `ToolResult`.
 - **Safety**: Requires approval (executes arbitrary commands)
 - **Workspace constraint**: The command runs with `working_dir` set to the workspace root (or specified directory). The Safety Layer may reject commands that attempt to escape the workspace.
 - **Timeout**: Commands are killed if they exceed the timeout. The agent is notified of the timeout.
@@ -178,11 +194,13 @@ class ToolRegistry:
         """Return all registered tools."""
         return list(self._tools.values())
 
-    def get_tool_definitions(self) -> list[dict]:
-        """Return tool definitions in the format expected by the model's function calling API.
-        Each definition includes name, description, and parameter schema.
+    def get_tool_definitions(self, model_info: ModelInfo | None = None) -> list[dict]:
+        """Return model-facing tool definitions.
+
+        When model_info is provided, definitions are adapted for the active
+        model (capability gates + minimum token budget for advanced tools).
         """
-        return [tool.definition() for tool in self._tools.values()]
+        ...
 ```
 
 ### Tool ABC
@@ -221,6 +239,16 @@ class Tool(ABC):
     def is_read_only(self) -> bool:
         """Whether this tool only reads data (no side effects). Default: False."""
         return False
+
+    @property
+    def required_model_capabilities(self) -> tuple[str, ...]:
+        """Capability keys required before exposing this tool to the model."""
+        return ()
+
+    @property
+    def minimum_model_default_max_tokens(self) -> int:
+        """Minimum default model token budget required to expose this tool."""
+        return 0
 
     def definition(self) -> dict:
         """Return the tool definition for the model's function calling API."""

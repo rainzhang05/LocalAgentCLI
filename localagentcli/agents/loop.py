@@ -53,13 +53,20 @@ class _AsyncStepDone:
     errors: int
 
 
-_STEP_PROMPT = (
-    "You are LocalAgentCLI operating in agent mode. "
-    "Work on the current step using the available tools when needed. "
-    "Do not guess file contents or command output. "
-    "Once the current step is complete, respond with a concise plain-text summary of the result. "
-    "If a tool call is denied or fails, adjust and continue if possible."
-)
+_STEP_PROMPT = """You are LocalAgentCLI operating in agent mode.
+
+Execution rules:
+- Work on the current step only; do not skip ahead.
+- Use available tools whenever inspection, edits, or verification is needed.
+- Never guess file contents, command output, or test outcomes.
+- Prefer minimal, reversible, repository-consistent changes.
+- If a tool call is denied, fails, or times out, adapt and continue when possible.
+
+Output contract:
+- If more execution is needed, continue by using tools.
+- When the current step is complete, return a concise plain-text summary of
+    the result (no markdown fences, no JSON object wrapper).
+"""
 
 
 class AgentLoop:
@@ -937,10 +944,10 @@ class AgentLoop:
             for plan_step in plan.steps
         )
         content = (
-            f"{_STEP_PROMPT}\n\n"
-            f"Task:\n{task}\n\n"
-            f"Plan:\n{plan_text}\n\n"
-            f"Current step:\n{step.index}. {step.description}"
+            f"{_STEP_PROMPT}\n"
+            f"Task objective:\n{task}\n\n"
+            f"Plan status:\n{plan_text}\n\n"
+            f"Current step focus:\n{step.index}. {step.description}"
         )
         if session is not None:
             runtime = format_agent_task_runtime_section(session)
@@ -968,7 +975,11 @@ class AgentLoop:
             ):
                 transcript_system.append(env_xml)
 
-        system_parts = [content, *transcript_system]
+        system_parts = [content]
+        if transcript_system:
+            system_parts.append(
+                "Session instructions and environment context:\n" + "\n\n".join(transcript_system)
+            )
         system = ModelMessage(role="system", content="\n\n".join(system_parts))
         return [system, *transcript_messages, *conversation]
 

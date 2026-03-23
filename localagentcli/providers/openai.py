@@ -17,13 +17,13 @@ from localagentcli.models.backends.base import (
     ModelMessage,
     StreamChunk,
 )
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.models.readiness import (
     inferred_remote_capability_provenance,
     legacy_fallback_capability_provenance,
 )
 from localagentcli.providers.base import (
     ConnectionTestResult,
-    RemoteModelInfo,
     RemoteProvider,
 )
 
@@ -207,20 +207,20 @@ class OpenAIProvider(RemoteProvider):
                 latency_ms=latency,
             )
 
-    def list_models(self) -> list[RemoteModelInfo]:
+    def list_models(self) -> list[ModelInfo]:
         """GET /models and parse the response."""
         try:
             response = self._request_with_retries(lambda: self._client.get("/models"))
             response.raise_for_status()
             data = response.json()
-            models: list[RemoteModelInfo] = []
+            models: list[ModelInfo] = []
             for model_data in data.get("data", []):
                 model_id = model_data.get("id", "")
                 if not model_id:
                     continue
                 capabilities = self._capabilities_for_model(model_id)
                 models.append(
-                    RemoteModelInfo(
+                    ModelInfo(
                         id=model_id,
                         name=model_data.get("id", ""),
                         capabilities=capabilities,
@@ -238,7 +238,7 @@ class OpenAIProvider(RemoteProvider):
         if self._default_model:
             capabilities = self._capabilities_for_model(self._default_model)
             return [
-                RemoteModelInfo(
+                ModelInfo(
                     id=self._default_model,
                     name=self._default_model,
                     capabilities=capabilities,
@@ -380,7 +380,7 @@ class OpenAIProvider(RemoteProvider):
                 latency_ms=latency,
             )
 
-    async def alist_models(self) -> list[RemoteModelInfo]:
+    async def alist_models(self) -> list[ModelInfo]:
         """GET /models (async)."""
         try:
             timeout = self._sync_timeout()
@@ -388,14 +388,14 @@ class OpenAIProvider(RemoteProvider):
             response = await self._arequest_with_retries(lambda: client.get("/models"))
             response.raise_for_status()
             data = response.json()
-            models: list[RemoteModelInfo] = []
+            models: list[ModelInfo] = []
             for model_data in data.get("data", []):
                 model_id = model_data.get("id", "")
                 if not model_id:
                     continue
                 capabilities = self._capabilities_for_model(model_id)
                 models.append(
-                    RemoteModelInfo(
+                    ModelInfo(
                         id=model_id,
                         name=model_data.get("id", ""),
                         capabilities=capabilities,
@@ -413,7 +413,7 @@ class OpenAIProvider(RemoteProvider):
         if self._default_model:
             capabilities = self._capabilities_for_model(self._default_model)
             return [
-                RemoteModelInfo(
+                ModelInfo(
                     id=self._default_model,
                     name=self._default_model,
                     capabilities=capabilities,

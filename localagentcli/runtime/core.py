@@ -280,6 +280,13 @@ class SessionExecutionRuntime:
             or 4096,
             "top_p": self._services.session_manager.get_effective_config("generation.top_p") or 1.0,
         }
+        reasoning_effort = self._services.session_manager.get_effective_config(
+            "generation.reasoning_effort"
+        )
+        if isinstance(reasoning_effort, str):
+            normalized = reasoning_effort.strip().lower()
+            if normalized in {"low", "medium", "high"}:
+                options["reasoning_effort"] = normalized
         session = self._services.session_manager.current
         if session.provider and session.model:
             options["model"] = session.model

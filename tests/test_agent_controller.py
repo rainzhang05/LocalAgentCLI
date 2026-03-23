@@ -96,11 +96,6 @@ class TestAgentController:
         model = FakeAgentModel(
             [
                 GenerationResult(
-                    text=(
-                        '{"steps":[{"description":"Read notes"},{"description":"Report findings"}]}'
-                    )
-                ),
-                GenerationResult(
                     text="",
                     tool_calls=[
                         {
@@ -113,8 +108,7 @@ class TestAgentController:
                         }
                     ],
                 ),
-                GenerationResult(text="Read notes successfully."),
-                GenerationResult(text="Reported the contents to the user."),
+                GenerationResult(text="Read notes and reported the findings."),
             ]
         )
         controller = AgentController(
@@ -130,7 +124,7 @@ class TestAgentController:
             isinstance(event, PhaseChanged) and event.phase == "planning" for event in events
         )
         assert any(isinstance(event, PlanGenerated) for event in events)
-        assert sum(isinstance(event, StepStarted) for event in events) == 2
+        assert sum(isinstance(event, StepStarted) for event in events) == 1
         assert any(
             isinstance(event, ToolCallRequested) and not event.requires_approval for event in events
         )
@@ -141,8 +135,7 @@ class TestAgentController:
         assert isinstance(events[-1], TaskComplete)
         assert controller._session.tasks[0].status == "completed"
         assert controller._session.history[-1].content == (
-            "1. Read notes: Read notes successfully.\n"
-            "2. Report findings: Reported the contents to the user."
+            "1. Inspect the notes file and report findings: Read notes and reported the findings."
         )
 
     def test_denied_write_action_resumes_and_completes(self, tmp_path: Path):
@@ -318,11 +311,6 @@ class TestAgentController:
         model = FakeAgentModel(
             [
                 GenerationResult(
-                    text=(
-                        '{"steps":[{"description":"Read notes"},{"description":"Report findings"}]}'
-                    )
-                ),
-                GenerationResult(
                     text="",
                     tool_calls=[
                         {
@@ -335,8 +323,7 @@ class TestAgentController:
                         }
                     ],
                 ),
-                GenerationResult(text="Read notes successfully."),
-                GenerationResult(text="Reported the contents to the user."),
+                GenerationResult(text="Read notes and reported findings."),
             ]
         )
         controller = AgentController(

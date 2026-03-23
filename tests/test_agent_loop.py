@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.state import Session
 from localagentcli.session.task_context import AGENT_TASK_RUNTIME_HEADING
 from localagentcli.tools import create_default_tool_registry
+from localagentcli.tools.base import ToolResult
 
 
 class _LoopModel:
@@ -208,3 +210,27 @@ def test_run_uses_model_default_max_tokens_when_generation_options_not_provided(
     assert model.calls
     assert model.calls[0]["max_tokens"] == 777
     assert model.calls[0]["temperature"] == 0.2
+
+
+def test_tool_payload_uses_model_aware_truncation(tmp_path: Path):
+    model = _LoopRunModel(default_max_tokens=256)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(model, registry, TaskPlanner(model), safety)
+
+    payload = json.loads(
+        loop._tool_payload(
+            "file_read",
+            ToolResult.success(summary="Read file", output="x" * 8000),
+        )
+    )
+
+    assert payload["output_truncated"] is True
+    assert payload["output_original_chars"] == 8000
+    assert payload["output_retained_chars"] < payload["output_original_chars"]
+    assert "chars truncated" in payload["output"]

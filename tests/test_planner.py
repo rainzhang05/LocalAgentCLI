@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
-from localagentcli.models.backends.base import GenerationResult
+from localagentcli.models.backends.base import GenerationResult, ModelMessage
 
 
 class FakePlannerModel:
@@ -79,3 +79,19 @@ class TestTaskPlanner:
 
         assert len(plan.steps) == 3
         assert "Investigate" in plan.steps[1].description
+
+    def test_create_plan_preserves_system_context_when_windowing_history(self):
+        model = FakePlannerModel(['{"steps":[{"description":"Inspect"}]}'])
+        planner = TaskPlanner(model)
+        context = [
+            ModelMessage(role="system", content="workspace-instructions-and-env"),
+            *[ModelMessage(role="user", content=f"message-{index}") for index in range(12)],
+        ]
+
+        planner.create_plan("Refactor auth", context)
+
+        sent_messages = model.calls[0][0]
+        assert any(
+            message.role == "system" and message.content == "workspace-instructions-and-env"
+            for message in sent_messages[1:]
+        )

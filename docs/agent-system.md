@@ -77,7 +77,7 @@ In agent mode, user input first flows through the shared runtime submission/even
 
 1. **`direct_answer`**: simple factual or explanatory prompts skip planning and are answered immediately through the normal model stream
 2. **`single_step_task`**: one concrete action gets a single synthesized step and executes without a separate planner round-trip
-3. **`multi_step_task`**: complex or staged work uses the planner and full iterative agent loop
+3. **`multi_step_task`**: complex or staged work starts with an adaptive bootstrap step and uses the full iterative agent loop
 
 The selected route is surfaced immediately in the shell activity stream and persisted in session metadata so the prompt toolbar and `/status` can describe the current or last task without re-parsing history.
 
@@ -96,7 +96,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 
 ### Core Principles
 
-1. **Adaptive planning**: Trivial requests in agent mode do not incur planning overhead. Plans are shown only for `single_step_task` and `multi_step_task` paths.
+1. **Adaptive planning**: Trivial requests in agent mode do not incur planning overhead. Planned execution paths start from a local bootstrap plan (no dedicated model planning round-trip before first execution).
 2. **Multi-step execution**: Tasks are broken into discrete steps. Each step may involve one or more tool calls.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
@@ -160,9 +160,10 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 - It examines the current workspace state only when the resulting task path requires it
 
 #### 2. Generate Plan
-- `single_step_task`: the controller synthesizes one executable step locally and begins execution immediately
-- `multi_step_task`: the planner generates the minimum number of structured steps needed for the task
-- Each step describes the action, the tool(s) to use, and the expected outcome
+- `single_step_task`: the controller synthesizes one executable bootstrap step locally and begins execution immediately
+- `multi_step_task`: the controller also synthesizes a bootstrap execution step; the model plans/refines adaptively while executing tools in-step
+- Planner model calls are reserved for recovery/replanning paths after denials or repeated failures
+- Each active step still describes the action focus and expected outcome
 - The visible phase moves from `planning` to `executing` once the plan is ready
 - The plan is displayed before or as execution begins
 - There is no separate plan-review pause; only tool approvals can pause execution
@@ -199,12 +200,13 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 | Capability | Description |
 |---|---|
 | Batching | Multiple independent tool calls in a single step |
-| Dynamic planning | Plan is updated after each step based on observations |
+| Dynamic planning | Plan is updated after each step based on observations; planner calls are recovery-focused |
 | Model-controlled retries | The model decides when and how to retry failed steps |
 | No fixed step limit | There is no hard limit on the number of steps. System safeguards (timeout, user interrupt) apply instead |
 | Subtask decomposition | Complex steps are broken into smaller sub-steps |
 | Direct-answer fast path | Simple prompts in agent mode can bypass planning entirely while still using full session context |
 | Task-state persistence | Route, phase, step, pending tool, approval mode, and rollback count are persisted for the toolbar and `/status` |
+| No separate initial planner turn | First execution starts from a local bootstrap step; planner model calls are deferred to recovery/replanning |
 
 ### AgentController
 

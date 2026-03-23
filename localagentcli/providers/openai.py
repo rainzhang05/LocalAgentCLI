@@ -224,6 +224,11 @@ class OpenAIProvider(RemoteProvider):
                         id=model_id,
                         name=model_data.get("id", ""),
                         capabilities=capabilities,
+                        supported_reasoning_levels=(
+                            ["low", "medium", "high"]
+                            if capabilities.get("reasoning", False)
+                            else []
+                        ),
                         capability_provenance=inferred_remote_capability_provenance(
                             capabilities,
                             provider_label="OpenAI-compatible",
@@ -242,6 +247,9 @@ class OpenAIProvider(RemoteProvider):
                     id=self._default_model,
                     name=self._default_model,
                     capabilities=capabilities,
+                    supported_reasoning_levels=(
+                        ["low", "medium", "high"] if capabilities.get("reasoning", False) else []
+                    ),
                     capability_provenance=legacy_fallback_capability_provenance(capabilities),
                     selection_state="legacy_fallback",
                 )
@@ -399,6 +407,11 @@ class OpenAIProvider(RemoteProvider):
                         id=model_id,
                         name=model_data.get("id", ""),
                         capabilities=capabilities,
+                        supported_reasoning_levels=(
+                            ["low", "medium", "high"]
+                            if capabilities.get("reasoning", False)
+                            else []
+                        ),
                         capability_provenance=inferred_remote_capability_provenance(
                             capabilities,
                             provider_label="OpenAI-compatible",
@@ -417,6 +430,9 @@ class OpenAIProvider(RemoteProvider):
                     id=self._default_model,
                     name=self._default_model,
                     capabilities=capabilities,
+                    supported_reasoning_levels=(
+                        ["low", "medium", "high"] if capabilities.get("reasoning", False) else []
+                    ),
                     capability_provenance=legacy_fallback_capability_provenance(capabilities),
                     selection_state="legacy_fallback",
                 )
@@ -434,6 +450,18 @@ class OpenAIProvider(RemoteProvider):
 
     def capabilities(self) -> dict:
         return self._capabilities_for_model(self.active_model)
+
+    def model_info(self) -> ModelInfo:
+        capabilities = self._capabilities_for_model(self.active_model)
+        return ModelInfo(
+            id=self.active_model,
+            name=self.active_model,
+            capabilities=capabilities,
+            supported_reasoning_levels=(
+                ["low", "medium", "high"] if capabilities.get("reasoning", False) else []
+            ),
+            selection_state="active_remote_model",
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -469,6 +497,9 @@ class OpenAIProvider(RemoteProvider):
             ]
         if "tool_choice" in kwargs:
             body["tool_choice"] = kwargs["tool_choice"]
+        reasoning_effort = self._resolve_reasoning_effort(kwargs, model_name)
+        if reasoning_effort is not None:
+            body["reasoning_effort"] = reasoning_effort
         prompt_cache = kwargs.get("prompt_cache", self._options.get("prompt_cache"))
         if prompt_cache is not None:
             body["prompt_cache"] = self._coerce_prompt_cache(prompt_cache)
@@ -476,6 +507,21 @@ class OpenAIProvider(RemoteProvider):
         if isinstance(prompt_cache_key, str) and prompt_cache_key.strip():
             body["prompt_cache_key"] = prompt_cache_key.strip()
         return body
+
+    def _resolve_reasoning_effort(
+        self,
+        kwargs: dict[str, object],
+        model_name: str,
+    ) -> str | None:
+        if not self._capabilities_for_model(model_name).get("reasoning", False):
+            return None
+        raw_value = kwargs.get("reasoning_effort", self._options.get("reasoning_effort"))
+        if not isinstance(raw_value, str):
+            return None
+        normalized = raw_value.strip().lower()
+        if normalized in {"low", "medium", "high"}:
+            return normalized
+        return None
 
     @staticmethod
     def _coerce_prompt_cache(value: object) -> bool:

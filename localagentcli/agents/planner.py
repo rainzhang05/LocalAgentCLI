@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from localagentcli.agents.context_window import recent_context_with_system
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 
@@ -147,7 +148,7 @@ class TaskPlanner:
         result = self._model.generate(
             [
                 ModelMessage(role="system", content=_PLANNING_PROMPT),
-                *context[-8:],
+                *recent_context_with_system(context, 8),
                 ModelMessage(role="user", content=f"Task: {task}"),
             ],
             **options,
@@ -195,7 +196,7 @@ class TaskPlanner:
         result = await self._model.agenerate(
             [
                 ModelMessage(role="system", content=_PLANNING_PROMPT),
-                *context[-8:],
+                *recent_context_with_system(context, 8),
                 ModelMessage(role="user", content=f"Task: {task}"),
             ],
             **options,

@@ -13,6 +13,7 @@ from localagentcli.models.backends.base import (
     StreamChunk,
     backend_install_hint,
 )
+from localagentcli.models.model_info import ModelInfo
 
 
 class MLXBackend(ModelBackend):
@@ -109,6 +110,14 @@ class MLXBackend(ModelBackend):
             "backend": "mlx",
             "platform": "macOS (Apple Silicon)",
         }
+
+    def model_info(self) -> ModelInfo:
+        return ModelInfo(
+            id=str(self._model_path) if self._model_path else "mlx_model",
+            name=self._model_path.name if self._model_path else "MLX Model",
+            capabilities=self.capabilities(),
+            selection_state="local_mlx",
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

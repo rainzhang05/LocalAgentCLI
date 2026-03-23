@@ -295,6 +295,8 @@ Independent of transcript/session layering, each step now starts with a determin
 - output contract (continue with tools until done; final response is concise plain text)
 - task objective / plan status / current step focus sections
 
+Tool observations injected back into the loop now use model-aware adaptive truncation (instead of a fixed byte slice), preserving both prefix/suffix context and explicit truncation metadata (`output_truncated`, original and retained character counts).
+
 ### TaskPlan
 
 ```python

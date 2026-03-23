@@ -63,6 +63,34 @@ def _make_session(workspace: Path) -> Session:
 
 
 class TestAgentController:
+    def test_profile_uses_model_default_max_tokens(self, tmp_path: Path):
+        model = FakeAgentModel([])
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+        )
+
+        profile = controller._profile("step")
+
+        assert profile["max_tokens"] == model.model_info().default_max_tokens
+        assert profile["temperature"] == 0.2
+
+    def test_profile_applies_phase_caps(self, tmp_path: Path):
+        model = FakeAgentModel([])
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+            generation_config={"temperature": 0.9, "max_tokens": 9000, "top_p": 0.8},
+        )
+
+        triage = controller._profile("triage")
+        planning = controller._profile("planning")
+
+        assert triage == {"temperature": 0.1, "max_tokens": 512, "top_p": 0.8}
+        assert planning == {"temperature": 0.1, "max_tokens": 2048, "top_p": 0.8}
+
     def test_completes_multistep_task_with_read_only_tool(self, tmp_path: Path):
         (tmp_path / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8")
         model = FakeAgentModel(

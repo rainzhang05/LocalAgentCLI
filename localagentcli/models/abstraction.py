@@ -17,6 +17,7 @@ from localagentcli.models.backends.base import (
     acollect_generation_result,
     collect_generation_result,
 )
+from localagentcli.models.model_info import ModelInfo
 from localagentcli.providers.base import RemoteProvider
 
 
@@ -166,6 +167,10 @@ class ModelAbstractionLayer:
     def supports_streaming(self) -> bool:
         """Whether the backend supports streaming output."""
         return self._backend.supports_streaming()
+
+    def model_info(self) -> ModelInfo:
+        """Normalized metadata about model capabilities and limits."""
+        return self._backend.model_info()
 
     def cancel(self) -> None:
         """Cancel the active generation, if supported by the backend."""

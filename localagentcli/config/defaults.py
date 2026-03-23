@@ -42,6 +42,7 @@ DEFAULT_CONFIG: dict = {
         "autosave_named": False,
         "autosave_debounce_seconds": 2,
     },
+    "features": {},
 }
 
 # Schema: maps dotted key -> (expected_type, optional_validator)
@@ -76,6 +77,19 @@ def validate_config_value(key: str, value: Any) -> tuple[bool, str]:
     Returns (True, "") on success or (False, error_message) on failure.
     Attempts type coercion from strings for numeric types.
     """
+    if key.startswith("features."):
+        if isinstance(value, str):
+            lower = value.strip().lower()
+            if lower in ("true", "1", "yes", "on"):
+                value = True
+            elif lower in ("false", "0", "no", "off"):
+                value = False
+            else:
+                return False, f"'{key}' expects bool, got '{value}'"
+        if not isinstance(value, bool):
+            return False, f"'{key}' expects bool, got {type(value).__name__}"
+        return True, ""
+
     if key not in CONFIG_SCHEMA:
         valid_keys = ", ".join(sorted(CONFIG_SCHEMA.keys()))
         return False, f"Unknown config key: '{key}'. Valid keys: {valid_keys}"
@@ -121,6 +135,14 @@ def coerce_value(key: str, value: Any) -> Any:
 
     Returns the coerced value, or the original if coercion is not needed.
     """
+    if key.startswith("features.") and isinstance(value, str):
+        lower = value.strip().lower()
+        if lower in ("true", "1", "yes", "on"):
+            return True
+        if lower in ("false", "0", "no", "off"):
+            return False
+        return value
+
     if key not in CONFIG_SCHEMA:
         return value
 

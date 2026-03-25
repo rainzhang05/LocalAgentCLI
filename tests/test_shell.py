@@ -361,6 +361,55 @@ class TestPromptHelpers:
 
         assert prompt_text("Workspace directory", default=".") is None
 
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt._prompt_supports_in_thread", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_select_option_uses_in_thread_inside_running_loop(
+        self,
+        mock_prompt_session,
+        _mock_supports_in_thread,
+        _mock_supports,
+    ):
+        session = MagicMock()
+        buffer = MagicMock()
+        buffer.on_text_changed = Event(buffer)
+        session.default_buffer = buffer
+        session.prompt.return_value = "openai"
+        mock_prompt_session.return_value = session
+
+        async def _invoke():
+            return prompt_module.select_option(
+                "Choose provider",
+                [SelectionOption(value="openai", label="OpenAI")],
+            )
+
+        selection = asyncio.run(_invoke())
+
+        assert selection is not None
+        assert selection.value == "openai"
+        assert session.prompt.call_args.kwargs["in_thread"] is True
+
+    @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
+    @patch("localagentcli.shell.prompt._prompt_supports_in_thread", return_value=True)
+    @patch("localagentcli.shell.prompt.PromptSession")
+    def test_prompt_text_uses_in_thread_inside_running_loop(
+        self,
+        mock_prompt_session,
+        _mock_supports_in_thread,
+        _mock_supports,
+    ):
+        session = MagicMock()
+        session.prompt.return_value = "workspace"
+        mock_prompt_session.return_value = session
+
+        async def _invoke():
+            return prompt_text("Workspace directory", default=".")
+
+        value = asyncio.run(_invoke())
+
+        assert value == "workspace"
+        assert session.prompt.call_args.kwargs["in_thread"] is True
+
     @patch("localagentcli.shell.prompt.select_option")
     def test_prompt_action_uses_action_toolbar(self, mock_select):
         mock_select.return_value = SelectionOption(value="approve", label="Approve")
@@ -810,6 +859,23 @@ class TestShellUIRun:
         ui.run()
         calls = [str(c) for c in ui._console.print.call_args_list]
         assert any("Mode:" in c for c in calls)
+
+    def test_command_exception_renders_error_and_continues(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+        ui._stream_renderer = MagicMock()
+        ui._prompt_session = MagicMock()
+        ui._prompt_session.prompt_async = AsyncMock(side_effect=["/status", "/exit"])
+
+        with patch.object(ui._router, "dispatch") as mock_dispatch:
+            mock_dispatch.side_effect = [
+                RuntimeError("boom"),
+                CommandResult.ok("exit", data={"action": "exit"}),
+            ]
+            ui.run()
+
+        ui._stream_renderer.render_error.assert_any_call("Command failed: boom")
+        assert ui._prompt_session.prompt_async.await_count == 2
 
     def test_first_run_setup(self, config, storage):
         ui = ShellUI(config=config, storage=storage, first_run=True)

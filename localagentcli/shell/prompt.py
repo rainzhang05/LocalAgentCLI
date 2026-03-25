@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -201,7 +203,10 @@ def select_option(
         )
 
     try:
-        selected = session.prompt(f"{message}: ", pre_run=_pre_run)
+        if _should_use_in_thread_prompt(session):
+            selected = session.prompt(f"{message}: ", pre_run=_pre_run, in_thread=True)
+        else:
+            selected = session.prompt(f"{message}: ", pre_run=_pre_run)
     except (EOFError, KeyboardInterrupt):
         return None
 
@@ -277,6 +282,40 @@ def supports_interactive_prompt() -> bool:
         and hasattr(stdout, "isatty")
         and stdin.isatty()
         and stdout.isatty()
+    )
+
+
+def _has_running_event_loop() -> bool:
+    """Return whether prompt code is executing inside a running asyncio loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _prompt_supports_in_thread(session: PromptSession[str]) -> bool:
+    """Return whether PromptSession.prompt accepts an in_thread keyword."""
+    prompt_fn = getattr(session, "prompt", None)
+    if prompt_fn is None:
+        return False
+    try:
+        return "in_thread" in inspect.signature(prompt_fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _should_use_in_thread_prompt(session: PromptSession[str]) -> bool:
+    """Return whether sync prompt calls should use prompt_toolkit's thread bridge."""
+    if not _has_running_event_loop():
+        return False
+
+    if _prompt_supports_in_thread(session):
+        return True
+
+    raise RuntimeError(
+        "Interactive prompt backend cannot run within an active event loop. "
+        "Update prompt_toolkit or use a loop-safe prompt path."
     )
 
 
@@ -509,11 +548,19 @@ def _prompt_value(
             key_bindings=_build_prompt_key_bindings(),
             bottom_toolbar=toolbar,
         )
-        value = session.prompt(
-            f"{message}: ",
-            default=default or "",
-            is_password=password,
-        )
+        if _should_use_in_thread_prompt(session):
+            value = session.prompt(
+                f"{message}: ",
+                default=default or "",
+                is_password=password,
+                in_thread=True,
+            )
+        else:
+            value = session.prompt(
+                f"{message}: ",
+                default=default or "",
+                is_password=password,
+            )
     except (EOFError, KeyboardInterrupt):
         return None
     return value or default

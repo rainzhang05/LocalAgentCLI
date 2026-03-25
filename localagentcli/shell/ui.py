@@ -199,27 +199,30 @@ class ShellUI:
                 self._sync_prompt_history_to_session()
 
                 if stripped.startswith("/"):
-                    result = self._router.dispatch(stripped[1:])
-                    self._render_command_result(result)
+                    try:
+                        result = self._router.dispatch(stripped[1:])
+                        self._render_command_result(result)
 
-                    action = result.data.get("action") if result.data else None
-                    if action == "session_changed":
-                        await self._runtime.aclose()
-                        self._execution_runtime = SessionExecutionRuntime(
-                            services=self._services,
-                            emit=self._emit_runtime_message,
-                            confirm_backend_install=self._confirm_backend_install,
-                        )
-                        self._runtime = self._build_session_runtime()
-                        self._agent_controller = None
-                        self._rebuild_prompt_session()
-                        self._sync_workspace_instruction()
-                        self._render_default_target_warning()
-                    if action == "agent_resume":
-                        await self._handle_agent_resume(result)
-                    if action == "exit":
-                        await self._ahandle_exit_async()
-                        break
+                        action = result.data.get("action") if result.data else None
+                        if action == "session_changed":
+                            await self._runtime.aclose()
+                            self._execution_runtime = SessionExecutionRuntime(
+                                services=self._services,
+                                emit=self._emit_runtime_message,
+                                confirm_backend_install=self._confirm_backend_install,
+                            )
+                            self._runtime = self._build_session_runtime()
+                            self._agent_controller = None
+                            self._rebuild_prompt_session()
+                            self._sync_workspace_instruction()
+                            self._render_default_target_warning()
+                        if action == "agent_resume":
+                            await self._handle_agent_resume(result)
+                        if action == "exit":
+                            await self._ahandle_exit_async()
+                            break
+                    except Exception as exc:
+                        self._stream_renderer.render_error(f"Command failed: {exc}")
                 else:
                     await self._ahandle_plain_text(stripped)
 

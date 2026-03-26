@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -36,6 +36,7 @@ class SessionManager:
         self._runtime_events_dir = self._dir.parent / "cache" / "runtime-events"
         self._json_store = JsonSessionStore(self._dir)
         self._store = session_store or self._build_default_store()
+        self.prune_unnamed_autosaves()
 
     def new_session(self) -> Session:
         """Create a fresh session with defaults from config."""
@@ -129,10 +130,11 @@ class SessionManager:
         return warning
 
     def schedule_named_autosave(self) -> None:
-        """Schedule a debounced save when the session is named and autosave is enabled."""
-        if self._current is None or not self._named_autosave_enabled():
+        """Schedule a debounced autosave for named or unnamed sessions."""
+        if self._current is None:
             return
-        if self._current.name is None:
+        target_name = self._autosave_target_name(self._current)
+        if target_name is None:
             return
         raw = self.get_effective_config("sessions.autosave_debounce_seconds")
         try:
@@ -155,21 +157,20 @@ class SessionManager:
             timer.start()
 
     def flush_named_autosave(self) -> None:
-        """Cancel pending debounced autosave and persist immediately if enabled and named."""
+        """Cancel pending debounced autosave and persist immediately when eligible."""
         with self._autosave_lock:
             if self._autosave_timer is not None:
                 self._autosave_timer.cancel()
                 self._autosave_timer = None
-        if not self._named_autosave_enabled():
-            return
         try:
             session = self.current
         except RuntimeError:
             return
-        if session.name is None:
+        target_name = self._autosave_target_name(session)
+        if target_name is None:
             return
         try:
-            self.save_session(session.name)
+            self._persist_autosave(session, target_name)
         except Exception:
             pass
 
@@ -185,22 +186,82 @@ class SessionManager:
             return bool(self._config.get("sessions.autosave_named", False))
         return bool(self.get_effective_config("sessions.autosave_named"))
 
+    def _unnamed_autosave_enabled(self) -> bool:
+        if self._current is None:
+            return bool(self._config.get("sessions.autosave_unnamed", False))
+        return bool(self.get_effective_config("sessions.autosave_unnamed"))
+
+    def _autosave_target_name(self, session: Session) -> str | None:
+        if session.name is not None:
+            if self._named_autosave_enabled():
+                return session.name
+            return None
+        if not self._unnamed_autosave_enabled():
+            return None
+        generated = session.metadata.get("autosave_generated_name")
+        if isinstance(generated, str) and generated.strip():
+            return generated
+        prefix = str(self.get_effective_config("sessions.autosave_unnamed_prefix") or "autosave_")
+        generated_name = f"{prefix}{session.id}"
+        session.metadata["autosave_generated_name"] = generated_name
+        return generated_name
+
+    def _persist_autosave(self, session: Session, target_name: str) -> None:
+        original_name = session.name
+        session.updated_at = datetime.now()
+        session.metadata["message_count"] = len(session.history)
+        self._store.save_session(session, target_name)
+        if original_name is None:
+            session.name = None
+
     def _named_autosave_fire(self) -> None:
         with self._autosave_lock:
             self._autosave_timer = None
-        if not self._named_autosave_enabled():
-            return
         try:
             session = self.current
         except RuntimeError:
             return
-        name = session.name
-        if name is None:
+        target_name = self._autosave_target_name(session)
+        if target_name is None:
             return
         try:
-            self.save_session(name)
+            self._persist_autosave(session, target_name)
         except Exception:
             pass
+
+    def prune_unnamed_autosaves(self) -> int:
+        """Delete aged unnamed autosaves and old runtime-event logs."""
+        try:
+            retention_days = int(self._config.get("sessions.autosave_unnamed_retention_days", 14))
+        except (TypeError, ValueError):
+            retention_days = 14
+        if retention_days <= 0:
+            retention_days = 14
+
+        prefix = str(
+            self._config.get("sessions.autosave_unnamed_prefix", "autosave_") or "autosave_"
+        )
+        cutoff = datetime.now() - timedelta(days=retention_days)
+
+        removed_sessions = self._store.prune_unnamed_autosaves(prefix, cutoff)
+        removed_logs = self._prune_runtime_event_logs(cutoff)
+        return removed_sessions + removed_logs
+
+    def _prune_runtime_event_logs(self, cutoff: datetime) -> int:
+        removed = 0
+        if not self._runtime_events_dir.exists():
+            return 0
+        cutoff_ts = cutoff.timestamp()
+        for path in self._runtime_events_dir.glob("*.jsonl"):
+            try:
+                if path.stat().st_mtime < cutoff_ts:
+                    path.unlink(missing_ok=True)
+                    lock_path = Path(str(path) + ".lock")
+                    lock_path.unlink(missing_ok=True)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
 
     def _resolve_default_target(self, provider: str, model: str) -> tuple[str, str]:
         """Validate or replace the configured default target for new sessions."""

@@ -78,6 +78,61 @@ class TestSafetyLayer:
         assert result.risk_level == RiskLevel.HIGH
         assert "outside the workspace" in result.warnings[0]
 
+    def test_autonomous_danger_full_access_auto_approves_high_risk_shell(self, tmp_path: Path):
+        tool = ShellExecuteTool(tmp_path)
+        safety = SafetyLayer(
+            ApprovalManager(mode="autonomous"),
+            WorkspaceBoundary(tmp_path),
+            RollbackManager("session-1", tmp_path / "cache"),
+            sandbox_mode="danger-full-access",
+        )
+
+        result = safety.check_and_approve(
+            tool,
+            {
+                "command": "rm -rf ./scratch",
+                "working_dir": ".",
+            },
+        )
+
+        assert result.approved is True
+        assert result.requires_approval is False
+        assert result.risk_level == RiskLevel.HIGH
+
+    def test_balanced_danger_full_access_still_requires_high_risk_shell(self, tmp_path: Path):
+        tool = ShellExecuteTool(tmp_path)
+        safety = SafetyLayer(
+            ApprovalManager(mode="balanced"),
+            WorkspaceBoundary(tmp_path),
+            RollbackManager("session-1", tmp_path / "cache"),
+            sandbox_mode="danger-full-access",
+        )
+
+        result = safety.check_and_approve(
+            tool,
+            {
+                "command": "rm -rf ./scratch",
+                "working_dir": ".",
+            },
+        )
+
+        assert result.requires_approval is True
+        assert result.risk_level == RiskLevel.HIGH
+
+    def test_autonomous_danger_full_access_still_requires_high_risk_file_read(self, tmp_path: Path):
+        tool = FileReadTool(tmp_path)
+        safety = SafetyLayer(
+            ApprovalManager(mode="autonomous"),
+            WorkspaceBoundary(tmp_path),
+            RollbackManager("session-1", tmp_path / "cache"),
+            sandbox_mode="danger-full-access",
+        )
+
+        result = safety.check_and_approve(tool, {"path": ".env"})
+
+        assert result.requires_approval is True
+        assert result.risk_level == RiskLevel.HIGH
+
     def test_post_action_records_and_undoes_created_file(self, tmp_path: Path):
         tool = FileWriteTool(tmp_path)
         safety = _make_safety(tmp_path)

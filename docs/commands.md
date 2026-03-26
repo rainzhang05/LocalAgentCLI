@@ -210,6 +210,11 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Syntax**: `/mcp logout <server>`
 - **Behavior**: Deletes the stored bearer token for the specified MCP server.
 
+#### `/mcp oauth`
+- **Syntax**: `/mcp oauth <server>`
+- **Behavior**: Runs OAuth authorization-code flow (browser + PKCE), exchanges the returned auth code for an access token, and stores it in secure key storage for the MCP server.
+- **Config requirements**: `oauth_authorize_url`, `oauth_token_url`, and `oauth_client_id` under `[mcp_servers.<name>]`.
+
 ---
 
 ### Plugin Commands
@@ -235,6 +240,11 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Syntax**: `/plugin sync`
 - **Behavior**: Installs workspace plugin candidates not yet present in `~/.localagent/plugins`.
 
+#### `/plugin sync-remote`
+- **Syntax**: `/plugin sync-remote <manifest-url>`
+- **Behavior**: Downloads a remote plugin manifest and installs missing plugins.
+- **Manifest shape**: `{ "plugins": [{ "name": "<plugin>", "url": "<artifact-url>" }] }`
+
 ---
 
 ### Skills Commands
@@ -251,6 +261,11 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 #### `/skills remove`
 - **Syntax**: `/skills remove <name>`
 - **Behavior**: Removes an installed skill by name.
+
+#### `/skills sync-remote`
+- **Syntax**: `/skills sync-remote <manifest-url>`
+- **Behavior**: Downloads a remote skills manifest and installs missing skills.
+- **Manifest shape**: `{ "skills": [{ "name": "<skill>", "url": "<skill-md-url>" }] }`
 
 ---
 

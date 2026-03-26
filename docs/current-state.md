@@ -48,7 +48,7 @@ After implementing a component:
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
-| `[x]` | Config defaults and validation | 2026-03-25 — adds shell UX controls with schema validation/coercion: `shell.thinking_indicator_enabled`, `shell.thinking_indicator_style`, `shell.thinking_animation_interval_ms`, `shell.theme`, `shell.notification_dedupe`, and `shell.startup_banner`, while preserving existing `persistent_details_lane` and `generation.reasoning_effort` validation |
+| `[x]` | Config defaults and validation | 2026-03-26 — adds optional OS-sandbox backend config validation (`safety.os_sandbox_backend`: `off`/`auto`/`macos-seatbelt`/`linux-bwrap`) in addition to existing shell UX controls and prior `safety.sandbox_mode` parsing |
 | `[x]` | Session state dataclass | 2026-03-17 |
 | `[x]` | Session manager (new/save/load/list/clear) | 2026-03-25 — now delegates persistence through a pluggable `SessionStore` abstraction (JSON default, opt-in SQLite via `features.sqlite_session_store`), while preserving existing command/API behavior; includes legacy JSON compatibility with best-effort auto-migration into SQLite on first load when enabled; prior default-target repair, exec resume/fork, fork lineage metadata, persist-on-exit, and named autosave behaviors remain intact |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
@@ -128,7 +128,7 @@ After implementing a component:
 | `[x]` | `directory_list` tool | 2026-03-18 |
 | `[x]` | `file_write` tool | 2026-03-18 |
 | `[x]` | `patch_apply` tool | 2026-03-23 — supports diff-style patch operations with optional `@@` anchors, context-aware matching, and indentation-tolerant replacement while keeping legacy exact single-match `old_text/new_text` mode |
-| `[x]` | `shell_execute` tool | 2026-03-26 — execution now routes through an `ExecProcess` abstraction (`LocalExecProcess` default + `RemoteExecProcess` seam), preserving PTY-backed incremental capture on POSIX, cross-platform fallback behavior, and compatibility helper surfaces for existing tests/runtime callers |
+| `[x]` | `shell_execute` tool | 2026-03-26 — execution routes through `ExecProcess` (`LocalExecProcess` default + `RemoteExecProcess` seam), and now supports optional OS-sandbox command wrapping (`safety.os_sandbox_backend`) with safe fallback in `auto` mode when sandbox binaries are unavailable |
 | `[x]` | `test_execute` tool | 2026-03-18 |
 | `[x]` | `git_status` tool | 2026-03-18 |
 | `[x]` | `git_diff` tool | 2026-03-18 |

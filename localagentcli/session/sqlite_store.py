@@ -4,20 +4,36 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
+from localagentcli.session.memory import (
+    LONG_HORIZON_MEMORY_KEY,
+    extract_session_memory_entries,
+    merge_long_horizon_memory,
+)
+from localagentcli.session.migrations import SqliteMigrationRunner
 from localagentcli.session.state import Session
-from localagentcli.session.store import SESSION_FORMAT_VERSION, JsonSessionStore, SessionStore
-
-_DB_SCHEMA_VERSION = 1
+from localagentcli.session.store import (
+    SESSION_FORMAT_VERSION,
+    JsonSessionStore,
+    SessionStore,
+)
 
 
 class SqliteSessionStore(SessionStore):
     """Persist sessions in SQLite with optional JSON fallback migration."""
 
-    def __init__(self, db_path: Path, legacy_json_store: JsonSessionStore | None = None):
+    def __init__(
+        self,
+        db_path: Path,
+        legacy_json_store: JsonSessionStore | None = None,
+        migrations_dir: Path | None = None,
+    ):
         self._db_path = db_path
         self._legacy_json_store = legacy_json_store
+        self._migrations_dir = migrations_dir or Path(__file__).with_name("migrations")
+        self._migration_runner = SqliteMigrationRunner(self._migrations_dir)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_db()
 
@@ -30,6 +46,12 @@ class SqliteSessionStore(SessionStore):
         session.name = name
         payload = dict(session.to_dict())
         payload["format_version"] = SESSION_FORMAT_VERSION
+        replay_meta = session.metadata.get("runtime_replay", {})
+        replay_count = _to_replay_count(replay_meta)
+        replay_time = _to_replay_timestamp(replay_meta)
+        memory_entries = extract_session_memory_entries(session)
+        if memory_entries:
+            session.metadata[LONG_HORIZON_MEMORY_KEY] = memory_entries
 
         serialized = json.dumps(payload, ensure_ascii=False)
         with self._connect() as conn:
@@ -43,16 +65,20 @@ class SqliteSessionStore(SessionStore):
                     mode,
                     model,
                     message_count,
-                    format_version
+                    format_version,
+                    replay_last_record_count,
+                    replay_last_replayed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     payload_json = excluded.payload_json,
                     updated_at = excluded.updated_at,
                     mode = excluded.mode,
                     model = excluded.model,
                     message_count = excluded.message_count,
-                    format_version = excluded.format_version
+                    format_version = excluded.format_version,
+                    replay_last_record_count = excluded.replay_last_record_count,
+                    replay_last_replayed_at = excluded.replay_last_replayed_at
                 """,
                 (
                     name,
@@ -63,30 +89,69 @@ class SqliteSessionStore(SessionStore):
                     session.model,
                     len(session.history),
                     SESSION_FORMAT_VERSION,
+                    replay_count,
+                    replay_time,
                 ),
+            )
+            self._persist_workspace_memory(
+                conn,
+                session_name=name,
+                workspace=str(session.workspace),
+                entries=memory_entries,
             )
         return self._db_path
 
     def load_session(self, name: str) -> Session:
-        row = None
+        row: sqlite3.Row | None = None
+        workspace_memories: list[dict[str, str]] = []
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT payload_json FROM sessions WHERE name = ?",
+                """
+                SELECT
+                    payload_json,
+                    replay_last_record_count,
+                    replay_last_replayed_at
+                FROM sessions
+                WHERE name = ?
+                """,
                 (name,),
             ).fetchone()
 
-        if row is None:
-            if self._legacy_json_store is None:
-                raise FileNotFoundError(f"Session '{name}' not found")
-            session = self._load_and_migrate_legacy_json(name)
-            if session is None:
-                raise FileNotFoundError(f"Session '{name}' not found")
-            return session
+            if row is None:
+                if self._legacy_json_store is None:
+                    raise FileNotFoundError(f"Session '{name}' not found")
+                session = self._load_and_migrate_legacy_json(name)
+                if session is None:
+                    raise FileNotFoundError(f"Session '{name}' not found")
+                return session
 
-        data = json.loads(str(row["payload_json"]))
-        if isinstance(data, dict):
+            payload_value = json.loads(str(row["payload_json"]))
+            if isinstance(payload_value, dict):
+                data: dict[str, object] = payload_value
+            else:
+                raise ValueError(f"Session '{name}' payload is malformed")
+
             data.pop("format_version", None)
-        return Session.from_dict(data)
+            metadata = data.get("metadata")
+            if isinstance(metadata, dict):
+                replay_meta = metadata.setdefault("runtime_replay", {})
+                if isinstance(replay_meta, dict):
+                    replay_meta.setdefault(
+                        "last_record_count",
+                        int(row["replay_last_record_count"]),
+                    )
+                    replay_meta.setdefault(
+                        "last_replayed_at",
+                        str(row["replay_last_replayed_at"]),
+                    )
+
+            workspace_value = data.get("workspace", ".")
+            workspace_memories = self._load_workspace_memory(conn, str(workspace_value))
+
+        session = Session.from_dict(data)
+        if workspace_memories:
+            merge_long_horizon_memory(session, workspace_memories)
+        return session
 
     def list_sessions(self) -> list[dict]:
         rows: list[sqlite3.Row] = []
@@ -124,6 +189,32 @@ class SqliteSessionStore(SessionStore):
         )
         return sessions
 
+    def prune_unnamed_autosaves(self, prefix: str, cutoff: datetime) -> int:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT name
+                FROM sessions
+                WHERE name LIKE ?
+                  AND datetime(created_at) < datetime(?)
+                """,
+                (f"{prefix}%", cutoff.isoformat()),
+            ).fetchall()
+            names = [str(row["name"]) for row in rows]
+            if not names:
+                return 0
+
+            placeholders = ",".join("?" for _ in names)
+            conn.execute(
+                f"DELETE FROM session_memories WHERE session_name IN ({placeholders})",
+                names,
+            )
+            deleted = conn.execute(
+                f"DELETE FROM sessions WHERE name IN ({placeholders})",
+                names,
+            ).rowcount
+        return int(deleted or 0)
+
     def _load_and_migrate_legacy_json(self, name: str) -> Session | None:
         if self._legacy_json_store is None:
             return None
@@ -148,46 +239,100 @@ class SqliteSessionStore(SessionStore):
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
+            self._migration_runner.apply_all(conn)
+
+    def _persist_workspace_memory(
+        self,
+        conn: sqlite3.Connection,
+        session_name: str,
+        workspace: str,
+        entries: list[dict[str, str]],
+    ) -> None:
+        if not entries:
+            return
+
+        conn.execute("DELETE FROM session_memories WHERE session_name = ?", (session_name,))
+        for entry in entries:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS schema_meta (
-                    key TEXT PRIMARY KEY,
-                    value INTEGER NOT NULL
-                )
-                """
+                INSERT OR REPLACE INTO session_memories(
+                    session_name,
+                    workspace,
+                    memory_kind,
+                    content,
+                    source_timestamp,
+                    updated_at,
+                    usage_count
+                ) VALUES (?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    session_name,
+                    workspace,
+                    str(entry.get("kind", "memory") or "memory"),
+                    str(entry.get("content", "") or ""),
+                    str(entry.get("source_timestamp", "") or ""),
+                    str(entry.get("updated_at", "") or ""),
+                ),
             )
 
-            current = conn.execute(
-                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-            ).fetchone()
-            if current is None:
-                conn.execute("INSERT INTO schema_meta(key, value) VALUES('schema_version', 0)")
-                schema_version = 0
-            else:
-                schema_version = int(current["value"])
+    def _load_workspace_memory(
+        self,
+        conn: sqlite3.Connection,
+        workspace: str,
+    ) -> list[dict[str, str]]:
+        rows = conn.execute(
+            """
+            SELECT id, memory_kind, content, source_timestamp, updated_at
+            FROM session_memories
+            WHERE workspace = ?
+            ORDER BY datetime(updated_at) DESC, id DESC
+            LIMIT 8
+            """,
+            (workspace,),
+        ).fetchall()
 
-            if schema_version < 1:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS sessions (
-                        name TEXT PRIMARY KEY,
-                        payload_json TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL,
-                        mode TEXT NOT NULL,
-                        model TEXT NOT NULL,
-                        message_count INTEGER NOT NULL,
-                        format_version INTEGER NOT NULL DEFAULT 1
-                    )
-                    """
-                )
-                conn.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
-                    ON sessions(updated_at DESC, name DESC)
-                    """
-                )
-                conn.execute(
-                    "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
-                    (_DB_SCHEMA_VERSION,),
-                )
+        if not rows:
+            return []
+
+        ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(
+            (
+                "UPDATE session_memories "
+                "SET usage_count = usage_count + 1 "
+                f"WHERE id IN ({placeholders})"
+            ),
+            ids,
+        )
+
+        return [
+            {
+                "kind": str(row["memory_kind"]),
+                "content": str(row["content"]),
+                "source_timestamp": str(row["source_timestamp"]),
+                "updated_at": str(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+
+def _to_replay_count(value: object) -> int:
+    if isinstance(value, dict):
+        raw = value.get("last_record_count", 0)
+    else:
+        raw = 0
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return max(parsed, 0)
+
+
+def _to_replay_timestamp(value: object) -> str:
+    if isinstance(value, dict):
+        raw = value.get("last_replayed_at", "")
+    else:
+        raw = ""
+    if isinstance(raw, str):
+        return raw
+    return str(raw)

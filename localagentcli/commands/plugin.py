@@ -14,7 +14,7 @@ class PluginParentHandler(CommandHandler):
 
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.error(
-            "/plugin requires a subcommand: list, install, remove, discover, sync. "
+            "/plugin requires a subcommand: list, install, remove, discover, sync, sync-remote. "
             "Use /help plugin for details."
         )
 
@@ -22,7 +22,7 @@ class PluginParentHandler(CommandHandler):
         return CommandSpec(
             group="Plugin",
             summary="Manage local plugins.",
-            usage="/plugin <list|install|remove|discover|sync>",
+            usage="/plugin <list|install|remove|discover|sync|sync-remote>",
             argument_hint="<subcommand>",
             details=(
                 "Plugins are local artifacts stored under ~/.localagent/plugins. "
@@ -173,6 +173,39 @@ class PluginSyncHandler(CommandHandler):
         )
 
 
+class PluginSyncRemoteHandler(CommandHandler):
+    def __init__(self, manager: PluginManager):
+        self._manager = manager
+
+    def execute(self, args: list[str]) -> CommandResult:
+        if not args:
+            return CommandResult.error(
+                "Manifest URL is required. Usage: /plugin sync-remote <manifest-url>"
+            )
+        try:
+            synced = self._manager.sync_from_manifest_url(args[0])
+        except Exception as exc:
+            return CommandResult.error(f"Remote plugin sync failed: {exc}")
+        if not synced:
+            return CommandResult.ok(
+                "No new remote plugins were installed.",
+                presentation="status",
+            )
+        names = ", ".join(plugin.name for plugin in synced)
+        return CommandResult.ok(
+            f"Installed {len(synced)} plugin(s) from remote manifest: {names}",
+            presentation="success",
+        )
+
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Plugin",
+            summary="Install plugins from a remote manifest URL.",
+            usage="/plugin sync-remote <manifest-url>",
+            argument_hint="<manifest-url>",
+        )
+
+
 def register(
     router: CommandRouter,
     manager: PluginManager,
@@ -185,3 +218,4 @@ def register(
     router.register("plugin remove", PluginRemoveHandler(manager))
     router.register("plugin discover", PluginDiscoverHandler(manager, workspace_resolver))
     router.register("plugin sync", PluginSyncHandler(manager, workspace_resolver))
+    router.register("plugin sync-remote", PluginSyncRemoteHandler(manager))

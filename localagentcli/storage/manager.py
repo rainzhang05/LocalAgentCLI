@@ -26,6 +26,7 @@ class StorageManager:
             self.logs_dir / "exports",
             self.cache_dir,
             self.cache_dir / "rollback",
+            self.cache_dir / "runtime-events",
             self.cache_dir / "downloads",
             self.secrets_dir,
         ]
@@ -73,7 +74,11 @@ class StorageManager:
     def cleanup_cache(self, max_age_hours: int = 24) -> None:
         """Remove cache entries older than max_age_hours."""
         cutoff = time.time() - (max_age_hours * 3600)
-        for subdir in (self.cache_dir / "rollback", self.cache_dir / "downloads"):
+        for subdir in (
+            self.cache_dir / "rollback",
+            self.cache_dir / "runtime-events",
+            self.cache_dir / "downloads",
+        ):
             if not subdir.exists():
                 continue
             for entry in subdir.iterdir():

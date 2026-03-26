@@ -7,7 +7,9 @@ from collections import deque
 from typing import Iterator
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.text import Text
 
 from localagentcli.agents.events import (
@@ -26,6 +28,12 @@ from localagentcli.agents.events import (
     ToolCallResult,
 )
 from localagentcli.models.backends.base import StreamChunk
+from localagentcli.shell.notifications import (
+    NotificationDedupe,
+    ShellNotification,
+    format_notification,
+)
+from localagentcli.shell.themes import ShellTheme, resolve_shell_theme
 
 # Coalesce consecutive neutral status lines before emitting (reduces panel reflow).
 _DEFAULT_STATUS_BATCH_LIMIT = 12
@@ -39,17 +47,34 @@ _LIVE_DETAILS_FLUSH_INTERVAL_SEC = 0.08
 class StreamRenderer:
     """Render streaming output, reasoning, and activity updates in real time."""
 
-    def __init__(self, console: Console, *, persistent_details_lane: bool = False):
+    def __init__(
+        self,
+        console: Console,
+        *,
+        persistent_details_lane: bool = False,
+        theme: ShellTheme | None = None,
+        notification_dedupe: bool = True,
+        thinking_indicator_enabled: bool = True,
+    ):
         self._console = console
         self._persistent_details_lane = persistent_details_lane
+        self._theme = theme or resolve_shell_theme(None)
+        self._notifications = NotificationDedupe(enabled=notification_dedupe)
         self._buffer = ""
         self._secondary_entries: deque[str] = deque(maxlen=8)
         self._rendered_secondary_count = 0
         self._primary_started = False
+        self._thinking_enabled = thinking_indicator_enabled
+        self._thinking_visible = False
+        self._thinking_label = "Thinking"
         self._status_batch: list[str] = []
         self._catchup_mode = False
         self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
         self._last_secondary_flush_at = 0.0
+        self._stream_markdown_tail = ""
+        self._stream_code_fence_open = False
+        self._stream_code_language = "text"
+        self._stream_code_buffer = ""
         self._symbols = {
             "error": _safe_symbol(console, "✗", "x"),
             "status": _safe_symbol(console, "ℹ", "i"),
@@ -68,10 +93,15 @@ class StreamRenderer:
         self._secondary_entries.clear()
         self._rendered_secondary_count = 0
         self._primary_started = False
+        self._thinking_visible = False
         self._status_batch.clear()
         self._catchup_mode = False
         self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
         self._last_secondary_flush_at = 0.0
+        self._stream_markdown_tail = ""
+        self._stream_code_fence_open = False
+        self._stream_code_language = "text"
+        self._stream_code_buffer = ""
         for chunk in chunks:
             self.render_chunk(chunk)
         return self._buffer
@@ -82,11 +112,11 @@ class StreamRenderer:
             self._finalize()
             return
         if chunk.kind == "final_text":
+            self.stop_thinking_indicator()
             if not self._primary_started:
                 self.flush_pending_details()
-            self._console.print(chunk.text, end="", highlight=False)
+            self._render_final_text(chunk.text)
             self._buffer += chunk.text
-            self._primary_started = True
             return
         if chunk.importance == "primary":
             detail = chunk.text or self._format_chunk_payload(chunk)
@@ -117,6 +147,8 @@ class StreamRenderer:
 
     def _finalize(self) -> None:
         """Called when streaming is complete."""
+        self.stop_thinking_indicator()
+        self._flush_stream_render_state()
         has_pending_tail = len(self._secondary_entries) > self._rendered_secondary_count or bool(
             self._status_batch
         )
@@ -131,7 +163,9 @@ class StreamRenderer:
         """Render a streaming error."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[red]{self._symbols['error']} {error}[/red]")
+        self._console.print(
+            self._apply_style(f"{self._symbols['error']} {error}", self._theme.error_style)
+        )
 
     def render_status(self, message: str) -> None:
         """Render a neutral status line (batched until the next flush boundary)."""
@@ -145,13 +179,33 @@ class StreamRenderer:
         """Render a success status line."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[green]{self._symbols['success']} {message}[/green]")
+        self._console.print(
+            self._apply_style(f"{self._symbols['success']} {message}", self._theme.success_style)
+        )
 
     def render_warning(self, message: str) -> None:
         """Render a warning status line."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[yellow]{self._symbols['warning']} {message}[/yellow]")
+        self._console.print(
+            self._apply_style(f"{self._symbols['warning']} {message}", self._theme.warning_style)
+        )
+
+    def render_notification(self, notification: ShellNotification) -> None:
+        """Render a structured shell notification with optional adjacent dedupe."""
+        if not self._notifications.should_emit(notification):
+            return
+        message = format_notification(notification)
+        if not message:
+            return
+        if notification.level == "success":
+            self.render_success(message)
+        elif notification.level == "warning":
+            self.render_warning(message)
+        elif notification.level == "error":
+            self.render_error(message)
+        else:
+            self.render_status(message)
 
     def render_activity(self, message: str) -> None:
         """Backward-compatible alias for neutral status messages."""
@@ -178,20 +232,28 @@ class StreamRenderer:
                 panel_width = self._available_width(reserve=6)
                 if panel_width is not None:
                     lane_lines = [_truncate_with_ellipsis(line, panel_width) for line in lane_lines]
-                self._console.print(
-                    Panel(
-                        "\n".join(lane_lines),
+                details_body = "\n".join(lane_lines)
+                if self._theme.details_text_style:
+                    panel = Panel(
+                        details_body,
                         title="Details",
-                        border_style="dim",
+                        border_style=self._theme.details_border_style,
+                        style=self._theme.details_text_style,
                     )
-                )
+                else:
+                    panel = Panel(
+                        details_body,
+                        title="Details",
+                        border_style=self._theme.details_border_style,
+                    )
+                self._console.print(panel)
                 emitted = True
                 if pending_secondary:
                     self._rendered_secondary_count = len(self._secondary_entries)
         if pending_status:
             lines = self._dedupe_consecutive_status(self._status_batch)
             body = "\n".join(f"{self._symbols['status']} {line}" for line in lines)
-            self._console.print(body)
+            self._console.print(self._apply_style(body, self._theme.status_style))
             self._status_batch.clear()
             self._adjust_status_pacing()
             emitted = True
@@ -202,13 +264,55 @@ class StreamRenderer:
         """Render the inline approval prompt using the shared status grammar."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(f"[yellow]{self._symbols['warning']} Approval required.[/yellow]")
+        self._console.print(
+            self._apply_style(
+                f"{self._symbols['warning']} Approval required.",
+                self._theme.warning_style,
+            )
+        )
 
     def render_preview(self, title: str, body: str) -> None:
         """Render a preview block without changing task semantics."""
         self._prepare_block_output()
         self.flush_pending_details()
-        self._console.print(Panel(body, title=title, border_style="yellow"))
+        self._console.print(
+            Panel(
+                self._preview_renderable(body),
+                title=title,
+                border_style=self._theme.panel_border_style,
+            )
+        )
+
+    def render_markdown_message(self, message: str) -> None:
+        """Render plain text or markdown-rich message content."""
+        self._prepare_block_output()
+        self.flush_pending_details()
+        if _looks_like_markdown(message):
+            self._console.print(Markdown(message))
+            return
+        self._console.print(message)
+
+    def start_thinking_indicator(self, *, label: str = "Thinking") -> None:
+        """Prepare thinking indicator rendering for the next streaming turn."""
+        if not self._thinking_enabled:
+            return
+        cleaned = label.strip()
+        self._thinking_label = cleaned or "Thinking"
+
+    def render_thinking_indicator(self, frame: str) -> None:
+        """Render one transient thinking frame on a single terminal line."""
+        if not self._thinking_enabled or self._primary_started:
+            return
+        payload = f"\r\033[2K{frame} {self._thinking_label}..."
+        self._console.print(payload, end="", style=self._theme.dim_style or None, highlight=False)
+        self._thinking_visible = True
+
+    def stop_thinking_indicator(self) -> None:
+        """Clear any active thinking indicator line."""
+        if not self._thinking_visible:
+            return
+        self._console.print("\r\033[2K", end="", highlight=False)
+        self._thinking_visible = False
 
     def render_agent_event(self, event: AgentEvent) -> None:
         """Render a structured agent event."""
@@ -283,8 +387,7 @@ class StreamRenderer:
         if isinstance(event, TaskComplete):
             self.render_success("Task completed.")
             if event.summary.strip():
-                self.flush_pending_details()
-                self._console.print(event.summary)
+                self.render_markdown_message(event.summary)
             return
         if isinstance(event, TaskStopped):
             self.render_warning(event.reason)
@@ -305,7 +408,13 @@ class StreamRenderer:
                 line = f"{line}\n   {result_line}"
             lines.append(line)
         body = "\n".join(lines) if lines else "(no steps)"
-        self._console.print(Panel(Text(body), title=title, border_style="cyan"))
+        self._console.print(
+            Panel(
+                Text(body),
+                title=title,
+                border_style=self._theme.panel_border_style,
+            )
+        )
 
     def _tool_summary(self, arguments: dict) -> str:
         if not arguments:
@@ -361,9 +470,107 @@ class StreamRenderer:
 
     def _prepare_block_output(self) -> None:
         """Finish any inline primary output before rendering a block element."""
+        self.stop_thinking_indicator()
         if self._primary_started:
             self._console.print()
             self._primary_started = False
+
+    def _render_final_text(self, text: str) -> None:
+        """Render streaming final text, syntax-highlighting fenced code blocks."""
+        if not text:
+            return
+
+        content = self._stream_markdown_tail + text
+        self._stream_markdown_tail = ""
+
+        while content:
+            if not self._stream_code_fence_open:
+                fence_index = content.find("```")
+                if fence_index == -1:
+                    plain, tail = _split_trailing_backticks(content, max_tail=2)
+                    self._render_inline_text(plain)
+                    self._stream_markdown_tail = tail
+                    return
+
+                prefix = content[:fence_index]
+                self._render_inline_text(prefix)
+                content = content[fence_index + 3 :]
+
+                newline_index = content.find("\n")
+                if newline_index == -1:
+                    self._stream_markdown_tail = "```" + content
+                    return
+
+                language_line = content[:newline_index].strip()
+                self._stream_code_language = language_line.split()[0] if language_line else "text"
+                self._stream_code_fence_open = True
+                self._stream_code_buffer = ""
+                content = content[newline_index + 1 :]
+                continue
+
+            fence_index = content.find("```")
+            if fence_index == -1:
+                code_segment, tail = _split_trailing_backticks(content, max_tail=2)
+                self._stream_code_buffer += code_segment
+                self._stream_markdown_tail = tail
+                return
+
+            self._stream_code_buffer += content[:fence_index]
+            self._render_code_block(self._stream_code_buffer, self._stream_code_language)
+            self._stream_code_buffer = ""
+            self._stream_code_fence_open = False
+            self._stream_code_language = "text"
+            content = content[fence_index + 3 :]
+            if content.startswith("\n"):
+                content = content[1:]
+
+    def _render_inline_text(self, text: str) -> None:
+        """Render inline stream text without changing markdown/code state."""
+        if not text:
+            return
+        self._console.print(text, end="", highlight=False)
+        self._primary_started = True
+
+    def _render_code_block(self, code: str, language: str) -> None:
+        """Render one fenced code block using rich syntax highlighting."""
+        if not code.strip():
+            return
+        self._prepare_block_output()
+        self._console.print(
+            Syntax(
+                code.rstrip("\n"),
+                language or "text",
+                line_numbers=False,
+                word_wrap=True,
+            )
+        )
+
+    def _flush_stream_render_state(self) -> None:
+        """Flush deferred markdown/code stream state at stream completion."""
+        if self._stream_code_fence_open:
+            self._stream_code_buffer += self._stream_markdown_tail
+            self._stream_markdown_tail = ""
+            if self._stream_code_buffer:
+                self._render_code_block(self._stream_code_buffer, self._stream_code_language)
+            self._stream_code_buffer = ""
+            self._stream_code_fence_open = False
+            self._stream_code_language = "text"
+
+        if self._stream_markdown_tail:
+            self._render_inline_text(self._stream_markdown_tail)
+            self._stream_markdown_tail = ""
+
+    def _preview_renderable(self, body: str):
+        """Select a rich renderable for preview bodies."""
+        if _looks_like_markdown(body):
+            return Markdown(body)
+        return Text(body)
+
+    @staticmethod
+    def _apply_style(message: str, style: str) -> str:
+        if not style or style == "default":
+            return message
+        return f"[{style}]{message}[/{style}]"
 
     def _adjust_status_pacing(self) -> None:
         """Adapt status batching to backlog with simple high/low-water hysteresis."""
@@ -439,6 +646,41 @@ def _truncate_with_ellipsis(text: str, max_width: int) -> str:
     if max_width <= 2:
         return text[:max_width]
     return f"{text[: max_width - 1]}…"
+
+
+def _split_trailing_backticks(text: str, *, max_tail: int) -> tuple[str, str]:
+    """Hold trailing 1-2 backticks so split fences can be detected across chunks."""
+    if not text:
+        return "", ""
+    count = 0
+    for char in reversed(text):
+        if char != "`" or count >= max_tail:
+            break
+        count += 1
+    if count == 0:
+        return text, ""
+    return text[:-count], text[-count:]
+
+
+def _looks_like_markdown(text: str) -> bool:
+    """Best-effort markdown signal detection for rich rendering paths."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    markers = (
+        "```",
+        "# ",
+        "## ",
+        "### ",
+        "- ",
+        "* ",
+        "1. ",
+        "> ",
+        "| ",
+    )
+    if any(marker in stripped for marker in markers):
+        return True
+    return "`" in stripped and stripped.count("`") >= 2
 
 
 def _humanize_route(route: str) -> str:

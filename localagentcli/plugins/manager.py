@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import shutil
+import tempfile
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,6 +74,63 @@ class PluginManager:
             synced.append(synced_plugin)
             installed_names.add(candidate.name)
         return synced
+
+    def sync_from_manifest_url(
+        self,
+        manifest_url: str,
+        *,
+        timeout: float = 20.0,
+    ) -> list[LocalPlugin]:
+        """Sync plugins from a remote JSON manifest URL.
+
+        Expected schema:
+        {
+          "plugins": [
+            {"name": "example", "url": "https://.../plugin.py"}
+          ]
+        }
+        """
+        payload = self._load_manifest(manifest_url, timeout=timeout)
+        entries = payload.get("plugins", []) if isinstance(payload, dict) else []
+        if not isinstance(entries, list):
+            return []
+
+        installed_names = {plugin.name for plugin in self.list_plugins()}
+        synced: list[LocalPlugin] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name", "")).strip()
+            url = str(entry.get("url", "")).strip()
+            if not name or not url or name in installed_names:
+                continue
+            downloaded = self._download_to_temp_file(url, timeout=timeout)
+            try:
+                plugin = self.install_from_path(downloaded, name=name)
+            finally:
+                try:
+                    downloaded.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            synced.append(plugin)
+            installed_names.add(name)
+        return synced
+
+    def _load_manifest(self, manifest_url: str, *, timeout: float) -> dict:
+        with urllib.request.urlopen(manifest_url, timeout=max(timeout, 0.1)) as response:
+            content = response.read().decode("utf-8", errors="replace")
+        payload = json.loads(content)
+        return payload if isinstance(payload, dict) else {}
+
+    def _download_to_temp_file(self, url: str, *, timeout: float) -> Path:
+        suffix = Path(urllib.parse.urlparse(url).path).suffix or ".bin"
+        with urllib.request.urlopen(url, timeout=max(timeout, 0.1)) as response:
+            data = response.read()
+        fd, temp_path = tempfile.mkstemp(prefix="localagent-plugin-", suffix=suffix)
+        path = Path(temp_path)
+        with open(fd, "wb", closefd=True) as handle:
+            handle.write(data)
+        return path
 
     def install_from_path(self, source: Path, *, name: str | None = None) -> LocalPlugin:
         src = source.expanduser().resolve()

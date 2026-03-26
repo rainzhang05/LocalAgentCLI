@@ -102,6 +102,10 @@ class AgentLoop:
         if self._approval_wait is not None and not self._approval_wait.done():
             self._approval_wait.cancel()
 
+    def set_tools(self, tools: ToolRegistry | ToolRouter) -> None:
+        """Replace the active tool routing surface between tasks."""
+        self._tools = tools
+
     def supply_tool_approval(self, approved: bool) -> None:
         """Resume async loop after an approval decision (used by AgentController)."""
         fut = self._approval_wait

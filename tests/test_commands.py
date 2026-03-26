@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from rich.console import Console
@@ -39,11 +40,12 @@ from localagentcli.mcp import McpManager
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.registry import ModelRegistry
 from localagentcli.plugins import PluginManager
+from localagentcli.plugins.manager import LocalPlugin
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.state import Message
 from localagentcli.shell.prompt import SelectionOption
-from localagentcli.skills import SKILL_FILENAME, SkillsManager
+from localagentcli.skills import SKILL_FILENAME, SkillDocument, SkillsManager
 
 
 def _make_router(config, session_manager, tmp_path=None):
@@ -412,6 +414,39 @@ class TestMcpCommands:
         assert logout.success
         assert km.retrieve_key("mcp_server:demo") is None
 
+    @patch("localagentcli.commands.mcp._exchange_oauth_code", return_value="oauth-token")
+    @patch("localagentcli.commands.mcp.webbrowser.open", return_value=True)
+    @patch("localagentcli.commands.mcp.prompt_text", return_value="auth-code")
+    def test_mcp_oauth_stores_exchanged_token(
+        self,
+        _mock_prompt,
+        _mock_browser,
+        _mock_exchange,
+        config,
+        session_manager,
+        tmp_path,
+    ):
+        config._config["mcp_servers"] = {
+            "demo": {
+                "transport": "http",
+                "url": "http://127.0.0.1:8123/mcp",
+                "oauth_authorize_url": "https://auth.example/authorize",
+                "oauth_token_url": "https://auth.example/token",
+                "oauth_client_id": "demo-client",
+                "oauth_redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+                "oauth_scopes": ["mcp:tools"],
+            }
+        }
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("mcp oauth demo")
+
+        assert result.success
+        secrets_dir = tmp_path / "secrets"
+        km = KeyManager(secrets_dir)
+        km._keyring_available = False
+        assert km.retrieve_key("mcp_server:demo") == "oauth-token"
+
 
 class TestPluginCommands:
     def test_plugin_list_shows_empty_state(self, config, session_manager, tmp_path):
@@ -459,6 +494,21 @@ class TestPluginCommands:
         assert sync.success
         assert "workspace_demo" in sync.message
 
+    @patch.object(
+        PluginManager,
+        "sync_from_manifest_url",
+        return_value=[
+            LocalPlugin(name="remote_demo", path=Path("/tmp/remote_demo.py"), kind="file")
+        ],
+    )
+    def test_plugin_sync_remote_command(self, _mock_sync, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("plugin sync-remote https://plugins.example/manifest.json")
+
+        assert result.success
+        assert "remote_demo" in result.message
+
 
 class TestSkillsCommands:
     def test_skills_list_shows_empty_state(self, config, session_manager, tmp_path):
@@ -485,6 +535,27 @@ class TestSkillsCommands:
 
         removed = router.dispatch("skills remove minimal")
         assert removed.success
+
+    @patch.object(
+        SkillsManager,
+        "sync_from_manifest_url",
+        return_value=[
+            SkillDocument(
+                name="remote_skill",
+                path=Path("/tmp/remote_skill/SKILL.md"),
+                content="Do thing",
+                source="installed",
+                mtime_ns=0,
+            )
+        ],
+    )
+    def test_skills_sync_remote_command(self, _mock_sync, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("skills sync-remote https://skills.example/manifest.json")
+
+        assert result.success
+        assert "remote_skill" in result.message
 
 
 class TestSessionCommands:

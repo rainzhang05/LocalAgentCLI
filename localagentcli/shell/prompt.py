@@ -17,6 +17,7 @@ from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts.prompt import CompleteStyle
+from prompt_toolkit.styles import Style
 from prompt_toolkit.validation import ValidationError, Validator
 
 from localagentcli.commands.router import CommandRouter, CommandSpec
@@ -32,6 +33,22 @@ TEXT_PROMPT_TOOLBAR = "Enter accepts. Ctrl+C cancels."
 SECRET_PROMPT_TOOLBAR = "Input is hidden. Enter accepts. Ctrl+C cancels."
 ACTION_PROMPT_TOOLBAR = "Type to filter. Enter selects the default. Ctrl+C cancels."
 CHOICE_PROMPT_TOOLBAR = "Type to filter. ↑/↓ choose. Enter selects. Ctrl+C cancels."
+UI_ACCENT_HEX = "#40E0D0"
+
+_PROMPT_STYLE = Style.from_dict(
+    {
+        "completion-menu": "bg:default",
+        "completion-menu.completion": f"bg:default fg:{UI_ACCENT_HEX}",
+        "completion-menu.completion.current": f"bg:default fg:{UI_ACCENT_HEX} bold",
+        "completion-menu.meta.completion": f"bg:default fg:{UI_ACCENT_HEX}",
+        "completion-menu.meta.completion.current": f"bg:default fg:{UI_ACCENT_HEX} bold",
+        "completion-menu.multi-column-meta": f"bg:default fg:{UI_ACCENT_HEX}",
+        "completion-menu.multi-column-meta.current": f"bg:default fg:{UI_ACCENT_HEX} bold",
+        "scrollbar.background": "bg:default",
+        "scrollbar.button": f"bg:default fg:{UI_ACCENT_HEX}",
+        "bottom-toolbar": f"fg:{UI_ACCENT_HEX}",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -159,6 +176,7 @@ def create_prompt_session(
             reserve_space_for_menu=_menu_height_for_terminal(COMMAND_MENU_HEIGHT),
             key_bindings=_build_prompt_key_bindings(),
             bottom_toolbar=_build_status_toolbar(toolbar_provider),
+            style=_PROMPT_STYLE,
         )
         _wire_live_command_menu(session, router)
         return session
@@ -189,6 +207,7 @@ def select_option(
         validator=SelectionValidator(options),
         validate_while_typing=False,
         bottom_toolbar=bottom_toolbar,
+        style=_PROMPT_STYLE,
     )
     _wire_live_selection_menu(session, options)
 
@@ -547,6 +566,7 @@ def _prompt_value(
         session: PromptSession[str] = PromptSession(
             key_bindings=_build_prompt_key_bindings(),
             bottom_toolbar=toolbar,
+            style=_PROMPT_STYLE,
         )
         if _should_use_in_thread_prompt(session):
             value = session.prompt(

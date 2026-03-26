@@ -229,6 +229,23 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 ---
 
+### Skills Commands
+
+#### `/skills list`
+- **Syntax**: `/skills list`
+- **Behavior**: Lists installed skills from `~/.localagent/skills`.
+
+#### `/skills install`
+- **Syntax**: `/skills install <path> [name]`
+- **Behavior**: Installs a skill from a directory containing `SKILL.md` or from a `SKILL.md` file.
+- **Storage**: Installed skills are copied to `~/.localagent/skills/<name>/SKILL.md`.
+
+#### `/skills remove`
+- **Syntax**: `/skills remove <name>`
+- **Behavior**: Removes an installed skill by name.
+
+---
+
 ### Workspace Commands
 
 #### `/workspace set <path>`

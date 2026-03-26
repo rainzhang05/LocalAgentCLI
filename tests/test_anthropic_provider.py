@@ -455,3 +455,15 @@ class TestAnthropicParseSSE:
         )
         assert completed[0].kind == "tool_call"
         assert completed[0].tool_call_data["function"]["name"] == "file_read"
+
+    def test_error_event_emits_error_and_done(self):
+        chunks = AnthropicProvider._parse_sse_event(
+            "error",
+            '{"error":{"message":"overloaded"}}',
+            {},
+        )
+
+        assert chunks[0].kind == "error"
+        assert "overloaded" in chunks[0].text
+        assert chunks[-1].is_done is True
+        assert chunks[-1].payload == {"finish_reason": "error"}

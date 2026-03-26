@@ -413,3 +413,14 @@ class TestOpenAIParseSSE:
         )
         assert completed[0].kind == "tool_call"
         assert completed[0].tool_call_data["function"]["name"] == "file_read"
+
+    def test_parse_error_payload_line_emits_error_and_done(self):
+        chunks = OpenAIProvider._parse_sse_line(
+            'data: {"error":{"message":"rate limit exceeded"}}',
+            _OpenAIToolCallAccumulator(),
+        )
+
+        assert chunks[0].kind == "error"
+        assert "rate limit exceeded" in chunks[0].text
+        assert chunks[-1].is_done is True
+        assert chunks[-1].payload == {"finish_reason": "error"}

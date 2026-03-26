@@ -11,9 +11,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from localagentcli.tools import DynamicToolSpec, ToolResult
+
+BearerTokenResolver = Callable[[str], str | None]
+ElicitationHandler = Callable[[str, str, dict[str, Any]], dict[str, Any] | None]
 
 
 @dataclass
@@ -57,8 +60,16 @@ def _subprocess_env(config_env: dict[str, str]) -> dict[str, str] | None:
 class StdioMcpClient:
     """Very small synchronous MCP stdio client for tools/list and tools/call."""
 
-    def __init__(self, config: McpServerConfig):
+    def __init__(
+        self,
+        config: McpServerConfig,
+        *,
+        server_name: str,
+        elicitation_handler: ElicitationHandler | None = None,
+    ):
         self._config = config
+        self._server_name = server_name
+        self._elicitation_handler = elicitation_handler
         self._process: subprocess.Popen[str] | None = None
         self._request_id = 0
 
@@ -111,6 +122,7 @@ class StdioMcpClient:
                 "tools/call",
                 {"name": name, "arguments": arguments},
             )
+            payload = self._maybe_handle_elicitation(name, arguments, payload)
         except TimeoutError as exc:
             return ToolResult.error_result(
                 f"MCP tool '{name}' timed out",
@@ -138,6 +150,31 @@ class StdioMcpClient:
         return ToolResult.success(
             f"MCP tool '{name}' completed.",
             output=output,
+        )
+
+    def _maybe_handle_elicitation(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        request = payload.get("elicitation") or payload.get("elicitationRequest")
+        if not isinstance(request, dict):
+            return payload
+        if self._elicitation_handler is None:
+            raise RuntimeError(
+                "MCP server requested elicitation input but no elicitation handler is configured."
+            )
+        response = self._elicitation_handler(self._server_name, tool_name, request)
+        if response is None:
+            raise RuntimeError("MCP elicitation request was declined by the operator.")
+        return self.request(
+            "tools/call",
+            {
+                "name": tool_name,
+                "arguments": arguments,
+                "elicitationResponse": response,
+            },
         )
 
     def close(self) -> None:
@@ -254,8 +291,18 @@ class StdioMcpClient:
 class HttpMcpClient:
     """Synchronous MCP HTTP client for JSON-RPC style requests."""
 
-    def __init__(self, config: McpServerConfig):
+    def __init__(
+        self,
+        config: McpServerConfig,
+        *,
+        server_name: str,
+        bearer_token_resolver: BearerTokenResolver | None = None,
+        elicitation_handler: ElicitationHandler | None = None,
+    ):
         self._config = config
+        self._server_name = server_name
+        self._bearer_token_resolver = bearer_token_resolver
+        self._elicitation_handler = elicitation_handler
         self._request_id = 0
 
     def start(self) -> None:
@@ -284,6 +331,7 @@ class HttpMcpClient:
     def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         try:
             payload = self.request("tools/call", {"name": name, "arguments": arguments})
+            payload = self._maybe_handle_elicitation(name, arguments, payload)
         except TimeoutError as exc:
             return ToolResult.error_result(
                 f"MCP tool '{name}' timed out",
@@ -429,12 +477,41 @@ class HttpMcpClient:
 
     def _resolved_http_headers(self) -> dict[str, str]:
         headers = dict(self._config.http_headers)
+        if self._bearer_token_resolver is not None:
+            token = (self._bearer_token_resolver(self._server_name) or "").strip()
+            if token and "authorization" not in {key.lower() for key in headers}:
+                headers["Authorization"] = f"Bearer {token}"
         token_env = self._config.bearer_token_env_var
         if isinstance(token_env, str) and token_env.strip():
             token = os.environ.get(token_env.strip(), "").strip()
             if token and "authorization" not in {key.lower() for key in headers}:
                 headers["Authorization"] = f"Bearer {token}"
         return headers
+
+    def _maybe_handle_elicitation(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        request = payload.get("elicitation") or payload.get("elicitationRequest")
+        if not isinstance(request, dict):
+            return payload
+        if self._elicitation_handler is None:
+            raise RuntimeError(
+                "MCP server requested elicitation input but no elicitation handler is configured."
+            )
+        response = self._elicitation_handler(self._server_name, tool_name, request)
+        if response is None:
+            raise RuntimeError("MCP elicitation request was declined by the operator.")
+        return self.request(
+            "tools/call",
+            {
+                "name": tool_name,
+                "arguments": arguments,
+                "elicitationResponse": response,
+            },
+        )
 
 
 class SseMcpClient(HttpMcpClient):
@@ -451,13 +528,25 @@ class SseMcpClient(HttpMcpClient):
 class McpManager:
     """Discover and execute MCP tools from configured stdio servers."""
 
-    def __init__(self, servers: list[McpServerConfig]):
+    def __init__(
+        self,
+        servers: list[McpServerConfig],
+        *,
+        bearer_token_resolver: BearerTokenResolver | None = None,
+    ):
         self._servers = servers
+        self._bearer_token_resolver = bearer_token_resolver
+        self._elicitation_handler: ElicitationHandler | None = None
         self._clients: dict[str, StdioMcpClient | HttpMcpClient | SseMcpClient] = {}
         self._tools: dict[str, tuple[str, McpTool]] = {}
 
     @classmethod
-    def from_config(cls, raw_config: dict[str, Any]) -> McpManager:
+    def from_config(
+        cls,
+        raw_config: dict[str, Any],
+        *,
+        bearer_token_resolver: BearerTokenResolver | None = None,
+    ) -> McpManager:
         servers: list[McpServerConfig] = []
         for name, payload in raw_config.items():
             if not isinstance(payload, dict):
@@ -493,7 +582,16 @@ class McpManager:
                     timeout=float(payload.get("timeout", 15.0) or 15.0),
                 )
             )
-        return cls(servers)
+        return cls(servers, bearer_token_resolver=bearer_token_resolver)
+
+    def set_elicitation_handler(self, handler: ElicitationHandler | None) -> None:
+        """Set/clear the operator callback used for MCP elicitation requests."""
+        self._elicitation_handler = handler
+        self._clients.clear()
+
+    def configured_server_names(self) -> list[str]:
+        """Return configured MCP server names in declaration order."""
+        return [server.name for server in self._servers]
 
     def build_dynamic_tool_specs(self) -> list[DynamicToolSpec]:
         specs: list[DynamicToolSpec] = []
@@ -534,11 +632,25 @@ class McpManager:
         config = next(server for server in self._servers if server.name == server_name)
         client: StdioMcpClient | HttpMcpClient | SseMcpClient
         if config.transport == "http":
-            client = HttpMcpClient(config)
+            client = HttpMcpClient(
+                config,
+                server_name=server_name,
+                bearer_token_resolver=self._bearer_token_resolver,
+                elicitation_handler=self._elicitation_handler,
+            )
         elif config.transport == "sse":
-            client = SseMcpClient(config)
+            client = SseMcpClient(
+                config,
+                server_name=server_name,
+                bearer_token_resolver=self._bearer_token_resolver,
+                elicitation_handler=self._elicitation_handler,
+            )
         else:
-            client = StdioMcpClient(config)
+            client = StdioMcpClient(
+                config,
+                server_name=server_name,
+                elicitation_handler=self._elicitation_handler,
+            )
         self._clients[server_name] = client
         return client
 

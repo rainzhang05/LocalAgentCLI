@@ -137,7 +137,7 @@ After implementing a component:
 | `[x]` | Agent loop (understand/plan/execute/observe) | 2026-03-23 — step prompts may append **Agent task status (runtime):** from `session.metadata["agent_task_state"]` (`task_context.py`, `AgentLoop.run(..., session=...)`); eligible multi-call read-only batches run concurrently with `min(batch_size, 16)` thread-pool workers (`agents/loop.py`); default step generation options now use the shared model-aware profile builder instead of hardcoded loop token caps; transcript/system context is merged into one primary step-system message with session-based instructions/environment fallback when missing; step prompt framing now uses structured execution rules/output contract/task-plan-step sections; initial execution no longer uses a separate model planning round-trip; tool-observation payload truncation is model-aware/adaptive with explicit truncation metadata instead of a fixed 4000-char slice; unified-turn execution now supports multi-round model↔tool iteration per step with a configurable round budget and model-adapted per-round tool schemas |
 | `[x]` | Task planner | 2026-03-19 — model-driven JSON plans with heuristic fallback and replan support, now generating only the minimum number of steps needed instead of a fixed 2-6 step shape |
 | `[x]` | Agent events system | 2026-03-19 — structured route, phase, plan, step, reasoning, tool, completion, stopped, timeout, and failure events rendered by the shell, with approval-risk and rollback-preview metadata flowing into the renderer |
-| `[x]` | `/agent approve` command | 2026-03-19 — resumes pending tool actions and now persists autonomous approvals across future tasks in the shell and future sessions while still forcing explicit approval for high-risk actions |
+| `[x]` | `/agent approve` command | 2026-03-26 — resumes pending tool actions and persists autonomous approvals across future tasks; high-risk actions still require explicit approval in normal postures, with the Phase 15 slice-1 exception for high-risk `shell_execute` in `danger-full-access` |
 | `[x]` | `/agent deny` command | 2026-03-19 — rejects the pending tool action and returns the loop to recovery/replanning as needed |
 | `[x]` | `/agent undo` command | 2026-03-19 — reverts the most recent rollback entry recorded for the current session and refuses to run while an agent task is active |
 | `[x]` | `/agent undo-all` command | 2026-03-19 — reverts all rollback entries recorded for the current session in reverse order and refuses to run while an agent task is active |
@@ -149,13 +149,13 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | Safety layer (central gate) | 2026-03-22 — `localagentcli/safety/layer.py` uses `SandboxPosture` for runtime sandbox checks; validates boundaries, classifies risk, explains high-risk flags, describes rollback availability, applies approval policy, records rollback history; `read-only` posture blocks side-effecting tools even in autonomous mode |
+| `[x]` | Safety layer (central gate) | 2026-03-26 — `localagentcli/safety/layer.py` uses `SandboxPosture` for runtime sandbox checks; validates boundaries, classifies risk, explains high-risk flags, describes rollback availability, applies approval policy, records rollback history; `read-only` posture blocks side-effecting tools even in autonomous mode; autonomous + `danger-full-access` now bypasses approval pauses for high-risk `shell_execute` |
 | `[x]` | Approval manager (balanced mode) | 2026-03-18 — central safety gate now enforces prompts for standard side-effecting actions and read-only high-risk actions |
-| `[x]` | Approval manager (autonomous mode) | 2026-03-19 — autonomous mode auto-approves standard actions, persists correctly across future tasks, and still pauses high-risk operations for explicit approval |
+| `[x]` | Approval manager (autonomous mode) | 2026-03-26 — autonomous mode auto-approves standard actions, persists across future tasks, and now applies sandbox-aware high-risk behavior (high-risk `shell_execute` in `danger-full-access` skips interactive approval; other high-risk actions still pause) |
 | `[x]` | Approval UX (inline prompts) | 2026-03-25 — inline prompts flush pending renderer detail before input, keep shared keyboard action flow (`approve`/`deny`/`details`/`approve all`), and now render richer tool previews including patch file-change summaries, unified diff fences (syntax highlighted by preview renderer), file-write language-fenced content previews, and explicit truncation labels |
 | `[x]` | Workspace boundary enforcement | 2026-03-18 — dedicated `WorkspaceBoundary` enforces root confinement for tool paths and shell working directories |
 | `[x]` | Symlink validation | 2026-03-18 — symlinks resolving outside the workspace root are blocked centrally and in shared path resolution helpers |
-| `[x]` | High-risk action detection | 2026-03-22 — shell commands (including extended patterns for permissive `chmod`, destructive `docker`/`kubectl` verbs) and sensitive file paths are classified centrally so high-risk actions always require approval |
+| `[x]` | High-risk action detection | 2026-03-26 — shell commands (including extended patterns for permissive `chmod`, destructive `docker`/`kubectl` verbs) and sensitive file paths are classified centrally, with sandbox-aware approval handling for autonomous `danger-full-access` shell execution |
 | `[x]` | Rollback manager (file backups) | 2026-03-18 — `RollbackManager` stores per-session backups and a JSON rollback log under `cache/rollback/` |
 | `[x]` | Undo capability | 2026-03-19 — rollback history supports `undo_last()` and `undo_all()` restoration for modified and newly created files, with Windows-safe modified-file restore behavior plus explicit `/agent undo` and `/agent undo-all` command surfaces |
 
@@ -171,7 +171,7 @@ After implementing a component:
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
-| `[x]` | Safety tests | 2026-03-22 — boundary, rollback, safety-layer, high-risk approval, read-only sandbox blocks, `parse_sandbox_mode`, and extended shell pattern coverage |
+| `[x]` | Safety tests | 2026-03-26 — boundary, rollback, safety-layer, high-risk approval, read-only sandbox blocks, `parse_sandbox_mode`, extended shell pattern coverage, and autonomous `danger-full-access` high-risk shell approval scenarios |
 | `[x]` | Cross-platform testing (macOS) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Linux) | 2026-03-17 — via CI matrix |
 | `[x]` | Cross-platform testing (Windows) | 2026-03-18 — added `windows-latest` to the GitHub Actions test matrix |
@@ -201,7 +201,7 @@ After implementing a component:
 | `[x]` | `docs/agent-system.md` | 2026-03-22 — entry requirements now explicitly include posture/tradeoff wording for readiness-based agent-mode rejections |
 | `[x]` | `docs/tool-system.md` | 2026-03-26 — now documents feature-gated turn-boundary MCP tool inventory refresh (`features.mcp_tool_inventory_refresh`) in addition to schema and parallel read-only batch rules |
 | `[x]` | `docs/mcp.md` | 2026-03-26 — transport config now covers `stdio`/`http`/`sse`, plus HTTP headers and optional bearer-token env injection, while keeping OAuth/eliciation/skills-runtime limitations explicit |
-| `[x]` | `docs/safety-and-permissions.md` | 2026-03-22 — MCP `readOnlyHint` approval table rows; autonomous mode wording includes MCP tools that require approval |
+| `[x]` | `docs/safety-and-permissions.md` | 2026-03-26 — MCP `readOnlyHint` approval table rows, autonomous mode wording, and explicit sandbox-aware high-risk approval exception (`danger-full-access` + high-risk `shell_execute`) |
 | `[x]` | `docs/session-and-config.md` | 2026-03-22 — `[mcp_servers]` example comments reference MCP doc and optional `env` / `timeout` keys |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |

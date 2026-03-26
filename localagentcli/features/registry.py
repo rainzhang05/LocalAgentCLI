@@ -36,6 +36,7 @@ class Feature(str, Enum):
 
     # Example feature for future roadmap work
     TOOL_MCP_OAUTH = "tool_mcp_oauth"
+    MCP_TOOL_INVENTORY_REFRESH = "mcp_tool_inventory_refresh"
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,12 @@ FEATURES: tuple[FeatureSpec, ...] = (
         stage=FeatureStage.UNDER_DEVELOPMENT,
         default_enabled=False,
         description="Support for MCP OAuth workflows.",
+    ),
+    FeatureSpec(
+        id=Feature.MCP_TOOL_INVENTORY_REFRESH,
+        stage=FeatureStage.UNDER_DEVELOPMENT,
+        default_enabled=False,
+        description="Refresh MCP-backed tool inventory between agent turns.",
     ),
 )
 

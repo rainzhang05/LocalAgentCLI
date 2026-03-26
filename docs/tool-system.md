@@ -121,6 +121,13 @@ The system uses a hybrid approach:
 - **Safety**: Requires approval (executes commands)
 - **Output**: Parsed test results when possible (pass/fail counts, failed test names)
 
+#### `python_repl_execute`
+- **Purpose**: Execute Python code snippets for computational/transform tasks
+- **Arguments**: `code` (str, required), `timeout` (int, optional — seconds, default 30)
+- **Behavior**: Runs `python -c <code>` in a subprocess rooted at the workspace and returns combined stdout/stderr plus exit code.
+- **Safety**: Requires approval (executes arbitrary code)
+- **Design note**: This is an intentional Phase 14 baseline divergence from Codex's V8 embedding approach; LocalAgentCLI uses Python-native subprocess execution for now.
+
 ### Git Operations
 
 #### `git_status`

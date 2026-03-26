@@ -42,11 +42,13 @@ class ModelAbstractionLayer:
         """Generate a streaming response."""
         capture = _CapturedOutput()
         normalizer = EmbeddedStreamNormalizer()
+        saw_done = False
 
         with redirect_stdout(capture), redirect_stderr(capture):
             for raw_chunk in self._backend.stream_generate(messages, **kwargs):
                 yield from self._drain_captured_output(capture)
                 if raw_chunk.is_done:
+                    saw_done = True
                     yield from normalizer.flush()
                     yield raw_chunk
                     continue
@@ -54,6 +56,8 @@ class ModelAbstractionLayer:
 
         yield from self._drain_captured_output(capture, final=True)
         yield from normalizer.flush()
+        if not saw_done:
+            yield StreamChunk(kind="done", is_done=True)
 
     async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> GenerationResult:
         """Async complete response from the normalized streaming pipeline."""
@@ -75,6 +79,7 @@ class ModelAbstractionLayer:
     ) -> AsyncIterator[StreamChunk]:
         capture = _CapturedOutput()
         normalizer = EmbeddedStreamNormalizer()
+        saw_done = False
         remote = self._backend
         assert isinstance(remote, RemoteProvider)
         with redirect_stdout(capture), redirect_stderr(capture):
@@ -86,6 +91,7 @@ class ModelAbstractionLayer:
                 for line in self._drain_captured_output(capture):
                     yield line
                 if raw_chunk.is_done:
+                    saw_done = True
                     for part in normalizer.flush():
                         yield part
                     yield raw_chunk
@@ -96,6 +102,8 @@ class ModelAbstractionLayer:
             yield line
         for part in normalizer.flush():
             yield part
+        if not saw_done:
+            yield StreamChunk(kind="done", is_done=True)
 
     async def _astream_local_threaded(
         self, messages: list[ModelMessage], **kwargs: object
@@ -130,6 +138,7 @@ class ModelAbstractionLayer:
         thread = threading.Thread(target=worker, name="localagentcli-model-stream", daemon=True)
         thread.start()
         normalizer = EmbeddedStreamNormalizer()
+        saw_done = False
         try:
             while True:
                 kind, payload = await queue.get()
@@ -144,6 +153,7 @@ class ModelAbstractionLayer:
                     raw_chunk = payload
                     assert isinstance(raw_chunk, StreamChunk)
                     if raw_chunk.is_done:
+                        saw_done = True
                         for part in normalizer.flush():
                             yield part
                         yield raw_chunk
@@ -152,6 +162,8 @@ class ModelAbstractionLayer:
                         yield part
             for part in normalizer.flush():
                 yield part
+            if not saw_done:
+                yield StreamChunk(kind="done", is_done=True)
         finally:
             self._backend.cancel()
             thread.join(timeout=30.0)

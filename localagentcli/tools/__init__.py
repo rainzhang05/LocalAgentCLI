@@ -10,7 +10,9 @@ from localagentcli.tools.exec_process import (
     ExecProcess,
     ExecProcessResult,
     LocalExecProcess,
+    OSSandboxExecProcess,
     RemoteExecProcess,
+    build_shell_exec_process,
 )
 from localagentcli.tools.file_read import FileReadTool
 from localagentcli.tools.file_search import FileSearchTool
@@ -26,7 +28,11 @@ from localagentcli.tools.shell_execute import ShellExecuteTool
 from localagentcli.tools.test_execute import TestExecuteTool
 
 
-def create_default_tool_registry(workspace_root: Path) -> ToolRegistry:
+def create_default_tool_registry(
+    workspace_root: Path,
+    *,
+    shell_exec_process: ExecProcess | None = None,
+) -> ToolRegistry:
     """Build a registry containing the core Phase 5 tools."""
     registry = ToolRegistry()
     for tool in [
@@ -36,7 +42,7 @@ def create_default_tool_registry(workspace_root: Path) -> ToolRegistry:
         FileWriteTool(workspace_root),
         PatchApplyTool(workspace_root),
         PythonReplTool(workspace_root),
-        ShellExecuteTool(workspace_root),
+        ShellExecuteTool(workspace_root, exec_process=shell_exec_process),
         TestExecuteTool(workspace_root),
         GitStatusTool(workspace_root),
         GitDiffTool(workspace_root),
@@ -54,7 +60,9 @@ __all__ = [
     "ExecProcess",
     "ExecProcessResult",
     "LocalExecProcess",
+    "OSSandboxExecProcess",
     "RemoteExecProcess",
+    "build_shell_exec_process",
     "DynamicToolSpec",
     "PythonReplTool",
     "create_default_tool_registry",

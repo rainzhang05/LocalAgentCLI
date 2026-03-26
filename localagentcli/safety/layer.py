@@ -9,6 +9,7 @@ from pathlib import Path
 
 from localagentcli.safety.approval import ApprovalManager, RiskLevel
 from localagentcli.safety.boundary import WorkspaceBoundary, WorkspaceBoundaryError
+from localagentcli.safety.policy import RuntimeSandboxPolicy
 from localagentcli.safety.posture import SandboxPosture, parse_sandbox_mode
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.tools.base import Tool, ToolResult
@@ -89,6 +90,10 @@ class SafetyLayer:
             if isinstance(sandbox_mode, SandboxPosture)
             else parse_sandbox_mode(sandbox_mode)
         )
+        self._sandbox_policy = RuntimeSandboxPolicy.from_posture(
+            self._sandbox_posture,
+            self._boundary.root,
+        )
 
     @property
     def rollback(self) -> RollbackManager:
@@ -120,7 +125,7 @@ class SafetyLayer:
         if self._approval.needs_approval(
             tool,
             risk_level,
-            sandbox_posture=self._sandbox_posture,
+            sandbox_posture=self._sandbox_policy.posture,
         ):
             return ApprovalResult(
                 status="needs_approval",
@@ -147,12 +152,21 @@ class SafetyLayer:
         """Return the active typed sandbox posture."""
         return self._sandbox_posture
 
+    @property
+    def sandbox_policy(self) -> RuntimeSandboxPolicy:
+        """Return the active typed runtime sandbox policy."""
+        return self._sandbox_policy
+
     def set_sandbox_mode(self, sandbox_mode: str | SandboxPosture) -> None:
         """Update the active runtime sandbox mode."""
         self._sandbox_posture = (
             sandbox_mode
             if isinstance(sandbox_mode, SandboxPosture)
             else parse_sandbox_mode(sandbox_mode)
+        )
+        self._sandbox_policy = RuntimeSandboxPolicy.from_posture(
+            self._sandbox_posture,
+            self._boundary.root,
         )
 
     def pre_action(self, tool: Tool, args: dict) -> None:

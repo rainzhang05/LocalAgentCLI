@@ -159,6 +159,9 @@ class ChatController:
         if assistant_text or reasoning_text:
             metadata: dict[str, object] = {
                 "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+                "response_mode": "chat",
+                "response_model": self._session.model,
+                "response_provider": self._session.provider,
             }
             if reasoning_text:
                 metadata["reasoning"] = reasoning_text
@@ -197,6 +200,9 @@ class ChatController:
         if assistant_text or reasoning_text:
             metadata: dict[str, object] = {
                 "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+                "response_mode": "chat",
+                "response_model": self._session.model,
+                "response_provider": self._session.provider,
             }
             if reasoning_text:
                 metadata["reasoning"] = reasoning_text

@@ -31,6 +31,15 @@ class TestDefaultConfig:
     def test_default_temperature(self):
         assert DEFAULT_CONFIG["generation"]["temperature"] == 0.7
 
+    def test_shell_ux_defaults_present(self):
+        shell = DEFAULT_CONFIG["shell"]
+        assert shell["thinking_indicator_enabled"] is True
+        assert shell["thinking_indicator_style"] == "dots"
+        assert shell["thinking_animation_interval_ms"] == 120
+        assert shell["theme"] == "default"
+        assert shell["notification_dedupe"] is True
+        assert shell["startup_banner"] is True
+
     def test_get_default_config_returns_deep_copy(self):
         c1 = get_default_config()
         c2 = get_default_config()
@@ -112,6 +121,36 @@ class TestValidateConfigValue:
 
     def test_shell_persistent_details_lane_string_coercion(self):
         ok, msg = validate_config_value("shell.persistent_details_lane", "false")
+        assert ok
+        assert msg == ""
+
+    def test_shell_thinking_indicator_style_valid(self):
+        for value in ("dots", "line", "pulse"):
+            ok, msg = validate_config_value("shell.thinking_indicator_style", value)
+            assert ok, msg
+
+    def test_shell_thinking_indicator_style_invalid(self):
+        ok, msg = validate_config_value("shell.thinking_indicator_style", "spiral")
+        assert not ok
+
+    def test_shell_thinking_animation_interval_minimum(self):
+        ok, msg = validate_config_value("shell.thinking_animation_interval_ms", 60)
+        assert ok, msg
+        ok, msg = validate_config_value("shell.thinking_animation_interval_ms", 10)
+        assert not ok
+
+    def test_shell_theme_valid_values(self):
+        for value in ("default", "high-contrast", "mono"):
+            ok, msg = validate_config_value("shell.theme", value)
+            assert ok, msg
+
+    def test_shell_notification_dedupe_bool(self):
+        ok, msg = validate_config_value("shell.notification_dedupe", True)
+        assert ok
+        assert msg == ""
+
+    def test_shell_startup_banner_coercion(self):
+        ok, msg = validate_config_value("shell.startup_banner", "true")
         assert ok
         assert msg == ""
 
@@ -207,6 +246,11 @@ class TestCoerceValue:
     def test_coerce_shell_bool(self):
         assert coerce_value("shell.persistent_details_lane", "true") is True
         assert coerce_value("shell.persistent_details_lane", "false") is False
+
+    def test_coerce_new_shell_bool_fields(self):
+        assert coerce_value("shell.thinking_indicator_enabled", "true") is True
+        assert coerce_value("shell.notification_dedupe", "false") is False
+        assert coerce_value("shell.startup_banner", "true") is True
 
     def test_coerce_features_bool(self):
         assert coerce_value("features.dummy_feature", "true") is True

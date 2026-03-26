@@ -11,6 +11,11 @@ This document describes how LocalAgentCLI connects to MCP servers, how discovere
 	- `http` (JSON-RPC over HTTP POST)
 	- `sse` (HTTP POST with `text/event-stream` response payload)
 - **Protocol**: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call` against protocol version `2024-11-05`.
+- **Auth (baseline)**:
+	- static bearer token via `http_headers.Authorization`
+	- bearer token from env via `bearer_token_env_var`
+	- bearer token from local secure key storage via `/mcp login <server>`
+- **Elicitation (baseline)**: if an MCP server returns an elicitation request payload, LocalAgentCLI can prompt the operator for requested fields and continue the tool call with an `elicitationResponse` payload.
 - **Models**: MCP tools are ordinary function tools in the model’s tool list. They work with **local** and **remote** targets the same way as built-in tools.
 
 ---
@@ -30,6 +35,11 @@ Each server is a nested table under `[mcp_servers.<name>]`:
 | `http_headers` | No (`http`/`sse`) | Extra HTTP headers to include on every request. |
 | `bearer_token_env_var` | No (`http`/`sse`) | Environment variable name containing a bearer token. If set and no `Authorization` header is provided explicitly, LocalAgentCLI sends `Authorization: Bearer <token>`. |
 | `timeout` | No | Per-request I/O timeout in seconds for reading MCP responses (default `15`). If a read times out, the server process is terminated and the next tool use starts a fresh connection. |
+
+For operator-managed token storage, use:
+
+- `/mcp login <server> [token]`
+- `/mcp logout <server>`
 
 Empty or invalid server entries are skipped when the manager is built.
 
@@ -76,7 +86,8 @@ Treat optional future “skill packs” (curated prompt overlays or tool bundles
 
 ## Limitations (current release)
 
-- **No OAuth**, resource subscriptions, or interactive **elicitation** flows.
+- No full browser/device OAuth automation (interactive token minting must be done out-of-band and then stored with `/mcp login`).
+- Elicitation support is baseline and schema-driven; advanced protocol-specific elicitation variants may need follow-on hardening.
 - **No guarantee** that a misbehaving or malicious MCP server is confined beyond process boundaries; operators should only configure servers they trust.
 
 ---

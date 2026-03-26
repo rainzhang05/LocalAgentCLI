@@ -584,6 +584,28 @@ class OpenAIProvider(RemoteProvider):
             data = json.loads(data_str)
         except json.JSONDecodeError:
             return []
+
+        raw_error = data.get("error")
+        if raw_error:
+            if isinstance(raw_error, dict):
+                error_text = str(
+                    raw_error.get("message")
+                    or raw_error.get("type")
+                    or raw_error.get("code")
+                    or "Provider stream error"
+                )
+            else:
+                error_text = str(raw_error)
+            return [
+                StreamChunk(text=error_text, kind="error", importance="secondary"),
+                StreamChunk(
+                    kind="done",
+                    is_done=True,
+                    usage={"error": error_text},
+                    payload={"finish_reason": "error"},
+                ),
+            ]
+
         choices = data.get("choices", [])
         if not choices:
             return []

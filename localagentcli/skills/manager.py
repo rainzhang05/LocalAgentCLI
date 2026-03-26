@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import shutil
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,6 +109,64 @@ class SkillsManager:
         doc = self._read_skill_file(skill_file, source="installed")
         shutil.rmtree(skill_dir)
         return doc
+
+    def sync_from_manifest_url(
+        self,
+        manifest_url: str,
+        *,
+        timeout: float = 20.0,
+    ) -> list[SkillDocument]:
+        """Sync skills from remote JSON manifest.
+
+        Expected schema:
+        {
+          "skills": [
+            {"name": "example", "url": "https://.../SKILL.md"}
+          ]
+        }
+        """
+        payload = self._load_manifest(manifest_url, timeout=timeout)
+        entries = payload.get("skills", []) if isinstance(payload, dict) else []
+        if not isinstance(entries, list):
+            return []
+
+        installed_names = {skill.name for skill in self.list_installed()}
+        synced: list[SkillDocument] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name", "")).strip()
+            url = str(entry.get("url", "")).strip()
+            if not name or not url or name in installed_names:
+                continue
+
+            content = self._download_text(url, timeout=timeout).strip()
+            if not content:
+                continue
+
+            destination_dir = self._skills_dir / name
+            if destination_dir.exists():
+                continue
+            destination_dir.mkdir(parents=True, exist_ok=False)
+            skill_path = destination_dir / SKILL_FILENAME
+            skill_path.write_text(content + "\n", encoding="utf-8")
+            synced_doc = self._read_skill_file(skill_path, source="installed")
+            synced.append(synced_doc)
+            installed_names.add(name)
+        return synced
+
+    def _load_manifest(self, manifest_url: str, *, timeout: float) -> dict:
+        with urllib.request.urlopen(manifest_url, timeout=max(timeout, 0.1)) as response:
+            content = response.read().decode("utf-8", errors="replace")
+        payload = json.loads(content)
+        return payload if isinstance(payload, dict) else {}
+
+    def _download_text(self, url: str, *, timeout: float) -> str:
+        with urllib.request.urlopen(url, timeout=max(timeout, 0.1)) as response:
+            payload = response.read()
+        if isinstance(payload, bytes):
+            return payload.decode("utf-8", errors="replace")
+        return str(payload)
 
     def _read_skill_file(self, skill_file: Path, *, source: str) -> SkillDocument:
         content = skill_file.read_text(encoding="utf-8").strip()

@@ -696,7 +696,7 @@ class TestShellUIStatusToolbar:
 
         banner = ui._console.print.call_args_list[1][0][0]
         assert isinstance(banner, Panel)
-        assert str(banner.title) == "LocalAgent CLI v0.1.0"
+        assert str(banner.title) == "LocalAgent CLI v0.2.0"
         assert "Mode:" in str(banner.renderable)
 
     def test_display_welcome_falls_back_when_startup_banner_disabled(self, config, storage):
@@ -708,7 +708,7 @@ class TestShellUIStatusToolbar:
 
         title = ui._console.print.call_args_list[1][0][0]
         assert isinstance(title, Text)
-        assert title.plain == "LocalAgent CLI v0.1.0"
+        assert title.plain == "LocalAgent CLI v0.2.0"
 
     def test_context_limit_uses_registered_model_metadata(self, config, storage, tmp_path: Path):
         ui = ShellUI(config=config, storage=storage)

@@ -55,6 +55,12 @@ All persistent data is stored under `~/.localagent/`:
 
 Runtime event logs (`cache/runtime-events/<session-id>.jsonl`) are append-only and are used for best-effort session replay reconciliation during `/session load`.
 
+When SQLite sessions are enabled, migration state is tracked inside `sessions.db` in `schema_migrations`.
+
+Long-horizon memory entries are stored in `sessions.db` table `session_memories` (workspace-scoped, ordered by recency).
+
+Unnamed autosaves (generated names like `autosave_<session-id>`) are pruned by retention policy (`sessions.autosave_unnamed_retention_days`), along with stale runtime-event log files.
+
 Installer download telemetry is append-only JSONL (`install_telemetry.jsonl`).
 Current records use telemetry schema version `2` and include completion-path and
 cache/download counters for completion recap diagnostics.

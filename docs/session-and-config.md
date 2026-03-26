@@ -78,6 +78,9 @@ sqlite_session_store = false         # When true, sessions persist in ~/.localag
 
 [sessions]
 autosave_named = false              # When true, debounce-save named sessions during interactive chat/agent work
+autosave_unnamed = false            # When true, debounce-save unnamed sessions to generated autosave IDs
+autosave_unnamed_prefix = "autosave_" # Prefix used for generated unnamed autosave session names
+autosave_unnamed_retention_days = 14 # Retention window for unnamed autosaves and old runtime logs
 autosave_debounce_seconds = 2       # Minimum quiet period before writing (seconds); must be > 0
 
 [shell]
@@ -118,6 +121,9 @@ startup_banner = true              # Show a startup context banner with mode/tar
 | `shell.notification_dedupe` | bool | `true` | Deduplicates adjacent identical structured notifications before rendering |
 | `shell.startup_banner` | bool | `true` | Controls startup context banner rendering in interactive shell sessions |
 | `sessions.autosave_named` | bool | `false` | When `true`, the interactive shell debounce-saves the current session to its saved name after chat/agent mutations (only applies when the session already has a name from `/session save`) |
+| `sessions.autosave_unnamed` | bool | `false` | When `true`, unnamed sessions are debounce-saved using generated autosave names (does not rename the live in-memory session) |
+| `sessions.autosave_unnamed_prefix` | string | `"autosave_"` | Prefix for generated unnamed autosave session names |
+| `sessions.autosave_unnamed_retention_days` | int | `14` | Retention window for pruning old unnamed autosaves and stale runtime-event logs |
 | `sessions.autosave_debounce_seconds` | int | `2` | Debounce interval for named autosaves; must be greater than zero |
 
 ### ConfigManager
@@ -248,6 +254,8 @@ When `sessions.autosave_named` is `true` in config (session overrides apply), th
 - **Failures** during autosave are ignored (best-effort); interactive use continues.
 - Default is **`false`** so disk writes stay opt-in.
 
+When `sessions.autosave_unnamed=true`, unnamed sessions are persisted under generated IDs (`<autosave_unnamed_prefix><session-id>`) while keeping the live in-memory session unnamed. `sessions.autosave_unnamed_retention_days` controls cleanup of older unnamed autosaves and stale runtime-event logs.
+
 #### Session file format version
 
 Saved session payloads include `format_version` (currently `1`) for forward compatibility. Older JSON files without this field still load; the next save writes the current version.
@@ -261,6 +269,8 @@ When `features.sqlite_session_store` is enabled:
 - Legacy JSON session files remain supported as compatibility inputs: if a named session is not present in SQLite but exists as JSON, load succeeds and the session is best-effort migrated into SQLite.
 - If SQLite initialization fails at startup, LocalAgentCLI falls back to the JSON store for safety.
 
+SQLite schema changes are applied through ordered SQL migrations under `localagentcli/session/migrations/` and tracked in `schema_migrations`, enabling versioned upgrades beyond the initial schema.
+
 #### Runtime JSONL replay reconciliation
 
 On `/session load`, LocalAgentCLI performs a best-effort reconciliation pass using append-only runtime event logs under `~/.localagent/cache/runtime-events/<session-id>.jsonl`:
@@ -269,6 +279,15 @@ On `/session load`, LocalAgentCLI performs a best-effort reconciliation pass usi
 - Recovery is conservative and idempotent for previously saved user/assistant pairs (duplicate pairs are skipped).
 - Invalid/corrupt JSONL lines are ignored rather than failing session load.
 - Replay metadata is recorded under `session.metadata.runtime_replay` for observability.
+
+#### Long-horizon memory (workspace scoped)
+
+When SQLite sessions are enabled, LocalAgentCLI also maintains a workspace-scoped memory table (`session_memories`) for durable context beyond immediate session snapshots:
+
+- Memory candidates are extracted conservatively from compaction summaries (`is_summary=True`) and explicitly tagged assistant memory candidates.
+- Memory rows are persisted per session/workspace and deduplicated per session content.
+- On session load, the newest workspace memories are merged into `session.metadata.long_horizon_memory`.
+- System prompt assembly appends a compact `Long-horizon memory:` block when memory entries are present.
 
 #### List
 

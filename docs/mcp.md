@@ -15,6 +15,7 @@ This document describes how LocalAgentCLI connects to MCP servers, how discovere
 	- static bearer token via `http_headers.Authorization`
 	- bearer token from env via `bearer_token_env_var`
 	- bearer token from local secure key storage via `/mcp login <server>`
+	- OAuth code flow baseline via `/mcp oauth <server>` when OAuth fields are configured
 - **Elicitation (baseline)**: if an MCP server returns an elicitation request payload, LocalAgentCLI can prompt the operator for requested fields and continue the tool call with an `elicitationResponse` payload.
 - **Models**: MCP tools are ordinary function tools in the model’s tool list. They work with **local** and **remote** targets the same way as built-in tools.
 
@@ -34,12 +35,19 @@ Each server is a nested table under `[mcp_servers.<name>]`:
 | `url` | Yes for `http`/`sse` | Endpoint used for MCP JSON-RPC requests. |
 | `http_headers` | No (`http`/`sse`) | Extra HTTP headers to include on every request. |
 | `bearer_token_env_var` | No (`http`/`sse`) | Environment variable name containing a bearer token. If set and no `Authorization` header is provided explicitly, LocalAgentCLI sends `Authorization: Bearer <token>`. |
+| `oauth_authorize_url` | No (`http`/`sse`) | OAuth authorize endpoint used by `/mcp oauth`. |
+| `oauth_token_url` | No (`http`/`sse`) | OAuth token endpoint used by `/mcp oauth`. |
+| `oauth_client_id` | No (`http`/`sse`) | OAuth client id used by `/mcp oauth`. |
+| `oauth_redirect_uri` | No (`http`/`sse`) | Redirect URI for authorization-code flow (default: `urn:ietf:wg:oauth:2.0:oob`). |
+| `oauth_scopes` | No (`http`/`sse`) | OAuth scopes list passed to authorization endpoint. |
+| `oauth_client_secret_env_var` | No (`http`/`sse`) | Optional name shown when prompting for client secret during token exchange. |
 | `timeout` | No | Per-request I/O timeout in seconds for reading MCP responses (default `15`). If a read times out, the server process is terminated and the next tool use starts a fresh connection. |
 
 For operator-managed token storage, use:
 
 - `/mcp login <server> [token]`
 - `/mcp logout <server>`
+- `/mcp oauth <server>`
 
 Empty or invalid server entries are skipped when the manager is built.
 
@@ -87,9 +95,9 @@ Repository-root **`AGENTS.md`** and session-pinned instructions remain supported
 
 ## Limitations (current release)
 
-- No full browser/device OAuth automation (interactive token minting must be done out-of-band and then stored with `/mcp login`).
+- OAuth support is baseline authorization-code flow; richer provider-specific device-flow and callback automation remain follow-on work.
 - Elicitation support is baseline and schema-driven; advanced protocol-specific elicitation variants may need follow-on hardening.
-- Skills runtime is baseline/local-only; remote skill registries and richer skill package metadata are follow-on work.
+- Skills runtime is baseline/local + remote-manifest sync; richer registry and package metadata flows are follow-on work.
 - **No guarantee** that a misbehaving or malicious MCP server is confined beyond process boundaries; operators should only configure servers they trust.
 
 ---

@@ -6,6 +6,12 @@ from pathlib import Path
 
 from localagentcli.tools.base import Tool, ToolResult
 from localagentcli.tools.directory_list import DirectoryListTool
+from localagentcli.tools.exec_process import (
+    ExecProcess,
+    ExecProcessResult,
+    LocalExecProcess,
+    RemoteExecProcess,
+)
 from localagentcli.tools.file_read import FileReadTool
 from localagentcli.tools.file_search import FileSearchTool
 from localagentcli.tools.file_write import FileWriteTool
@@ -45,6 +51,10 @@ __all__ = [
     "ToolRegistry",
     "ToolRouter",
     "ToolResult",
+    "ExecProcess",
+    "ExecProcessResult",
+    "LocalExecProcess",
+    "RemoteExecProcess",
     "DynamicToolSpec",
     "PythonReplTool",
     "create_default_tool_registry",

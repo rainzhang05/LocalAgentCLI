@@ -195,6 +195,8 @@ class TestSafetyLayer:
         )
         assert safety.sandbox_mode == "read-only"
         assert safety.sandbox_posture is SandboxPosture.READ_ONLY
+        assert safety.sandbox_policy.posture is SandboxPosture.READ_ONLY
+        assert safety.sandbox_policy.network_access is False
 
     def test_set_sandbox_mode_accepts_string_and_enum(self, tmp_path: Path):
         safety = _make_safety(tmp_path)

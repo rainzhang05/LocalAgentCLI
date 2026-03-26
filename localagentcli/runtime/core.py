@@ -350,6 +350,7 @@ class SessionExecutionRuntime:
             return None
 
         agent_controller = self.get_or_create_agent_controller(model)
+        self._refresh_agent_tool_registry_if_enabled(agent_controller)
         if agent_controller.has_active_task:
             self._emit_message(
                 "error",
@@ -479,6 +480,15 @@ class SessionExecutionRuntime:
         self._agent_controller = self.create_agent_controller(model)
         self._agent_controller_key = key
         return self._agent_controller
+
+    def _refresh_agent_tool_registry_if_enabled(self, controller: AgentController) -> None:
+        """Refresh tool inventory between turns when enabled by feature flag."""
+        enabled = bool(self._services.feature_registry.is_enabled("mcp_tool_inventory_refresh"))
+        if not enabled:
+            return
+        if controller.has_active_task:
+            return
+        controller.set_tool_registry(self._services.build_tool_router(self.workspace_root()))
 
     def create_agent_controller(self, model: ModelAbstractionLayer) -> AgentController:
         """Build or replace the active agent controller for the current session."""

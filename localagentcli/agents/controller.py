@@ -394,7 +394,13 @@ class AgentController:
                 role="assistant",
                 content=reason,
                 timestamp=datetime.now(),
-                metadata={"agent_task": "stopped"},
+                metadata={
+                    "agent_task": "stopped",
+                    "response_mode": "agent",
+                    "response_model": self._session.model,
+                    "response_provider": self._session.provider,
+                    "response_route": self.task_state.get("route", ""),
+                },
             )
         )
         self._update_task_state(
@@ -596,6 +602,10 @@ class AgentController:
                     metadata={
                         "agent_task": "completed",
                         "triage": self.task_state.get("route", ""),
+                        "response_mode": "agent",
+                        "response_model": self._session.model,
+                        "response_provider": self._session.provider,
+                        "response_route": self.task_state.get("route", ""),
                     },
                 )
             )
@@ -615,7 +625,13 @@ class AgentController:
                     role="assistant",
                     content=event.reason,
                     timestamp=datetime.now(),
-                    metadata={"agent_task": "stopped"},
+                    metadata={
+                        "agent_task": "stopped",
+                        "response_mode": "agent",
+                        "response_model": self._session.model,
+                        "response_provider": self._session.provider,
+                        "response_route": self.task_state.get("route", ""),
+                    },
                 )
             )
             self._finish_task()
@@ -634,7 +650,13 @@ class AgentController:
                     role="assistant",
                     content=event.reason,
                     timestamp=datetime.now(),
-                    metadata={"agent_task": "timed_out"},
+                    metadata={
+                        "agent_task": "timed_out",
+                        "response_mode": "agent",
+                        "response_model": self._session.model,
+                        "response_provider": self._session.provider,
+                        "response_route": self.task_state.get("route", ""),
+                    },
                 )
             )
             self._finish_task()
@@ -654,7 +676,13 @@ class AgentController:
                     role="assistant",
                     content=event.reason,
                     timestamp=datetime.now(),
-                    metadata={"agent_task": "failed"},
+                    metadata={
+                        "agent_task": "failed",
+                        "response_mode": "agent",
+                        "response_model": self._session.model,
+                        "response_provider": self._session.provider,
+                        "response_route": self.task_state.get("route", ""),
+                    },
                 )
             )
             self._finish_task()
@@ -757,6 +785,10 @@ class AgentController:
                             ),
                             "reasoning": reasoning_text,
                             "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+                            "response_mode": "agent",
+                            "response_model": self._session.model,
+                            "response_provider": self._session.provider,
+                            "response_route": "direct_answer",
                         },
                     )
                 )
@@ -806,6 +838,10 @@ class AgentController:
                             ),
                             "reasoning": reasoning_text,
                             "chunks": [chunk.to_dict() for chunk in chunks if not chunk.is_done],
+                            "response_mode": "agent",
+                            "response_model": self._session.model,
+                            "response_provider": self._session.provider,
+                            "response_route": "direct_answer",
                         },
                     )
                 )

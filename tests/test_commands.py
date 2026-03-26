@@ -63,12 +63,12 @@ def _make_router(config, session_manager, tmp_path=None):
         km._keyring_available = False
         registry = ProviderRegistry(config, km)
         mcp_manager = McpManager.from_config(config.get("mcp_servers", {}))
-        plugin_manager = PluginManager(tmp_path / "plugins")
+        plugin_manager = PluginManager(tmp_path / "installed_plugins")
         skills_manager = SkillsManager(tmp_path / "skills")
         model_registry = ModelRegistry(tmp_path / "registry.json")
         hf_token_cmd.register(router, km)
         mcp_cmd.register(router, mcp_manager, km)
-        plugin_cmd.register(router, plugin_manager)
+        plugin_cmd.register(router, plugin_manager, lambda: tmp_path)
         skills_cmd.register(router, skills_manager)
         providers_cmd.register(router, registry, km, session_manager, config, console)
         set_cmd.register(
@@ -441,6 +441,23 @@ class TestPluginCommands:
 
         listed_again = router.dispatch("plugin list")
         assert "No local plugins installed" in listed_again.message
+
+    def test_plugin_discover_and_sync_from_workspace(self, config, session_manager, tmp_path):
+        (tmp_path / "plugins" / "workspace_demo").mkdir(parents=True)
+        (tmp_path / "plugins" / "workspace_demo" / "README.md").write_text(
+            "workspace plugin",
+            encoding="utf-8",
+        )
+
+        router = _make_router(config, session_manager, tmp_path)
+
+        discover = router.dispatch("plugin discover")
+        assert discover.success
+        assert "workspace_demo" in discover.message
+
+        sync = router.dispatch("plugin sync")
+        assert sync.success
+        assert "workspace_demo" in sync.message
 
 
 class TestSkillsCommands:

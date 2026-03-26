@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 
 import pytest
@@ -270,3 +271,52 @@ class TestSessionNamedAutosave:
         config.set("sessions.autosave_named", True)
         session_manager.schedule_named_autosave()
         session_manager.cancel_named_autosave_timer()
+
+
+class TestSessionUnnamedAutosave:
+    def test_flush_persists_unnamed_session_when_enabled(self, session_manager, config):
+        config.set("sessions.autosave_named", False)
+        config.set("sessions.autosave_unnamed", True)
+        session_manager.current.history.append(
+            Message(role="user", content="volatile", timestamp=datetime.now())
+        )
+
+        session_manager.flush_named_autosave()
+
+        generated = session_manager.current.metadata.get("autosave_generated_name")
+        assert isinstance(generated, str)
+        assert generated.startswith("autosave_")
+        assert session_manager.current.name is None
+
+        restored = session_manager.load_session(generated)
+        assert len(restored.history) == 1
+        assert restored.history[0].content == "volatile"
+
+    def test_prune_unnamed_autosaves_removes_old_json_and_runtime_logs(
+        self, session_manager, config, storage
+    ):
+        config.set("sessions.autosave_unnamed", True)
+        config.set("sessions.autosave_unnamed_retention_days", 1)
+        session_manager.current.history.append(
+            Message(role="user", content="old", timestamp=datetime.now())
+        )
+        session_manager.flush_named_autosave()
+
+        generated = str(session_manager.current.metadata["autosave_generated_name"])
+        autosave_path = storage.sessions_dir / f"{generated}.json"
+        assert autosave_path.exists()
+
+        runtime_dir = storage.cache_dir / "runtime-events"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        stale_log = runtime_dir / "stale.jsonl"
+        stale_log.write_text("{}\n", encoding="utf-8")
+
+        old_ts = datetime(2000, 1, 1).timestamp()
+        os.utime(autosave_path, (old_ts, old_ts))
+        os.utime(stale_log, (old_ts, old_ts))
+
+        removed = session_manager.prune_unnamed_autosaves()
+
+        assert removed >= 2
+        assert not autosave_path.exists()
+        assert not stale_log.exists()

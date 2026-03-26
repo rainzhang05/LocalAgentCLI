@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from localagentcli.safety.exec_policy import requires_tool_approval
+from localagentcli.safety.posture import SandboxPosture
 from localagentcli.tools.base import Tool
 
 
@@ -26,15 +28,22 @@ class ApprovalManager:
         """Return the current approval mode."""
         return self._mode
 
-    def needs_approval(self, tool: Tool, risk_level: RiskLevel) -> bool:
+    def needs_approval(
+        self,
+        tool: Tool,
+        risk_level: RiskLevel,
+        *,
+        sandbox_posture: SandboxPosture = SandboxPosture.WORKSPACE_WRITE,
+    ) -> bool:
         """Determine whether the tool needs explicit approval."""
-        if risk_level == RiskLevel.HIGH:
-            return True
-        if tool.is_read_only:
-            return False
-        if not tool.requires_approval:
-            return False
-        return self._mode != "autonomous"
+        return requires_tool_approval(
+            tool_name=tool.name,
+            tool_is_read_only=tool.is_read_only,
+            tool_requires_approval=tool.requires_approval,
+            risk_level=risk_level.value,
+            approval_mode=self._mode,
+            sandbox_posture=sandbox_posture,
+        )
 
     def set_autonomous(self, *, persist_default: bool = True) -> None:
         """Enable autonomous approvals for the current task."""

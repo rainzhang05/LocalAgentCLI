@@ -37,6 +37,40 @@ class PluginManager:
             plugins.append(LocalPlugin(name=plugin_name, path=entry, kind=kind))
         return plugins
 
+    def discover_workspace_plugins(self, workspace: Path) -> list[LocalPlugin]:
+        """Discover plugin-like artifacts in common workspace plugin directories."""
+        root = workspace.expanduser().resolve()
+        if not root.exists():
+            return []
+
+        discovered: dict[str, LocalPlugin] = {}
+        for base in (root / "plugins", root / ".plugins", root / ".github" / "plugins"):
+            if not base.is_dir():
+                continue
+            for entry in sorted(base.iterdir(), key=lambda item: item.name.lower()):
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir():
+                    plugin = LocalPlugin(name=entry.name, path=entry, kind="directory")
+                elif entry.is_file():
+                    plugin = LocalPlugin(name=entry.stem, path=entry, kind="file")
+                else:
+                    continue
+                discovered[str(plugin.path)] = plugin
+        return list(discovered.values())
+
+    def sync_from_workspace(self, workspace: Path) -> list[LocalPlugin]:
+        """Install plugins discovered in a workspace that are not yet installed."""
+        installed_names = {plugin.name for plugin in self.list_plugins()}
+        synced: list[LocalPlugin] = []
+        for candidate in self.discover_workspace_plugins(workspace):
+            if candidate.name in installed_names:
+                continue
+            synced_plugin = self.install_from_path(candidate.path, name=candidate.name)
+            synced.append(synced_plugin)
+            installed_names.add(candidate.name)
+        return synced
+
     def install_from_path(self, source: Path, *, name: str | None = None) -> LocalPlugin:
         src = source.expanduser().resolve()
         if not src.exists():

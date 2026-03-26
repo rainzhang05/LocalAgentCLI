@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from localagentcli.commands.router import CommandHandler, CommandResult, CommandRouter, CommandSpec
 from localagentcli.config.manager import ConfigManager
@@ -27,6 +28,9 @@ class StatusSnapshot:
     agent_wait_reason: str = ""
     agent_retry_count: int = 0
     agent_last_error: str = ""
+    agent_active: bool = False
+    agent_started_at: str = ""
+    agent_updated_at: str = ""
     rollback_count: int = 0
 
 
@@ -45,6 +49,9 @@ def build_status_snapshot(
     agent_wait_reason: str = "",
     agent_retry_count: int = 0,
     agent_last_error: str = "",
+    agent_active: bool = False,
+    agent_started_at: str = "",
+    agent_updated_at: str = "",
     rollback_count: int = 0,
 ) -> StatusSnapshot:
     """Create one reusable snapshot of the current CLI state."""
@@ -62,6 +69,9 @@ def build_status_snapshot(
         agent_wait_reason=agent_wait_reason,
         agent_retry_count=agent_retry_count,
         agent_last_error=agent_last_error,
+        agent_active=agent_active,
+        agent_started_at=agent_started_at,
+        agent_updated_at=agent_updated_at,
         rollback_count=rollback_count,
     )
 
@@ -76,6 +86,9 @@ def format_status_toolbar(snapshot: StatusSnapshot, *, hint: str = "Type /help")
     agent_label = _agent_toolbar_label(snapshot)
     if agent_label:
         sections.append(f"agent: {agent_label}")
+    elapsed = _agent_elapsed_label(snapshot)
+    if elapsed:
+        sections.append(f"elapsed: {elapsed}")
     if snapshot.rollback_count:
         sections.append(f"undo: {snapshot.rollback_count}")
     sections.extend([f"workspace: {snapshot.workspace}", hint])
@@ -101,6 +114,14 @@ def format_status_report(snapshot: StatusSnapshot) -> str:
         pending_tool = snapshot.agent_pending_tool or "(none)"
         lines.append(f"  Agent route:   {route}")
         lines.append(f"  Agent phase:   {phase}")
+        lines.append(f"  Agent active:  {'yes' if snapshot.agent_active else 'no'}")
+        if snapshot.agent_started_at:
+            lines.append(f"  Started at:    {snapshot.agent_started_at}")
+        elapsed = _agent_elapsed_label(snapshot)
+        if elapsed:
+            lines.append(f"  Elapsed:       {elapsed}")
+        if snapshot.agent_updated_at:
+            lines.append(f"  Last update:   {snapshot.agent_updated_at}")
         lines.append(f"  Agent step:    {step}")
         lines.append(f"  Pending tool:  {pending_tool}")
         if snapshot.agent_wait_reason:
@@ -187,6 +208,9 @@ class StatusHandler(CommandHandler):
             agent_wait_reason=str(task_state.get("wait_reason", "") or ""),
             agent_retry_count=int(task_state.get("retry_count", 0) or 0),
             agent_last_error=str(task_state.get("last_error", "") or ""),
+            agent_active=bool(task_state.get("active", False)),
+            agent_started_at=str(task_state.get("started_at", "") or ""),
+            agent_updated_at=str(task_state.get("updated_at", "") or ""),
             rollback_count=int(task_state.get("rollback_count", 0) or 0),
         )
 
@@ -266,3 +290,26 @@ def _compact(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _agent_elapsed_label(snapshot: StatusSnapshot) -> str:
+    if not snapshot.agent_active or not snapshot.agent_started_at:
+        return ""
+    try:
+        started = datetime.fromisoformat(snapshot.agent_started_at)
+    except ValueError:
+        return ""
+    elapsed = datetime.now() - started
+    total_seconds = int(max(elapsed.total_seconds(), 0))
+    return _format_seconds_compact(total_seconds)
+
+
+def _format_seconds_compact(total_seconds: int) -> str:
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    if total_seconds < 3600:
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes}m {seconds:02}s"
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return f"{hours}h {minutes:02}m {seconds:02}s"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from localagentcli.plugins import PluginManager
 
@@ -72,3 +73,34 @@ def test_plugin_manager_sync_from_workspace_installs_missing(tmp_path: Path):
     assert len(synced) == 1
     assert synced[0].name == "demo_plugin"
     assert (manager.plugins_dir / "demo_plugin" / "plugin.txt").exists()
+
+
+def test_plugin_manager_sync_from_manifest_url_downloads_and_installs(tmp_path: Path):
+    manager = PluginManager(tmp_path / "plugins_store")
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_urlopen(url: str, timeout: float):
+        if url.endswith("manifest.json"):
+            return _FakeResponse(
+                b'{"plugins":[{"name":"remote_demo","url":"https://example/plugin.py"}]}'
+            )
+        return _FakeResponse(b"print('remote plugin')\n")
+
+    with patch("localagentcli.plugins.manager.urllib.request.urlopen", side_effect=_fake_urlopen):
+        synced = manager.sync_from_manifest_url("https://example/manifest.json")
+
+    assert len(synced) == 1
+    assert synced[0].name == "remote_demo"
+    assert synced[0].path.exists()

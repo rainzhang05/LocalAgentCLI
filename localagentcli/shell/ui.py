@@ -150,7 +150,11 @@ class ShellUI:
         config_cmd.register(self._router, self._config)
         hf_token_cmd.register(self._router, self._key_manager)
         mcp_cmd.register(self._router, self._services.mcp_manager, self._key_manager)
-        plugin_cmd.register(self._router, PluginManager(self._storage.plugins_dir))
+        plugin_cmd.register(
+            self._router,
+            PluginManager(self._storage.plugins_dir),
+            self._workspace_root,
+        )
         skills_cmd.register(self._router, self._services.skills_manager)
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)

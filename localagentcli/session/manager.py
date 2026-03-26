@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -10,12 +9,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from filelock import FileLock
-
 from localagentcli.config.manager import ConfigManager
+from localagentcli.session.replay import replay_session_from_event_log
+from localagentcli.session.sqlite_store import SqliteSessionStore
 from localagentcli.session.state import Session
-
-_SESSION_FORMAT_VERSION = 1
+from localagentcli.session.store import JsonSessionStore, SessionStore
 
 
 class SessionManager:
@@ -26,6 +24,7 @@ class SessionManager:
         sessions_dir: Path,
         config: ConfigManager,
         default_target_resolver: Callable[[str, str], tuple[str, str]] | None = None,
+        session_store: SessionStore | None = None,
     ):
         self._dir = sessions_dir
         self._config = config
@@ -34,6 +33,9 @@ class SessionManager:
         self._pending_default_target_warning = ""
         self._autosave_lock = threading.Lock()
         self._autosave_timer: threading.Timer | None = None
+        self._runtime_events_dir = self._dir.parent / "cache" / "runtime-events"
+        self._json_store = JsonSessionStore(self._dir)
+        self._store = session_store or self._build_default_store()
 
     def new_session(self) -> Session:
         """Create a fresh session with defaults from config."""
@@ -62,32 +64,12 @@ class SessionManager:
         session.name = name
         session.updated_at = datetime.now()
         session.metadata["message_count"] = len(session.history)
-
-        path = self._dir / f"{name}.json"
-        payload = dict(session.to_dict())
-        payload["format_version"] = _SESSION_FORMAT_VERSION
-        lock = FileLock(str(path) + ".lock")
-        with lock:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-
-        return path
+        return self._store.save_session(session, name)
 
     def load_session(self, name: str) -> Session:
         """Load a session from disk. Sets it as the current session."""
-        path = self._dir / f"{name}.json"
-        if not path.exists():
-            raise FileNotFoundError(f"Session '{name}' not found")
-
-        lock = FileLock(str(path) + ".lock")
-        with lock:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-        if isinstance(data, dict):
-            data.pop("format_version", None)
-
-        session = Session.from_dict(data)
+        session = self._store.load_session(name)
+        self._replay_runtime_events(session)
         self._current = session
         return session
 
@@ -110,27 +92,7 @@ class SessionManager:
 
     def list_sessions(self) -> list[dict]:
         """List all saved sessions with summary info."""
-        sessions: list[dict] = []
-        if not self._dir.exists():
-            return sessions
-
-        for path in sorted(self._dir.glob("*.json")):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                sessions.append(
-                    {
-                        "name": data.get("name", path.stem),
-                        "created_at": data.get("created_at", ""),
-                        "model": data.get("model", ""),
-                        "mode": data.get("mode", ""),
-                        "message_count": len(data.get("history", [])),
-                    }
-                )
-            except (json.JSONDecodeError, OSError):
-                continue
-
-        return sessions
+        return self._store.list_sessions()
 
     def clear_session(self) -> None:
         """Clear history and tasks of the current session."""
@@ -261,6 +223,27 @@ class SessionManager:
                 f"switched to {new_target}."
             )
         return resolved_provider, resolved_model
+
+    def _build_default_store(self) -> SessionStore:
+        """Select the default store based on feature flags."""
+        sqlite_enabled = bool(self._config.get("features.sqlite_session_store", False))
+        if not sqlite_enabled:
+            return self._json_store
+
+        db_path = self._dir.parent / "sessions.db"
+        try:
+            return SqliteSessionStore(db_path, legacy_json_store=self._json_store)
+        except Exception:
+            # Safe fallback for startup resilience.
+            return self._json_store
+
+    def _replay_runtime_events(self, session: Session) -> None:
+        """Best-effort reconciliation from runtime event logs on load."""
+        try:
+            replay_session_from_event_log(session, self._runtime_events_dir)
+        except Exception:
+            # Replay should never block loading a persisted session snapshot.
+            return
 
 
 def _format_target(provider: str, model: str) -> str:

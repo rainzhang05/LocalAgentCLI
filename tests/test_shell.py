@@ -312,7 +312,7 @@ class TestPromptHelpers:
         assert "fg:#40E0D0" in rules["completion-menu.completion.current"]
         assert "bg:default" in rules["completion-menu.completion.current"]
         assert "noreverse" in rules["completion-menu.completion.current"]
-        assert rules["bottom-toolbar"] == "bg:black fg:white"
+        assert rules["bottom-toolbar"] == "fg:#40E0D0"
 
     @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
     @patch("localagentcli.shell.prompt.PromptSession")

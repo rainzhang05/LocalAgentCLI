@@ -50,7 +50,7 @@ _PROMPT_STYLE = Style.from_dict(
         ),
         "scrollbar.background": "bg:default",
         "scrollbar.button": "bg:default fg:black",
-        "bottom-toolbar": "bg:black fg:white",
+        "bottom-toolbar": f"fg:{UI_ACCENT_HEX}",
     }
 )
 

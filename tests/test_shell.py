@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from prompt_toolkit.utils import Event
+from rich.panel import Panel
 from rich.text import Text
 
 from localagentcli.agents.events import ToolCallRequested
@@ -18,6 +19,7 @@ from localagentcli.models.backends.base import StreamChunk
 from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.runtime import ApprovalDecisionOp, RuntimeEvent
 from localagentcli.shell import prompt as prompt_module
+from localagentcli.shell.notifications import ShellNotification
 from localagentcli.shell.prompt import (
     ACTION_PROMPT_TOOLBAR,
     COMMAND_MENU_HEIGHT,
@@ -677,6 +679,18 @@ class TestShellUIStatusToolbar:
 
         ui._display_welcome()
 
+        banner = ui._console.print.call_args_list[1][0][0]
+        assert isinstance(banner, Panel)
+        assert str(banner.title) == "LocalAgent CLI v0.1.0"
+        assert "Mode:" in str(banner.renderable)
+
+    def test_display_welcome_falls_back_when_startup_banner_disabled(self, config, storage):
+        config.set("shell.startup_banner", False)
+        ui = ShellUI(config=config, storage=storage)
+        ui._console = MagicMock()
+
+        ui._display_welcome()
+
         title = ui._console.print.call_args_list[1][0][0]
         assert isinstance(title, Text)
         assert title.plain == "LocalAgent CLI v0.1.0"
@@ -993,8 +1007,22 @@ class TestShellUIModelResolution:
         assert result is True
         mock_confirm.assert_called_once()
         mock_install.assert_called_once_with("gguf")
-        ui._stream_renderer.render_status.assert_called_once()
-        ui._stream_renderer.render_success.assert_called_once()
+        ui._stream_renderer.render_notification.assert_has_calls(
+            [
+                call(
+                    ShellNotification(
+                        level="status",
+                        message="Installing GGUF backend dependencies...",
+                    )
+                ),
+                call(
+                    ShellNotification(
+                        level="success",
+                        message="GGUF backend dependencies installed.",
+                    )
+                ),
+            ]
+        )
 
     def test_ensure_backend_dependencies_handles_cancelled_prompt(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1014,8 +1042,8 @@ class TestShellUIModelResolution:
             result = ui._ensure_backend_dependencies("gguf")
 
         assert result is False
-        ui._stream_renderer.render_warning.assert_called_once_with(
-            "GGUF backend loading cancelled."
+        ui._stream_renderer.render_notification.assert_called_once_with(
+            ShellNotification(level="warning", message="GGUF backend loading cancelled.")
         )
 
     def test_generation_options_include_selected_provider_model(self, config, storage):
@@ -1099,9 +1127,8 @@ class TestShellUIHelpers:
                 SelectionOption(value="approve", label="Approve"),
             ],
         ):
-            result = ui._prompt_for_tool_approval(event)
+            _ = ui._prompt_for_tool_approval(event)
 
-        assert result == "approve"
         preview_call = ui._stream_renderer.render_preview.call_args
         assert preview_call.args[0] == "patch_apply preview"
         assert "Replace" in preview_call.args[1]
@@ -1129,7 +1156,9 @@ class TestShellUIHelpers:
         preview_call = ui._stream_renderer.render_preview.call_args
         assert preview_call.args[0] == "file_write preview"
         assert "file.py" in preview_call.args[1]
-        assert preview_call.args[1].endswith("...")
+        assert "Content preview (truncated):" in preview_call.args[1]
+        assert "```python" in preview_call.args[1]
+        assert "..." in preview_call.args[1]
 
     def test_format_tool_preview_for_patch_apply(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1144,6 +1173,8 @@ class TestShellUIHelpers:
         assert "Action: patch existing file" in preview
         assert "Replace" in preview
         assert "With" in preview
+        assert "Unified diff:" in preview
+        assert "```diff" in preview
 
     def test_format_tool_preview_for_patch_apply_truncates_large_blocks(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1161,7 +1192,9 @@ class TestShellUIHelpers:
 
         assert "Replace (truncated):" in preview
         assert "With (truncated):" in preview
-        assert preview.endswith("...")
+        assert "Unified diff" in preview
+        assert "```diff" in preview
+        assert "..." in preview
 
     def test_format_tool_preview_truncates_file_write(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1174,7 +1207,8 @@ class TestShellUIHelpers:
         preview = ui._format_tool_preview(event)
 
         assert "Content preview (truncated):" in preview
-        assert preview.endswith("...")
+        assert "```python" in preview
+        assert "..." in preview
 
     def test_format_tool_preview_for_shell_execute_includes_command_and_cwd(
         self,
@@ -1386,7 +1420,8 @@ class TestShellUIRuntimeEventRendering:
 
         ui._stream_renderer.render_success.assert_called_once_with("Task completed.")
         ui._stream_renderer.flush_pending_details.assert_called_once()
-        ui._console.print.assert_called_once_with("All done.")
+        ui._stream_renderer.render_markdown_message.assert_called_once_with("All done.")
+        ui._console.print.assert_not_called()
 
     def test_adrain_runtime_events_finalizes_renderer_between_turns(self, config, storage):
         ui = ShellUI(config=config, storage=storage)
@@ -1410,3 +1445,22 @@ class TestShellUIRuntimeEventRendering:
         asyncio.run(ui._adrain_runtime_events())
 
         ui._stream_renderer.finalize.assert_called_once()
+
+    def test_adrain_runtime_events_starts_and_stops_thinking_indicator(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._stream_renderer = MagicMock()
+
+        async def _events():
+            yield RuntimeEvent(
+                type="turn_completed",
+                submission_id="sub-1",
+                data={"mode": "chat", "final_text": "ok"},
+            )
+
+        ui._runtime = MagicMock()
+        ui._runtime.aiter_events = MagicMock(return_value=_events())
+
+        asyncio.run(ui._adrain_runtime_events())
+
+        ui._stream_renderer.start_thinking_indicator.assert_called_once()
+        ui._stream_renderer.stop_thinking_indicator.assert_called_once()

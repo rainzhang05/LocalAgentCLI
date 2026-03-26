@@ -193,6 +193,7 @@ class TestCreatePromptSession:
         assert kwargs["complete_while_typing"] is True
         assert kwargs["reserve_space_for_menu"] == COMMAND_MENU_HEIGHT
         assert kwargs["key_bindings"] is not None
+        assert kwargs["style"] is prompt_module._PROMPT_STYLE
 
     @patch("localagentcli.shell.prompt._supports_interactive_prompt", return_value=True)
     @patch("localagentcli.shell.prompt.get_terminal_size")
@@ -302,6 +303,14 @@ class TestCompletionMenuDebounce:
 class TestPromptHelpers:
     """Tests for the shared prompt helper contract."""
 
+    def test_prompt_style_uses_turquoise_text_without_menu_background(self):
+        rules = dict(prompt_module._PROMPT_STYLE.style_rules)
+
+        assert rules["completion-menu"] == "bg:default"
+        assert "bg:default" in rules["completion-menu.completion"]
+        assert "fg:#40E0D0" in rules["completion-menu.completion.current"]
+        assert "bg:default" in rules["completion-menu.completion.current"]
+
     @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
     @patch("localagentcli.shell.prompt.PromptSession")
     def test_prompt_text_uses_toolbar_and_default(
@@ -317,6 +326,7 @@ class TestPromptHelpers:
 
         assert value == "workspace"
         assert mock_prompt_session.call_args.kwargs["bottom_toolbar"] == TEXT_PROMPT_TOOLBAR
+        assert mock_prompt_session.call_args.kwargs["style"] is prompt_module._PROMPT_STYLE
         session.prompt.assert_called_once_with(
             "Workspace directory: ",
             default=".",
@@ -338,6 +348,7 @@ class TestPromptHelpers:
 
         assert value == "secret"
         assert mock_prompt_session.call_args.kwargs["bottom_toolbar"] == SECRET_PROMPT_TOOLBAR
+        assert mock_prompt_session.call_args.kwargs["style"] is prompt_module._PROMPT_STYLE
         session.prompt.assert_called_once_with(
             "API key: ",
             default="",
@@ -390,6 +401,7 @@ class TestPromptHelpers:
 
         assert selection is not None
         assert selection.value == "openai"
+        assert mock_prompt_session.call_args.kwargs["style"] is prompt_module._PROMPT_STYLE
         assert session.prompt.call_args.kwargs["in_thread"] is True
 
     @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)

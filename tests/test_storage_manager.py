@@ -29,6 +29,7 @@ class TestStorageManagerInitialize:
         assert storage.root.is_dir()
         assert storage.models_dir.is_dir()
         assert storage.plugins_dir.is_dir()
+        assert storage.skills_dir.is_dir()
         assert storage.sessions_dir.is_dir()
         assert storage.logs_dir.is_dir()
         assert (storage.logs_dir / "exports").is_dir()
@@ -68,6 +69,9 @@ class TestStorageManagerProperties:
 
     def test_plugins_dir(self, storage: StorageManager):
         assert storage.plugins_dir == storage.root / "plugins"
+
+    def test_skills_dir(self, storage: StorageManager):
+        assert storage.skills_dir == storage.root / "skills"
 
     def test_logs_dir(self, storage: StorageManager):
         assert storage.logs_dir == storage.root / "logs"
@@ -157,7 +161,7 @@ class TestDiskUsage:
 
     def test_returns_all_categories(self, storage: StorageManager):
         usage = storage.disk_usage()
-        assert set(usage.keys()) == {"models", "plugins", "sessions", "logs", "cache"}
+        assert set(usage.keys()) == {"models", "plugins", "skills", "sessions", "logs", "cache"}
 
     def test_counts_file_sizes(self, storage: StorageManager):
         (storage.models_dir / "test.bin").write_bytes(b"x" * 100)

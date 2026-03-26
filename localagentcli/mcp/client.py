@@ -1,4 +1,4 @@
-"""Minimal stdio MCP client and tool discovery manager."""
+"""Minimal MCP clients and tool discovery manager (stdio/http/sse)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import subprocess
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
@@ -31,13 +33,17 @@ class McpTool:
 
 @dataclass
 class McpServerConfig:
-    """Configuration for one MCP stdio server."""
+    """Configuration for one MCP server."""
 
     name: str
-    command: str
+    transport: str = "stdio"
+    command: str = ""
     args: list[str] = field(default_factory=list)
     cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    http_headers: dict[str, str] = field(default_factory=dict)
+    bearer_token_env_var: str | None = None
     timeout: float = 15.0
 
 
@@ -245,12 +251,209 @@ class StdioMcpClient:
         return process
 
 
+class HttpMcpClient:
+    """Synchronous MCP HTTP client for JSON-RPC style requests."""
+
+    def __init__(self, config: McpServerConfig):
+        self._config = config
+        self._request_id = 0
+
+    def start(self) -> None:
+        # HTTP transport does not need subprocess startup.
+        return
+
+    def list_tools(self) -> list[McpTool]:
+        payload = self.request("tools/list", {})
+        tools = payload.get("tools", [])
+        discovered: list[McpTool] = []
+        if not isinstance(tools, list):
+            return discovered
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            discovered.append(
+                McpTool(
+                    name=str(tool.get("name", "")),
+                    description=str(tool.get("description", "")),
+                    input_schema=_coerce_schema(tool.get("inputSchema")),
+                    annotations=_coerce_annotations(tool.get("annotations")),
+                )
+            )
+        return discovered
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        try:
+            payload = self.request("tools/call", {"name": name, "arguments": arguments})
+        except TimeoutError as exc:
+            return ToolResult.error_result(
+                f"MCP tool '{name}' timed out",
+                str(exc),
+            )
+        except RuntimeError as exc:
+            return ToolResult.error_result(
+                f"MCP tool '{name}' failed",
+                str(exc),
+            )
+        content = payload.get("content", [])
+        text_parts: list[str] = []
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text_parts.append(str(item.get("text", "")))
+        is_error = bool(payload.get("isError", False))
+        output = "\n".join(part for part in text_parts if part)
+        if is_error:
+            return ToolResult.error_result(
+                f"MCP tool '{name}' failed",
+                output or "The MCP server returned an error.",
+                output=output,
+            )
+        return ToolResult.success(f"MCP tool '{name}' completed.", output=output)
+
+    def close(self) -> None:
+        return
+
+    def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        self.start()
+        self._request_id += 1
+        request_id = self._request_id
+        message = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        }
+        response = self._send_message(message)
+        return self._extract_result(response, method, request_id)
+
+    def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self.start()
+        message = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+        }
+        self._send_message(message)
+
+    def _send_message(self, message: dict[str, Any]) -> Any:
+        url = self._config.url
+        if not url:
+            raise RuntimeError(f"MCP server '{self._config.name}' has no URL configured.")
+
+        payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            **self._resolved_http_headers(),
+        }
+        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        timeout = max(float(self._config.timeout), 0.1)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                content_type = response.headers.get("Content-Type", "")
+                body = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            raise RuntimeError(
+                f"MCP HTTP request failed ({exc.code} {exc.reason}): {details or 'no details'}"
+            ) from None
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, TimeoutError):
+                raise TimeoutError(
+                    f"MCP I/O timed out after {timeout} seconds (server={self._config.name!r})."
+                ) from None
+            raise RuntimeError(f"MCP HTTP request failed: {reason}") from None
+
+        if "text/event-stream" in content_type.lower():
+            return self._parse_sse_events(body)
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"MCP server returned invalid JSON response: {exc.msg}") from None
+
+    def _parse_sse_events(self, body: str) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        current_data: list[str] = []
+
+        def flush_event() -> None:
+            if not current_data:
+                return
+            payload = "\n".join(current_data)
+            current_data.clear()
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                return
+            if isinstance(parsed, dict):
+                events.append(parsed)
+
+        for raw_line in body.splitlines():
+            line = raw_line.strip("\r")
+            if not line:
+                flush_event()
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                current_data.append(line[5:].lstrip())
+
+        flush_event()
+        return events
+
+    def _extract_result(self, response: Any, method: str, request_id: int) -> dict[str, Any]:
+        if isinstance(response, list):
+            for item in response:
+                if isinstance(item, dict) and item.get("id") == request_id:
+                    response = item
+                    break
+            else:
+                raise RuntimeError(
+                    f"MCP request '{method}' did not include a matching response id."
+                )
+
+        if not isinstance(response, dict):
+            raise RuntimeError("MCP server returned a non-object JSON message.")
+
+        if "error" in response:
+            error_payload = json.dumps(response["error"], ensure_ascii=False)
+            raise RuntimeError(f"MCP request '{method}' failed: {error_payload}")
+
+        if "result" in response:
+            result = response.get("result", {})
+            return result if isinstance(result, dict) else {}
+
+        # Some implementations may return the result object directly.
+        return response
+
+    def _resolved_http_headers(self) -> dict[str, str]:
+        headers = dict(self._config.http_headers)
+        token_env = self._config.bearer_token_env_var
+        if isinstance(token_env, str) and token_env.strip():
+            token = os.environ.get(token_env.strip(), "").strip()
+            if token and "authorization" not in {key.lower() for key in headers}:
+                headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+
+class SseMcpClient(HttpMcpClient):
+    """HTTP client variant that requires SSE responses from the server."""
+
+    def _extract_result(self, response: Any, method: str, request_id: int) -> dict[str, Any]:
+        if not isinstance(response, list):
+            raise RuntimeError(
+                f"MCP request '{method}' expected SSE response but received non-SSE payload."
+            )
+        return super()._extract_result(response, method, request_id)
+
+
 class McpManager:
     """Discover and execute MCP tools from configured stdio servers."""
 
     def __init__(self, servers: list[McpServerConfig]):
         self._servers = servers
-        self._clients: dict[str, StdioMcpClient] = {}
+        self._clients: dict[str, StdioMcpClient | HttpMcpClient | SseMcpClient] = {}
         self._tools: dict[str, tuple[str, McpTool]] = {}
 
     @classmethod
@@ -259,20 +462,34 @@ class McpManager:
         for name, payload in raw_config.items():
             if not isinstance(payload, dict):
                 continue
-            command = payload.get("command")
-            if not isinstance(command, str) or not command.strip():
+            transport = _coerce_transport(payload)
+            command = payload.get("command", "")
+            if transport == "stdio" and (not isinstance(command, str) or not command.strip()):
+                continue
+            url = payload.get("url")
+            if transport in {"http", "sse"} and (not isinstance(url, str) or not url.strip()):
                 continue
             args = payload.get("args", [])
             env = payload.get("env", {})
+            headers = payload.get("http_headers", {})
+            raw_bearer_env = payload.get("bearer_token_env_var")
             servers.append(
                 McpServerConfig(
                     name=name,
-                    command=command,
+                    transport=transport,
+                    command=command.strip() if isinstance(command, str) else "",
                     args=[str(item) for item in args] if isinstance(args, list) else [],
                     cwd=str(payload["cwd"]) if isinstance(payload.get("cwd"), str) else None,
                     env={str(key): str(value) for key, value in env.items()}
                     if isinstance(env, dict)
                     else {},
+                    url=url.strip() if isinstance(url, str) else None,
+                    http_headers={str(key): str(value) for key, value in headers.items()}
+                    if isinstance(headers, dict)
+                    else {},
+                    bearer_token_env_var=(
+                        raw_bearer_env.strip() if isinstance(raw_bearer_env, str) else None
+                    ),
                     timeout=float(payload.get("timeout", 15.0) or 15.0),
                 )
             )
@@ -311,11 +528,17 @@ class McpManager:
 
         return execute
 
-    def _client(self, server_name: str) -> StdioMcpClient:
+    def _client(self, server_name: str) -> StdioMcpClient | HttpMcpClient | SseMcpClient:
         if server_name in self._clients:
             return self._clients[server_name]
         config = next(server for server in self._servers if server.name == server_name)
-        client = StdioMcpClient(config)
+        client: StdioMcpClient | HttpMcpClient | SseMcpClient
+        if config.transport == "http":
+            client = HttpMcpClient(config)
+        elif config.transport == "sse":
+            client = SseMcpClient(config)
+        else:
+            client = StdioMcpClient(config)
         self._clients[server_name] = client
         return client
 
@@ -351,3 +574,18 @@ def _coerce_annotations(raw_annotations: Any) -> dict[str, Any]:
     if isinstance(raw_annotations, dict):
         return raw_annotations
     return {}
+
+
+def _coerce_transport(payload: dict[str, Any]) -> str:
+    raw = payload.get("transport")
+    if not isinstance(raw, str) or not raw.strip():
+        if isinstance(payload.get("url"), str):
+            return "http"
+        return "stdio"
+
+    normalized = raw.strip().lower().replace("-", "_")
+    if normalized in {"http", "streamable_http"}:
+        return "http"
+    if normalized == "sse":
+        return "sse"
+    return "stdio"

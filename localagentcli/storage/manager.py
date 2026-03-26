@@ -21,6 +21,7 @@ class StorageManager:
         dirs = [
             self._root,
             self.models_dir,
+            self.plugins_dir,
             self.sessions_dir,
             self.logs_dir,
             self.logs_dir / "exports",
@@ -54,6 +55,10 @@ class StorageManager:
     @property
     def models_dir(self) -> Path:
         return self._root / "models"
+
+    @property
+    def plugins_dir(self) -> Path:
+        return self._root / "plugins"
 
     @property
     def sessions_dir(self) -> Path:
@@ -109,6 +114,7 @@ class StorageManager:
         result = {}
         for name, path in [
             ("models", self.models_dir),
+            ("plugins", self.plugins_dir),
             ("sessions", self.sessions_dir),
             ("logs", self.logs_dir),
             ("cache", self.cache_dir),

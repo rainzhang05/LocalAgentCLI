@@ -13,6 +13,7 @@ from localagentcli.tools.git_commit import GitCommitTool
 from localagentcli.tools.git_diff import GitDiffTool
 from localagentcli.tools.git_status import GitStatusTool
 from localagentcli.tools.patch_apply import PatchApplyTool
+from localagentcli.tools.python_repl import PythonReplTool
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.router import DynamicToolSpec, ToolRouter
 from localagentcli.tools.shell_execute import ShellExecuteTool
@@ -28,6 +29,7 @@ def create_default_tool_registry(workspace_root: Path) -> ToolRegistry:
         DirectoryListTool(workspace_root),
         FileWriteTool(workspace_root),
         PatchApplyTool(workspace_root),
+        PythonReplTool(workspace_root),
         ShellExecuteTool(workspace_root),
         TestExecuteTool(workspace_root),
         GitStatusTool(workspace_root),
@@ -44,5 +46,6 @@ __all__ = [
     "ToolRouter",
     "ToolResult",
     "DynamicToolSpec",
+    "PythonReplTool",
     "create_default_tool_registry",
 ]

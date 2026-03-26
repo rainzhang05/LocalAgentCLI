@@ -33,6 +33,7 @@ class TestStorageManagerInitialize:
         assert (storage.logs_dir / "exports").is_dir()
         assert storage.cache_dir.is_dir()
         assert (storage.cache_dir / "rollback").is_dir()
+        assert (storage.cache_dir / "runtime-events").is_dir()
         assert (storage.cache_dir / "downloads").is_dir()
         assert storage.secrets_dir.is_dir()
 
@@ -86,6 +87,15 @@ class TestCleanupCache:
 
         storage.cleanup_cache(max_age_hours=24)
         assert not old_file.exists()
+
+    def test_removes_old_runtime_event_logs(self, storage: StorageManager):
+        old_log = storage.cache_dir / "runtime-events" / "old.jsonl"
+        old_log.write_text("{}\n")
+        old_time = time.time() - 48 * 3600
+        os.utime(old_log, (old_time, old_time))
+
+        storage.cleanup_cache(max_age_hours=24)
+        assert not old_log.exists()
 
     def test_keeps_recent_files(self, storage: StorageManager):
         recent_file = storage.cache_dir / "downloads" / "recent.bin"

@@ -872,6 +872,7 @@ class AgentController:
     ) -> None:
         """Persist the current or last agent-task state into session metadata."""
         current = self.task_state
+        previous_active = bool(current.get("active", False))
         state = {
             "route": current.get("route", ""),
             "phase": current.get("phase", ""),
@@ -883,6 +884,8 @@ class AgentController:
             "last_error": current.get("last_error", ""),
             "summary": current.get("summary", ""),
             "active": bool(current.get("active", False)),
+            "started_at": current.get("started_at", ""),
+            "ended_at": current.get("ended_at", ""),
         }
 
         if route is not _UNCHANGED:
@@ -906,9 +909,17 @@ class AgentController:
         if active is not _UNCHANGED:
             state["active"] = bool(active)
 
+        now_iso = datetime.now().isoformat()
+        if state["active"]:
+            if route is not _UNCHANGED or not previous_active or not state.get("started_at"):
+                state["started_at"] = now_iso
+            state["ended_at"] = ""
+        elif previous_active and state.get("started_at") and not state.get("ended_at"):
+            state["ended_at"] = now_iso
+
         state["approval_mode"] = self._approval.mode
         state["rollback_count"] = self.rollback_count
-        state["updated_at"] = datetime.now().isoformat()
+        state["updated_at"] = now_iso
         self._session.metadata["agent_task_state"] = state
         self._session.touch()
         self._notify_autosave()

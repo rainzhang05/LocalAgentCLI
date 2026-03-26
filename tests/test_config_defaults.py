@@ -40,6 +40,9 @@ class TestDefaultConfig:
     def test_default_temperature(self):
         assert DEFAULT_CONFIG["generation"]["temperature"] == 0.7
 
+    def test_default_os_sandbox_backend(self):
+        assert DEFAULT_CONFIG["safety"]["os_sandbox_backend"] == "off"
+
     def test_shell_ux_defaults_present(self):
         shell = DEFAULT_CONFIG["shell"]
         assert shell["thinking_indicator_enabled"] is True
@@ -204,6 +207,15 @@ class TestValidateConfigValue:
         ok, msg = validate_config_value("safety.sandbox_mode", "nope")
         assert not ok
         assert "Invalid sandbox mode" in msg
+
+    def test_os_sandbox_backend_valid_values(self):
+        for value in ("off", "auto", "macos-seatbelt", "linux-bwrap"):
+            ok, msg = validate_config_value("safety.os_sandbox_backend", value)
+            assert ok, msg
+
+    def test_os_sandbox_backend_invalid_value(self):
+        ok, _msg = validate_config_value("safety.os_sandbox_backend", "seatbelt")
+        assert not ok
 
     def test_all_schema_keys_have_defaults(self):
         """Every key in the schema should exist in the default config."""

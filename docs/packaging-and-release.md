@@ -103,7 +103,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localagentcli"
-version = "0.1.0"
+version = "0.2.0"
 description = "A production-grade, local-first AI CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -330,7 +330,7 @@ All 9 criteria must be verified by automated tests and manual testing before a v
 7. Smoke test the built wheel locally:
 
 ```bash
-pipx install --force dist/localagentcli-0.1.0-py3-none-any.whl
+pipx install --force dist/localagentcli-0.2.0-py3-none-any.whl
 localagentcli
 pipx uninstall localagentcli
 ```
@@ -361,7 +361,7 @@ Trusted publishing is preferred over long-lived API tokens because GitHub Action
 1. Bump the version in `pyproject.toml`
 2. Update `CHANGELOG.md`
 3. Commit the release changes
-4. Tag the release: `git tag v0.1.0`
+4. Tag the release: `git tag v0.2.0`
 5. Push the branch and tag
 6. Run the `Publish` workflow manually for TestPyPI, or let the tag trigger the PyPI publish path
 7. Verify installation from the target index with `pipx install localagentcli`

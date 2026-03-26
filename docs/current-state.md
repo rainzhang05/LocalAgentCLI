@@ -8,6 +8,14 @@
 >
 > **Phase 13 slice 2 landed (2026-03-25):** `/session load` now performs best-effort runtime JSONL reconciliation from `~/.localagent/cache/runtime-events/<session-id>.jsonl`, recovering missing completed turn pairs (`user` + `assistant`) when present, skipping duplicate pairs, tolerating malformed JSONL lines, and recording replay metadata under `session.metadata.runtime_replay`.
 >
+> **Phase 13 slice 3 landed (2026-03-26):** SQLite session persistence now uses an explicit migration runner with ordered SQL migrations (`localagentcli/session/migrations/*.sql`) tracked in `schema_migrations`. Legacy `schema_meta` version-1 databases are recognized and backfilled so follow-on migrations apply safely. Replay checkpoint fields are persisted in SQLite columns and kept aligned with `session.metadata.runtime_replay`.
+>
+> **Phase 13 slice 4 landed (2026-03-26):** SQLite persistence now includes workspace-scoped long-horizon memory (`session_memories`). Memory candidates are extracted from compaction summaries and tagged assistant outputs, loaded memories are merged into `session.metadata.long_horizon_memory`, and prompt construction appends a compact `Long-horizon memory:` block when present.
+>
+> **Phase 13 slice 5 landed (2026-03-26):** session autosave now supports unnamed interactive sessions behind config (`sessions.autosave_unnamed`), persisting to generated IDs (`<autosave_unnamed_prefix><session-id>`) without renaming the live session; retention pruning now removes aged unnamed autosaves and stale runtime-event logs (`sessions.autosave_unnamed_retention_days`).
+>
+> **Phase 13 slice 6 landed (2026-03-26):** behavior-level persistence parity tests now cover compact-prefix preservation, replay-resume history superset behavior, and fork-divergence isolation (`tests/test_persistence_compact_resume_fork.py`).
+>
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
 ---

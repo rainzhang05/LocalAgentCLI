@@ -50,6 +50,12 @@ class TestShellThemes:
         resolved = resolve_shell_theme("not-a-theme")
         assert resolved.name == "default"
 
+    def test_default_theme_uses_turquoise_accent_tokens(self):
+        resolved = resolve_shell_theme("default")
+        assert resolved.banner_style == "bold #40E0D0"
+        assert resolved.panel_border_style == "#40E0D0"
+        assert resolved.details_border_style == "#40E0D0"
+
 
 class TestNotifications:
     def test_adjacent_dedupe_blocks_duplicates(self):

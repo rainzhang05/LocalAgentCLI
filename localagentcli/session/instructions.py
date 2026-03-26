@@ -7,6 +7,10 @@ from datetime import datetime
 from pathlib import Path
 
 from localagentcli.models.backends.base import ModelMessage
+from localagentcli.session.memory import (
+    LONG_HORIZON_MEMORY_KEY,
+    render_long_horizon_memory_instruction,
+)
 from localagentcli.session.state import Message, Session
 
 AGENTS_FILENAME = "AGENTS.md"
@@ -84,6 +88,12 @@ def build_system_instructions(session: Session) -> list[str]:
         for instruction in session.pinned_instructions
         if isinstance(instruction, str) and instruction.strip()
     )
+
+    long_horizon_block = render_long_horizon_memory_instruction(
+        session.metadata.get(LONG_HORIZON_MEMORY_KEY, [])
+    )
+    if long_horizon_block:
+        instructions.append(long_horizon_block)
     return instructions
 
 

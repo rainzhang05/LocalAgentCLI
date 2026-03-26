@@ -117,7 +117,11 @@ class SafetyLayer:
 
         risk_level, risk_reason = self.describe_risk(tool.name, args)
         rollback_summary = self.describe_rollback(tool, args)
-        if self._approval.needs_approval(tool, risk_level):
+        if self._approval.needs_approval(
+            tool,
+            risk_level,
+            sandbox_posture=self._sandbox_posture,
+        ):
             return ApprovalResult(
                 status="needs_approval",
                 risk_level=risk_level,

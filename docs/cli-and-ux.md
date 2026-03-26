@@ -10,6 +10,7 @@ This document defines the terminal user interface: visual style, UI elements, in
 2. **Terminal-native**: Works in any terminal emulator. No GUI dependencies. Uses standard ANSI escape codes for formatting.
 3. **Modern formatting**: Rich text (bold, colors, panels) via a library like `rich` or `prompt_toolkit`. Not plain monochrome.
 4. **Consistent across platforms**: The same visual experience on macOS, Linux, and Windows terminals.
+5. **Minimal color surfaces**: Prefer text-level emphasis over full-surface background tinting, using a turquoise accent (`#40E0D0`) for primary UI highlights.
 
 ---
 
@@ -55,6 +56,7 @@ The input prompt where the user types:
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
 - Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it. Completion list refreshes are debounced briefly while typing so the menu does not restart on every keystroke when a prompt-toolkit application loop is active.
+- Completion/selection menus keep the terminal background unchanged (no gray textarea fill). Highlighting is text-first, using the shared turquoise accent (`#40E0D0`) for minimalist visual focus.
 - The slash-command menu respects command visibility. Non-executable parent groups stay hidden, while executable commands such as `/hf-token` remain available so users can revisit them later.
 - The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.

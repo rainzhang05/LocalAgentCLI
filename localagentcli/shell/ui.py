@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 from pathlib import Path
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.text import Text
 
 from localagentcli import __version__
@@ -44,6 +46,8 @@ from localagentcli.runtime import (
     UserTurnOp,
 )
 from localagentcli.safety.rollback import RollbackManager
+from localagentcli.shell.animation import ThinkingAnimationConfig, ThinkingAnimator
+from localagentcli.shell.notifications import ShellNotification
 from localagentcli.shell.prompt import (
     LinePromptSession,
     SelectionOption,
@@ -53,6 +57,7 @@ from localagentcli.shell.prompt import (
     prompt_action,
 )
 from localagentcli.shell.streaming import StreamRenderer
+from localagentcli.shell.themes import resolve_shell_theme
 from localagentcli.storage.manager import StorageManager
 
 
@@ -78,9 +83,24 @@ class ShellUI:
         self._hardware_detector = self._services.hardware_detector
         self._model_installer = self._services.model_installer
         self._session_manager = self._services.session_manager
+        self._shell_theme = resolve_shell_theme(str(self._config.get("shell.theme", "default")))
+        thinking_config = ThinkingAnimationConfig(
+            enabled=bool(self._config.get("shell.thinking_indicator_enabled", True)),
+            style=str(self._config.get("shell.thinking_indicator_style", "dots")),
+            interval_ms=int(self._config.get("shell.thinking_animation_interval_ms", 120)),
+        )
+        self._thinking_indicator_enabled = bool(thinking_config.enabled)
+        self._thinking_animator = ThinkingAnimator(
+            style=thinking_config.normalized_style(),
+            interval_ms=thinking_config.normalized_interval_ms(),
+            prefer_ascii=not _console_supports_unicode(self._console),
+        )
         self._stream_renderer = StreamRenderer(
             self._console,
             persistent_details_lane=bool(self._config.get("shell.persistent_details_lane", False)),
+            theme=self._shell_theme,
+            notification_dedupe=bool(self._config.get("shell.notification_dedupe", True)),
+            thinking_indicator_enabled=self._thinking_indicator_enabled,
         )
         self._execution_runtime = SessionExecutionRuntime(
             services=self._services,
@@ -293,7 +313,30 @@ class ShellUI:
     def _display_welcome(self) -> None:
         """Show the welcome banner."""
         self._console.print()
-        self._console.print(Text(f"LocalAgent CLI v{__version__}", style="bold"))
+        if bool(self._config.get("shell.startup_banner", True)):
+            snapshot = self._status_snapshot()
+            summary = "\n".join(
+                [
+                    f"Mode: {snapshot.mode}",
+                    f"Target: {snapshot.target}",
+                    f"Workspace: {snapshot.workspace}",
+                    f"Session: {snapshot.session_name}",
+                ]
+            )
+            self._console.print(
+                Panel(
+                    summary,
+                    title=f"LocalAgent CLI v{__version__}",
+                    border_style=self._shell_theme.panel_border_style,
+                )
+            )
+            hint = "Type /help for commands, /mode chat or /mode agent to switch behavior."
+            if self._shell_theme.dim_style:
+                self._console.print(Text(hint, style=self._shell_theme.dim_style))
+            else:
+                self._console.print(hint)
+        else:
+            self._console.print(Text(f"LocalAgent CLI v{__version__}", style="bold"))
         self._console.print()
 
     def _run_first_time_setup(self) -> None:
@@ -341,6 +384,9 @@ class ShellUI:
             agent_wait_reason=str(task_state.get("wait_reason", "") or ""),
             agent_retry_count=int(task_state.get("retry_count", 0) or 0),
             agent_last_error=str(task_state.get("last_error", "") or ""),
+            agent_active=bool(task_state.get("active", False)),
+            agent_started_at=str(task_state.get("started_at", "") or ""),
+            agent_updated_at=str(task_state.get("updated_at", "") or ""),
             rollback_count=int(task_state.get("rollback_count", 0) or 0),
         )
 
@@ -435,12 +481,37 @@ class ShellUI:
 
     async def _adrain_runtime_events(self) -> None:
         """Drain typed runtime events until the current submission pauses or finishes."""
+        thinking_stop: asyncio.Event | None = None
+        thinking_task: asyncio.Task[None] | None = None
+        if self._thinking_indicator_enabled:
+            self._thinking_animator.reset()
+            thinking_stop = asyncio.Event()
+            thinking_task = asyncio.create_task(self._run_thinking_heartbeat(thinking_stop))
         try:
             async for event in self._runtime.aiter_events():
                 await self._ahandle_runtime_event(event)
         finally:
+            if thinking_stop is not None:
+                thinking_stop.set()
+            if thinking_task is not None:
+                try:
+                    await thinking_task
+                except asyncio.CancelledError:
+                    pass
+            self._stream_renderer.stop_thinking_indicator()
             self._stream_renderer.finalize()
             self._session_manager.flush_named_autosave()
+
+    async def _run_thinking_heartbeat(self, stop_event: asyncio.Event) -> None:
+        """Render transient thinking frames while a submission is being drained."""
+        self._stream_renderer.start_thinking_indicator()
+        self._stream_renderer.render_thinking_indicator(self._thinking_animator.next_frame())
+        interval = self._thinking_animator.interval_seconds
+        while not stop_event.is_set():
+            await asyncio.sleep(interval)
+            if stop_event.is_set():
+                return
+            self._stream_renderer.render_thinking_indicator(self._thinking_animator.next_frame())
 
     async def _ahandle_runtime_event(self, event: RuntimeEvent) -> None:
         """Render and respond to one typed runtime event."""
@@ -492,7 +563,7 @@ class ShellUI:
                 route = str(event.data.get("route", "") or "")
                 summary = event.message.strip()
                 if summary and route != "direct_answer":
-                    self._console.print(event.message)
+                    self._stream_renderer.render_markdown_message(event.message)
             return
         if event.type == "turn_failed":
             self._stream_renderer.render_error(event.message or "Turn failed.")
@@ -561,18 +632,21 @@ class ShellUI:
         arguments = dict(event.arguments)
         header = self._tool_preview_header(event)
         if event.tool_name == "patch_apply":
-            old_text, old_truncated = self._truncate_preview_text(
-                str(arguments.get("old_text", ""))
-            )
-            new_text, new_truncated = self._truncate_preview_text(
-                str(arguments.get("new_text", ""))
-            )
+            old_raw = str(arguments.get("old_text", ""))
+            new_raw = str(arguments.get("new_text", ""))
+            old_text, old_truncated = self._truncate_preview_text(old_raw)
+            new_text, new_truncated = self._truncate_preview_text(new_raw)
             replace_label = "Replace" + (" (truncated)" if old_truncated else "")
             with_label = "With" + (" (truncated)" if new_truncated else "")
+            diff_text, diff_truncated = self._build_unified_diff_preview(old_raw, new_raw)
+            diff_label = "Unified diff" + (" (truncated)" if diff_truncated else "")
+            added, removed = self._diff_change_counts(diff_text)
             return header + (
-                "Action: patch existing file\n\n"
+                "Action: patch existing file\n"
+                f"Change summary: +{added} / -{removed}\n\n"
                 f"{replace_label}:\n{old_text}\n\n"
-                f"{with_label}:\n{new_text}"
+                f"{with_label}:\n{new_text}\n\n"
+                f"{diff_label}:\n```diff\n{diff_text}\n```"
             )
         if event.tool_name == "file_write":
             content = str(arguments.get("content", ""))
@@ -582,7 +656,8 @@ class ShellUI:
                 "overwrite existing file" if self._preview_path_exists(path) else "create new file"
             )
             label = "Content preview" + (" (truncated)" if truncated else "")
-            return header + f"Action: {action}\n\n{label}:\n{preview}"
+            language = self._guess_preview_language(path)
+            return header + f"Action: {action}\n\n{label}:\n```{language}\n{preview}\n```"
         if event.tool_name == "shell_execute":
             command_preview, command_truncated = self._truncate_preview_text(
                 str(arguments.get("command", ""))
@@ -639,6 +714,61 @@ class ShellUI:
         if len(text) <= limit:
             return text, False
         return text[:limit] + "...", True
+
+    def _build_unified_diff_preview(self, old_text: str, new_text: str) -> tuple[str, bool]:
+        """Build a unified diff preview body for patch_apply approvals."""
+        diff_lines = difflib.unified_diff(
+            old_text.splitlines(),
+            new_text.splitlines(),
+            fromfile="before",
+            tofile="after",
+            lineterm="",
+        )
+        diff_text = "\n".join(diff_lines).strip()
+        if not diff_text:
+            diff_text = "(no textual changes detected)"
+        return self._truncate_preview_text(diff_text, limit=2200)
+
+    @staticmethod
+    def _diff_change_counts(diff_text: str) -> tuple[int, int]:
+        """Count added and removed lines in a unified diff preview."""
+        added = 0
+        removed = 0
+        for line in diff_text.splitlines():
+            if line.startswith("+++") or line.startswith("---"):
+                continue
+            if line.startswith("+"):
+                added += 1
+            elif line.startswith("-"):
+                removed += 1
+        return added, removed
+
+    @staticmethod
+    def _guess_preview_language(path: str) -> str:
+        """Best-effort lexer hint for fenced preview blocks."""
+        suffix = Path(path).suffix.lower()
+        mapping = {
+            ".py": "python",
+            ".js": "javascript",
+            ".ts": "typescript",
+            ".tsx": "tsx",
+            ".jsx": "jsx",
+            ".json": "json",
+            ".md": "markdown",
+            ".sh": "bash",
+            ".yml": "yaml",
+            ".yaml": "yaml",
+            ".toml": "toml",
+            ".rs": "rust",
+            ".go": "go",
+            ".java": "java",
+            ".c": "c",
+            ".cpp": "cpp",
+            ".h": "c",
+            ".html": "html",
+            ".css": "css",
+        }
+        return mapping.get(suffix, "text")
 
     async def _handle_agent_resume(self, result: CommandResult) -> None:
         """Resume a paused agent task after an /agent command."""
@@ -786,13 +916,21 @@ class ShellUI:
     def _emit_runtime_message(self, message: RuntimeMessage) -> None:
         """Render runtime-owned user-visible messages through shell surfaces."""
         if message.kind == "status":
-            self._stream_renderer.render_status(message.text)
+            self._stream_renderer.render_notification(
+                ShellNotification(level="status", message=message.text)
+            )
         elif message.kind == "success":
-            self._stream_renderer.render_success(message.text)
+            self._stream_renderer.render_notification(
+                ShellNotification(level="success", message=message.text)
+            )
         elif message.kind == "warning":
-            self._stream_renderer.render_warning(message.text)
+            self._stream_renderer.render_notification(
+                ShellNotification(level="warning", message=message.text)
+            )
         elif message.kind == "error":
-            self._stream_renderer.render_error(message.text)
+            self._stream_renderer.render_notification(
+                ShellNotification(level="error", message=message.text)
+            )
         else:
             self._console.print(f"[dim]{message.text}[/dim]")
 
@@ -816,3 +954,16 @@ def _humanize_route(route: str) -> str:
         "multi_step_task": "multi-step task",
     }
     return mapping.get(route, route.replace("_", " "))
+
+
+def _console_supports_unicode(console: Console) -> bool:
+    """Return whether the current output encoding can represent a unicode spinner."""
+    file = getattr(console, "file", None)
+    encoding = getattr(file, "encoding", None)
+    if not isinstance(encoding, str) or not encoding:
+        return True
+    try:
+        "⠋".encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return False
+    return True

@@ -14,7 +14,11 @@ The runtime now builds turn-scoped tool inventory through `ToolRouter`, which
 can merge:
 - built-in Python tools
 - callback-backed dynamic tools
-- MCP-backed stdio tools discovered from configured `mcp_servers` (see [mcp.md](mcp.md))
+- MCP-backed tools discovered from configured `mcp_servers` (see [mcp.md](mcp.md))
+
+When `features.mcp_tool_inventory_refresh = true`, agent dispatch refreshes the
+active tool router at turn boundaries so newly available MCP tools can be
+picked up without restarting the process.
 
 ### Parameter schema rules
 

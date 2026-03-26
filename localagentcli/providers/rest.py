@@ -501,6 +501,26 @@ class GenericRESTProvider(RemoteProvider):
             data = json.loads(data_str)
         except json.JSONDecodeError:
             return []
+        raw_error = data.get("error") if isinstance(data, dict) else None
+        if raw_error:
+            if isinstance(raw_error, dict):
+                error_text = str(
+                    raw_error.get("message")
+                    or raw_error.get("type")
+                    or raw_error.get("code")
+                    or "Provider stream error"
+                )
+            else:
+                error_text = str(raw_error)
+            return [
+                StreamChunk(text=error_text, kind="error", importance="secondary"),
+                StreamChunk(
+                    kind="done",
+                    is_done=True,
+                    usage={"error": error_text},
+                    payload={"finish_reason": "error"},
+                ),
+            ]
         chunks: list[StreamChunk] = []
         content = extract_field(data, content_field)
         if content:

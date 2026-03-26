@@ -29,6 +29,7 @@ from localagentcli.commands import (
 from localagentcli.commands import mcp as mcp_cmd
 from localagentcli.commands import mode as mode_cmd
 from localagentcli.commands import models as models_cmd
+from localagentcli.commands import plugin as plugin_cmd
 from localagentcli.commands import providers as providers_cmd
 from localagentcli.commands import session as session_cmd
 from localagentcli.commands import status as status_cmd
@@ -36,6 +37,7 @@ from localagentcli.commands.router import CommandResult, CommandRouter
 from localagentcli.config.manager import ConfigManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.registry import ModelEntry
+from localagentcli.plugins import PluginManager
 from localagentcli.runtime import (
     ApprovalDecisionOp,
     InterruptOp,
@@ -147,6 +149,7 @@ class ShellUI:
         config_cmd.register(self._router, self._config)
         hf_token_cmd.register(self._router, self._key_manager)
         mcp_cmd.register(self._router, self._services.mcp_manager, self._key_manager)
+        plugin_cmd.register(self._router, PluginManager(self._storage.plugins_dir))
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)

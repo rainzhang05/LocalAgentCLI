@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 
 from filelock import FileLock
@@ -27,6 +28,10 @@ class SessionStore(ABC):
     @abstractmethod
     def list_sessions(self) -> list[dict]:
         """Return display-oriented summaries for known sessions."""
+
+    def prune_unnamed_autosaves(self, prefix: str, cutoff: datetime) -> int:
+        """Delete old unnamed autosaves and return removed count."""
+        return 0
 
 
 class JsonSessionStore(SessionStore):
@@ -94,3 +99,24 @@ class JsonSessionStore(SessionStore):
                 continue
 
         return sessions
+
+    def prune_unnamed_autosaves(self, prefix: str, cutoff: datetime) -> int:
+        removed = 0
+        if not self._dir.exists():
+            return 0
+
+        for path in self._dir.glob(f"{prefix}*.json"):
+            try:
+                modified_at = datetime.fromtimestamp(path.stat().st_mtime)
+            except OSError:
+                continue
+            if modified_at >= cutoff:
+                continue
+            try:
+                path.unlink(missing_ok=True)
+                lock_path = Path(str(path) + ".lock")
+                lock_path.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                continue
+        return removed

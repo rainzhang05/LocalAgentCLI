@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from typing import Iterator
 
@@ -32,6 +33,7 @@ _CATCHUP_STATUS_BATCH_LIMIT = 4
 _CATCHUP_BACKLOG_HIGH_WATER = 10
 _CATCHUP_BACKLOG_LOW_WATER = 4
 _MIN_LINE_WIDTH = 8
+_LIVE_DETAILS_FLUSH_INTERVAL_SEC = 0.08
 
 
 class StreamRenderer:
@@ -47,6 +49,7 @@ class StreamRenderer:
         self._status_batch: list[str] = []
         self._catchup_mode = False
         self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
+        self._last_secondary_flush_at = 0.0
         self._symbols = {
             "error": _safe_symbol(console, "✗", "x"),
             "status": _safe_symbol(console, "ℹ", "i"),
@@ -68,6 +71,7 @@ class StreamRenderer:
         self._status_batch.clear()
         self._catchup_mode = False
         self._status_batch_limit = _DEFAULT_STATUS_BATCH_LIMIT
+        self._last_secondary_flush_at = 0.0
         for chunk in chunks:
             self.render_chunk(chunk)
         return self._buffer
@@ -97,7 +101,19 @@ class StreamRenderer:
             detail = chunk.text or self._format_chunk_payload(chunk)
             if detail:
                 self._append_secondary(detail)
+                self._flush_live_secondary()
             return
+
+    def finalize(self) -> None:
+        """Finalize any pending stream output between turns."""
+        if self._primary_started:
+            self._finalize()
+            return
+        if self._status_batch:
+            self._finalize()
+            return
+        if len(self._secondary_entries) > self._rendered_secondary_count:
+            self._finalize()
 
     def _finalize(self) -> None:
         """Called when streaming is complete."""
@@ -152,6 +168,7 @@ class StreamRenderer:
         pending_status = bool(self._status_batch)
         if not pending_secondary and not pending_status and not show_persistent_secondary:
             return
+        emitted = False
         if pending_secondary or show_persistent_secondary:
             if self._persistent_details_lane:
                 lane_lines = list(self._secondary_entries)
@@ -168,6 +185,7 @@ class StreamRenderer:
                         border_style="dim",
                     )
                 )
+                emitted = True
                 if pending_secondary:
                     self._rendered_secondary_count = len(self._secondary_entries)
         if pending_status:
@@ -176,6 +194,9 @@ class StreamRenderer:
             self._console.print(body)
             self._status_batch.clear()
             self._adjust_status_pacing()
+            emitted = True
+        if emitted:
+            self._last_secondary_flush_at = time.monotonic()
 
     def render_approval_prompt(self) -> None:
         """Render the inline approval prompt using the shared status grammar."""
@@ -302,6 +323,16 @@ class StreamRenderer:
                     cleaned = _truncate_with_ellipsis(cleaned, panel_width)
                 self._secondary_entries.append(cleaned)
         self._adjust_status_pacing()
+
+    def _flush_live_secondary(self) -> None:
+        """Flush pending secondary detail on a throttled cadence while streaming."""
+        if len(self._secondary_entries) <= self._rendered_secondary_count:
+            return
+        now = time.monotonic()
+        if (now - self._last_secondary_flush_at) < _LIVE_DETAILS_FLUSH_INTERVAL_SEC:
+            return
+        self._prepare_block_output()
+        self.flush_pending_details()
 
     def _available_width(self, *, reserve: int = 0) -> int | None:
         width = _console_width(self._console)

@@ -44,3 +44,31 @@ def test_plugin_manager_install_file_and_detect_duplicate(tmp_path: Path):
         raise AssertionError("Expected duplicate install to fail")
     except FileExistsError:
         pass
+
+
+def test_plugin_manager_discovers_workspace_plugins(tmp_path: Path):
+    manager = PluginManager(tmp_path / "plugins_store")
+    workspace = tmp_path / "workspace"
+    plugin_dir = workspace / "plugins" / "demo_plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.txt").write_text("x", encoding="utf-8")
+
+    discovered = manager.discover_workspace_plugins(workspace)
+
+    assert len(discovered) == 1
+    assert discovered[0].name == "demo_plugin"
+    assert discovered[0].kind == "directory"
+
+
+def test_plugin_manager_sync_from_workspace_installs_missing(tmp_path: Path):
+    manager = PluginManager(tmp_path / "plugins_store")
+    workspace = tmp_path / "workspace"
+    plugin_dir = workspace / "plugins" / "demo_plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.txt").write_text("x", encoding="utf-8")
+
+    synced = manager.sync_from_workspace(workspace)
+
+    assert len(synced) == 1
+    assert synced[0].name == "demo_plugin"
+    assert (manager.plugins_dir / "demo_plugin" / "plugin.txt").exists()

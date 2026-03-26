@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from localagentcli.models.backends.base import ModelMessage
 from localagentcli.session.memory import (
@@ -12,11 +13,14 @@ from localagentcli.session.memory import (
     render_long_horizon_memory_instruction,
 )
 from localagentcli.session.state import Message, Session
+from localagentcli.skills import SkillDocument, SkillsManager
 
 AGENTS_FILENAME = "AGENTS.md"
 WORKSPACE_INSTRUCTION_KEY = "workspace_instruction"
 WORKSPACE_INSTRUCTION_PATH_KEY = "workspace_instruction_path"
 WORKSPACE_INSTRUCTION_MTIME_KEY = "workspace_instruction_mtime_ns"
+SKILLS_OVERLAY_KEY = "skills_overlay"
+SKILLS_OVERLAY_FINGERPRINT_KEY = "skills_overlay_fingerprint"
 
 
 @dataclass(frozen=True)
@@ -49,30 +53,36 @@ def discover_workspace_instruction(workspace: str) -> WorkspaceInstruction | Non
     )
 
 
-def sync_workspace_instruction(session: Session) -> bool:
+def sync_workspace_instruction(
+    session: Session,
+    *,
+    skills_manager: SkillsManager | None = None,
+) -> bool:
     """Refresh cached workspace instructions in session metadata."""
     detected = discover_workspace_instruction(session.workspace)
     metadata = session.metadata
+    changed = False
 
     if detected is None:
-        if not _has_workspace_instruction(metadata):
-            return False
-        metadata.pop(WORKSPACE_INSTRUCTION_KEY, None)
-        metadata.pop(WORKSPACE_INSTRUCTION_PATH_KEY, None)
-        metadata.pop(WORKSPACE_INSTRUCTION_MTIME_KEY, None)
-        return True
+        if _has_workspace_instruction(metadata):
+            metadata.pop(WORKSPACE_INSTRUCTION_KEY, None)
+            metadata.pop(WORKSPACE_INSTRUCTION_PATH_KEY, None)
+            metadata.pop(WORKSPACE_INSTRUCTION_MTIME_KEY, None)
+            changed = True
+    else:
+        if not (
+            metadata.get(WORKSPACE_INSTRUCTION_PATH_KEY) == detected.path
+            and metadata.get(WORKSPACE_INSTRUCTION_MTIME_KEY) == detected.mtime_ns
+            and metadata.get(WORKSPACE_INSTRUCTION_KEY) == detected.content
+        ):
+            metadata[WORKSPACE_INSTRUCTION_PATH_KEY] = detected.path
+            metadata[WORKSPACE_INSTRUCTION_MTIME_KEY] = detected.mtime_ns
+            metadata[WORKSPACE_INSTRUCTION_KEY] = detected.content
+            changed = True
 
-    if (
-        metadata.get(WORKSPACE_INSTRUCTION_PATH_KEY) == detected.path
-        and metadata.get(WORKSPACE_INSTRUCTION_MTIME_KEY) == detected.mtime_ns
-        and metadata.get(WORKSPACE_INSTRUCTION_KEY) == detected.content
-    ):
-        return False
-
-    metadata[WORKSPACE_INSTRUCTION_PATH_KEY] = detected.path
-    metadata[WORKSPACE_INSTRUCTION_MTIME_KEY] = detected.mtime_ns
-    metadata[WORKSPACE_INSTRUCTION_KEY] = detected.content
-    return True
+    if _sync_skills_overlay(session, skills_manager):
+        changed = True
+    return changed
 
 
 def build_system_instructions(session: Session) -> list[str]:
@@ -82,6 +92,10 @@ def build_system_instructions(session: Session) -> list[str]:
     repo_instruction = session.metadata.get(WORKSPACE_INSTRUCTION_KEY)
     if isinstance(repo_instruction, str) and repo_instruction.strip():
         instructions.append(repo_instruction.strip())
+
+    skills_overlay = session.metadata.get(SKILLS_OVERLAY_KEY)
+    if isinstance(skills_overlay, str) and skills_overlay.strip():
+        instructions.append(skills_overlay.strip())
 
     instructions.extend(
         instruction.strip()
@@ -167,3 +181,63 @@ def _has_workspace_instruction(metadata: dict) -> bool:
             WORKSPACE_INSTRUCTION_MTIME_KEY,
         )
     )
+
+
+def _sync_skills_overlay(session: Session, skills_manager: SkillsManager | None) -> bool:
+    metadata = session.metadata
+    if skills_manager is None:
+        if SKILLS_OVERLAY_KEY in metadata or SKILLS_OVERLAY_FINGERPRINT_KEY in metadata:
+            metadata.pop(SKILLS_OVERLAY_KEY, None)
+            metadata.pop(SKILLS_OVERLAY_FINGERPRINT_KEY, None)
+            return True
+        return False
+
+    workspace_root = _instruction_search_root(session.workspace)
+    workspace_docs = (
+        skills_manager.discover_workspace_skills(workspace_root)
+        if workspace_root is not None
+        else []
+    )
+    installed_docs = skills_manager.list_installed()
+    all_docs = sorted(
+        [*workspace_docs, *installed_docs],
+        key=lambda doc: (doc.source, doc.name.lower(), str(doc.path)),
+    )
+
+    if not all_docs:
+        if SKILLS_OVERLAY_KEY in metadata or SKILLS_OVERLAY_FINGERPRINT_KEY in metadata:
+            metadata.pop(SKILLS_OVERLAY_KEY, None)
+            metadata.pop(SKILLS_OVERLAY_FINGERPRINT_KEY, None)
+            return True
+        return False
+
+    fingerprint = _skills_fingerprint(all_docs)
+    if metadata.get(SKILLS_OVERLAY_FINGERPRINT_KEY) == fingerprint and metadata.get(
+        SKILLS_OVERLAY_KEY
+    ):
+        return False
+
+    metadata[SKILLS_OVERLAY_FINGERPRINT_KEY] = fingerprint
+    metadata[SKILLS_OVERLAY_KEY] = _render_skills_overlay(all_docs)
+    return True
+
+
+def _skills_fingerprint(documents: list[SkillDocument]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": document.name,
+            "path": str(document.path),
+            "source": document.source,
+            "mtime_ns": document.mtime_ns,
+        }
+        for document in documents
+    ]
+
+
+def _render_skills_overlay(documents: list[SkillDocument]) -> str:
+    lines: list[str] = ["Skills overlays:"]
+    for document in documents:
+        lines.append("")
+        lines.append(f"Skill ({document.source}): {document.name} — {document.path}")
+        lines.append(document.content)
+    return "\n".join(lines)

@@ -194,6 +194,24 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 ---
 
+### MCP Commands
+
+#### `/mcp list`
+- **Syntax**: `/mcp list`
+- **Behavior**: Lists configured MCP server names discovered from `[mcp_servers]` in config.
+
+#### `/mcp login`
+- **Syntax**: `/mcp login <server> [token]`
+- **Behavior**: Stores a bearer token for the specified MCP server using the same secure key storage surface as provider keys (`KeyManager`).
+- **Prompt behavior**: If `[token]` is omitted, prompts securely for masked token input.
+- **Scope**: Tokens are looked up by server name key (`mcp_server:<server>`) at MCP request time.
+
+#### `/mcp logout`
+- **Syntax**: `/mcp logout <server>`
+- **Behavior**: Deletes the stored bearer token for the specified MCP server.
+
+---
+
 ### Workspace Commands
 
 #### `/workspace set <path>`

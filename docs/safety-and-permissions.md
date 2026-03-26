@@ -57,6 +57,14 @@ Runtime sandbox posture is controlled separately through `safety.sandbox_mode`
     preserving workspace-boundary rules; in autonomous mode, high-risk
     `shell_execute` commands do not pause for interactive approval
 
+Optional OS-level command wrapping can be selected with
+`safety.os_sandbox_backend`:
+- `off` (default): use local execution without OS sandbox wrapping
+- `auto`: choose `macos-seatbelt` on macOS or `linux-bwrap` on Linux when
+    backend binaries are available; otherwise fall back to local execution
+- `macos-seatbelt`: force Seatbelt-wrapped shell command execution
+- `linux-bwrap`: force bubblewrap-wrapped shell command execution
+
 Internally, posture is normalized into a typed runtime sandbox policy model that
 tracks posture, writable roots, and network-access flags for future containment
 slices. Current enforcement remains application-layer (approval + boundaries),

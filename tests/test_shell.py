@@ -14,6 +14,7 @@ from rich.text import Text
 
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands.router import CommandResult, CommandRouter
+from localagentcli.models.backends.base import StreamChunk
 from localagentcli.models.registry import ModelEntry, ModelRegistry
 from localagentcli.runtime import ApprovalDecisionOp, RuntimeEvent
 from localagentcli.shell import prompt as prompt_module
@@ -1344,3 +1345,68 @@ class TestShellUIHelpers:
         model.cancel.assert_called_once()
         controller.stop.assert_called_once()
         ui._stream_renderer.render_warning.assert_called_once_with("Agent task interrupted.")
+
+
+class TestShellUIRuntimeEventRendering:
+    def test_turn_completed_direct_answer_renders_success_without_duplicate_body(
+        self,
+        config,
+        storage,
+    ):
+        ui = ShellUI(config=config, storage=storage)
+        ui._stream_renderer = MagicMock()
+        ui._console = MagicMock()
+
+        event = RuntimeEvent(
+            type="turn_completed",
+            submission_id="sub-1",
+            data={"mode": "agent", "route": "direct_answer", "final_text": "fresh answer"},
+            message="fresh answer",
+        )
+
+        asyncio.run(ui._ahandle_runtime_event(event))
+
+        ui._stream_renderer.render_success.assert_called_once_with("Task completed.")
+        ui._stream_renderer.flush_pending_details.assert_called_once()
+        ui._console.print.assert_not_called()
+
+    def test_turn_completed_planned_agent_renders_summary_body(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._stream_renderer = MagicMock()
+        ui._console = MagicMock()
+
+        event = RuntimeEvent(
+            type="turn_completed",
+            submission_id="sub-1",
+            data={"mode": "agent", "route": "multi_step_task", "summary": "All done."},
+            message="All done.",
+        )
+
+        asyncio.run(ui._ahandle_runtime_event(event))
+
+        ui._stream_renderer.render_success.assert_called_once_with("Task completed.")
+        ui._stream_renderer.flush_pending_details.assert_called_once()
+        ui._console.print.assert_called_once_with("All done.")
+
+    def test_adrain_runtime_events_finalizes_renderer_between_turns(self, config, storage):
+        ui = ShellUI(config=config, storage=storage)
+        ui._stream_renderer = MagicMock()
+
+        async def _events():
+            yield RuntimeEvent(
+                type="stream_chunk",
+                submission_id="sub-1",
+                data=StreamChunk(text="partial", kind="final_text"),
+            )
+            yield RuntimeEvent(
+                type="turn_completed",
+                submission_id="sub-1",
+                data={"mode": "chat", "final_text": "partial"},
+            )
+
+        ui._runtime = MagicMock()
+        ui._runtime.aiter_events = MagicMock(return_value=_events())
+
+        asyncio.run(ui._adrain_runtime_events())
+
+        ui._stream_renderer.finalize.assert_called_once()

@@ -111,7 +111,8 @@ Quicksort is a divide-and-conquer sorting algorithm...
 
 **Behavior:**
 - Secondary entries are shown by default in dim styling so they remain visible without competing with the final answer
-- The renderer prints pending detail before the first primary answer text, and flushes any later-arriving detail once at the next safe boundary such as task completion or an approval prompt
+- The renderer prints pending detail before the first primary answer text and now keeps the lane live during streaming with throttled updates so long-running reasoning/tool metadata remains visible in real time
+- Boundary flushes still run at task completion, approval prompts, and other safe transition points to ensure no pending detail is lost between turns
 - Optional persistent details mode (`shell.persistent_details_lane = true`) re-renders the current rolling details window at each flush boundary, allowing split-lane-style monitoring without adopting a full-screen TUI layout
 - Neutral status lines (`render_status` / activity-style messages) may be batched across rapid agent events: queued secondary detail is emitted once per flush, then consecutive status lines print together (duplicate back-to-back lines collapse to one). A flush runs at boundaries such as success/warning/error lines, plan panels, tool-call rows, stream completion, approval prompts, and the end of each agent event pass from the shell
 - Status batching uses adaptive pacing under bursty backlog: the renderer switches to a smaller batch size when pending detail+status backlog crosses a high-water mark, then restores calmer batching only after backlog drops below a lower-water threshold (hysteresis)
@@ -249,6 +250,7 @@ The picker must be keyboard-first:
 4. If the model is generating and the user scrolls up, generation continues in the background. Scrolling back down resumes live output.
 5. Secondary chunks are buffered separately from final assistant text so the renderer can dim and cap them without losing the full ordered event stream.
 6. Neutral status pacing adapts automatically during backlog spikes (high/low-water hysteresis) to reduce wait-state jitter while keeping operators caught up.
+7. If an upstream backend/provider stream closes without an explicit terminal chunk, the runtime still emits a terminal completion signal so the shell can finalize output deterministically.
 
 ### Streaming Implementation
 

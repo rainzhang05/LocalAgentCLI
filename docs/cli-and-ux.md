@@ -28,6 +28,7 @@ LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/
 - Current mode (chat / agent)
 - Active target label (local model/backend or provider/model pair)
 - Current or last visible agent route/phase/step when agent mode has recent task state
+- Active-task elapsed time while agent work is running (derived from persisted `agent_task_state.started_at`)
 - Undo count when rollback history exists for the current session
 - Workspace path (abbreviated with `~`)
 - One short operator hint
@@ -37,6 +38,7 @@ LocalAgent | mode: agent | target: codellama-7b (gguf) | agent: multi-step task/
 - The active local target label is derived from the model registry only (format suffix), not from repeated on-disk re-detection, so toolbar refreshes stay lightweight while loading a model or running `/models` flows still repairs registry metadata through the existing load paths.
 - `/status` uses the same status snapshot data and formatting family, so the compact toolbar and expanded report cannot drift.
 - Agent-state snapshots now carry explicit wait/retry/error metadata (`wait_reason`, `retry_count`, `last_error`) so operators can distinguish waiting approval, retrying, and recovery states quickly.
+- Agent-state snapshots now also persist timing metadata (`active`, `started_at`, `ended_at`, `updated_at`) so toolbar and `/status` can surface trustworthy elapsed/runtime timing without recomputing from transcript text.
 - The secondary details lane can run in opt-in persistent mode via `shell.persistent_details_lane`; when enabled, the recent details window is re-rendered at flush boundaries so secondary context remains continuously visible during long-running turns.
 - This is the strongest non-full-screen status surface currently used by the CLI. A full-screen TUI remains intentionally out of scope.
 
@@ -88,11 +90,13 @@ two sub-arrays...█
 
 **Rules:**
 - Streaming is always enabled. There is no batch-mode output.
+- While a runtime submission is active, the shell may display a transient thinking indicator (`shell.thinking_indicator_enabled`) with configurable frame style/cadence (`shell.thinking_indicator_style`, `shell.thinking_animation_interval_ms`).
 - The cursor (block `█`) advances as tokens arrive
-- Markdown formatting in model output is rendered in real time (bold, code blocks, lists)
-- Code blocks are syntax-highlighted using the detected language
+- Markdown-aware rendering is used for rich completion summaries and preview blocks.
+- Fenced code blocks in streamed output are syntax-highlighted using the detected language once a fence closes (with graceful fallback for incomplete fences at stream end).
 - Primary output (assistant text and important activity messages) stays high-contrast
 - Secondary output (reasoning, raw tool-call details, provider notifications, low-priority errors) is separated from the primary stream and rendered dimmed
+- Shell status/success/warning/error/details surfaces now resolve their colors/styles from the selected shell theme (`shell.theme`) so visual consistency is configurable without changing behavior.
 - Local/backend warnings captured from stdout or stderr are promoted into primary notifications so they do not get mixed into the assistant answer body
 
 ### Secondary Details Panel
@@ -157,7 +161,7 @@ When the active terminal encoding cannot represent these glyphs, the shell falls
 
 Supporting warnings or reasoning that do not deserve the main status lane are queued into the dimmed `Details` lane instead of being mixed into the main answer body.
 High-risk explanations, rollback notes, and low-priority recovery detail follow the same rule: they remain visible, but they do not displace the primary route/phase/status lines.
-Approval previews keep this rhythm by clipping very large patch/content/command sections and labeling those sections with `(truncated)` so operators can see when detail has been shortened.
+Approval previews keep this rhythm by clipping very large sections and labeling those sections with `(truncated)` so operators can see when detail has been shortened. For `patch_apply`, the details view now includes a change summary plus a fenced unified diff block (rendered with syntax highlighting); `file_write` previews now include language-fenced content blocks.
 
 ### Command Result Presentation
 
@@ -245,8 +249,8 @@ The picker must be keyboard-first:
 ### Requirements
 
 1. All model output is streamed. There is no configuration to disable streaming.
-2. Tokens are rendered as soon as they are received — no buffering.
-3. Markdown is rendered progressively. A code block that hasn't been closed yet is still displayed with partial syntax highlighting.
+2. Tokens are rendered as soon as they are received for normal text output.
+3. Fenced code blocks are syntax-highlighted; code payload may buffer until the closing fence so highlighting remains coherent.
 4. If the model is generating and the user scrolls up, generation continues in the background. Scrolling back down resumes live output.
 5. Secondary chunks are buffered separately from final assistant text so the renderer can dim and cap them without losing the full ordered event stream.
 6. Neutral status pacing adapts automatically during backlog spikes (high/low-water hysteresis) to reduce wait-state jitter while keeping operators caught up.
@@ -323,7 +327,7 @@ Errors are displayed inline with clear formatting:
 
 When LocalAgentCLI is launched for the first time (no `config.toml` exists):
 
-1. Display a welcome banner:
+1. Display a welcome banner (configurable via `shell.startup_banner`):
 ```
 Welcome to LocalAgent CLI
 

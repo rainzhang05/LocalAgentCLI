@@ -28,7 +28,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | CLI entry point (`localagentcli` command, `localagent` alias) | 2026-03-21 — entry bootstrap now supports the interactive shell plus a richer `localagentcli exec` surface with `chat`/`agent` modes, JSON event output, headless approval policy, and saved-session resume/fork flows, all reusing the shared runtime stack |
-| `[x]` | Shell UI (input loop, prompt) | 2026-03-25 — startup renders a configurable context banner (`shell.startup_banner`) with mode/target/workspace/session summary, runtime drains show transient thinking animation frames, planned-agent completion summaries route through markdown-aware rendering, and keyboard-first command/selection menus now use text-first turquoise (`#40E0D0`) highlighting without gray menu background fill |
+| `[x]` | Shell UI (input loop, prompt) | 2026-03-25 — startup renders a configurable context banner (`shell.startup_banner`) with mode/target/workspace/session summary, runtime drains show transient thinking animation frames, planned-agent completion summaries route through markdown-aware rendering, and keyboard-first command/selection menus now keep no menu background fill, render unselected options in black text, selected options in turquoise (`#40E0D0`), and keep a black prompt toolbar bar |
 | `[x]` | Command Router (parsing, dispatch) | 2026-03-17 |
 | `[x]` | `/help` command | 2026-03-19 — grouped help, command-specific help, and slash-menu metadata are all driven by per-command `CommandSpec` declarations, and router-level unknown/invalid command errors now include consistent `/help` guidance plus close-match suggestions when available |
 | `[x]` | `/exit` command | 2026-03-17 |

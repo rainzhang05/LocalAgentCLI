@@ -22,6 +22,9 @@ from localagentcli.commands import (
 )
 from localagentcli.commands import mcp as mcp_cmd
 from localagentcli.commands import (
+    plugin as plugin_cmd,
+)
+from localagentcli.commands import (
     providers as providers_cmd,
 )
 from localagentcli.commands import (
@@ -34,6 +37,7 @@ from localagentcli.commands.router import CommandRouter
 from localagentcli.mcp import McpManager
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.registry import ModelRegistry
+from localagentcli.plugins import PluginManager
 from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.state import Message
@@ -57,9 +61,11 @@ def _make_router(config, session_manager, tmp_path=None):
         km._keyring_available = False
         registry = ProviderRegistry(config, km)
         mcp_manager = McpManager.from_config(config.get("mcp_servers", {}))
+        plugin_manager = PluginManager(tmp_path / "plugins")
         model_registry = ModelRegistry(tmp_path / "registry.json")
         hf_token_cmd.register(router, km)
         mcp_cmd.register(router, mcp_manager, km)
+        plugin_cmd.register(router, plugin_manager)
         providers_cmd.register(router, registry, km, session_manager, config, console)
         set_cmd.register(
             router,
@@ -401,6 +407,36 @@ class TestMcpCommands:
         logout = router.dispatch("mcp logout demo")
         assert logout.success
         assert km.retrieve_key("mcp_server:demo") is None
+
+
+class TestPluginCommands:
+    def test_plugin_list_shows_empty_state(self, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("plugin list")
+
+        assert result.success
+        assert "No local plugins installed" in result.message
+
+    def test_plugin_install_list_remove_round_trip(self, config, session_manager, tmp_path):
+        src_dir = tmp_path / "source_plugin"
+        src_dir.mkdir()
+        (src_dir / "README.md").write_text("plugin", encoding="utf-8")
+
+        router = _make_router(config, session_manager, tmp_path)
+
+        install = router.dispatch(f"plugin install {src_dir} demo")
+        assert install.success
+
+        listed = router.dispatch("plugin list")
+        assert listed.success
+        assert "demo" in listed.message
+
+        removed = router.dispatch("plugin remove demo")
+        assert removed.success
+
+        listed_again = router.dispatch("plugin list")
+        assert "No local plugins installed" in listed_again.message
 
 
 class TestSessionCommands:

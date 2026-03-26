@@ -5,7 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.syntax import Syntax
 
 from localagentcli.agents.events import (
     PhaseChanged,
@@ -23,6 +25,7 @@ from localagentcli.agents.events import (
 )
 from localagentcli.agents.planner import PlanStep, TaskPlan
 from localagentcli.models.backends.base import StreamChunk
+from localagentcli.shell.notifications import ShellNotification
 from localagentcli.shell.streaming import StreamRenderer
 from localagentcli.tools.base import ToolResult
 
@@ -301,6 +304,63 @@ class TestStreamRendererStatusCoalescing:
         panel = console.print.call_args.args[0]
         assert isinstance(panel, Panel)
         assert "…" in panel.renderable
+
+
+class TestStreamRendererNotificationsAndThinking:
+    def test_render_notification_routes_by_level(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_notification(ShellNotification(level="warning", message="Careful"))
+
+        console.print.assert_called_once_with("[yellow]⟳ Careful[/yellow]")
+
+    def test_render_thinking_indicator_and_stop(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.start_thinking_indicator(label="Analyzing")
+        renderer.render_thinking_indicator("⠋")
+        renderer.stop_thinking_indicator()
+
+        assert "\r\033[2K⠋ Analyzing..." in console.print.call_args_list[0].args[0]
+        assert console.print.call_args_list[1].args[0] == "\r\033[2K"
+
+    def test_render_preview_uses_markdown_renderable_for_fenced_content(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_preview("patch_apply preview", "```diff\n- old\n+ new\n```")
+
+        panel_arg = console.print.call_args.args[0]
+        assert isinstance(panel_arg, Panel)
+        assert isinstance(panel_arg.renderable, Markdown)
+
+    def test_render_markdown_message_uses_markdown_when_detected(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_markdown_message("# Header\n- item")
+
+        rendered = console.print.call_args.args[0]
+        assert isinstance(rendered, Markdown)
+
+    def test_streamed_fenced_code_renders_syntax_block(self):
+        console = MagicMock()
+        renderer = StreamRenderer(console)
+
+        renderer.render_stream(
+            iter(
+                [
+                    StreamChunk(text="```python\nprint('x')\n```\n"),
+                    StreamChunk(is_done=True),
+                ]
+            )
+        )
+
+        assert any(
+            call.args and isinstance(call.args[0], Syntax) for call in console.print.call_args_list
+        )
 
 
 class TestStreamRendererAgentEvents:

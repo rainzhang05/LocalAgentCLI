@@ -26,14 +26,14 @@ class ShellTheme:
 _THEMES: dict[str, ShellTheme] = {
     "default": ShellTheme(
         name="default",
-        banner_style="bold cyan",
+        banner_style="bold #40E0D0",
         status_style="default",
         success_style="green",
         warning_style="yellow",
         error_style="red",
-        details_border_style="dim",
+        details_border_style="#40E0D0",
         details_text_style="dim",
-        panel_border_style="cyan",
+        panel_border_style="#40E0D0",
         dim_style="dim",
     ),
     "high-contrast": ShellTheme(

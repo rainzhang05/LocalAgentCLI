@@ -26,13 +26,13 @@ The default mode balances productivity with safety.
 | Git commits (`git_commit`) | Yes — prompt user |
 | MCP tools **without** `readOnlyHint: true` | Yes — prompt user in balanced mode (same as other side-effecting tools) |
 | MCP tools **with** `readOnlyHint: true` | No — auto-approved unless high-risk rules apply |
-| High-risk actions (see below) | Always — cannot be auto-approved |
+| High-risk actions (see below) | Usually yes — prompt user; exception: `shell_execute` high-risk commands are auto-approved in autonomous mode when `safety.sandbox_mode = danger-full-access` |
 
 ### Autonomous (via `/agent approve`)
 
 When the user issues `/agent approve`, approval mode switches to autonomous for the current session and future sessions:
 - Standard actions (file writes, shell commands, tests, git commits, and MCP tools that require approval) are auto-approved
-- High-risk actions still require explicit approval
+- High-risk actions still require explicit approval in normal postures (`workspace-write` / `read-only`), with one exception for `shell_execute` when `safety.sandbox_mode = danger-full-access`
 - If an agent task is currently paused on approval, the pending action resumes in autonomous mode
 - Choosing `Approve all` from an inline approval prompt has the same effect as `/agent approve`
 - To switch back, set `safety.approval_mode` to `balanced` (for example via `/config safety.approval_mode balanced`)
@@ -54,7 +54,8 @@ Runtime sandbox posture is controlled separately through `safety.sandbox_mode`
 - `read-only`: block side-effecting tools at the safety gate (including in
   autonomous approval mode)
 - `danger-full-access`: disable the additional sandbox-mode block, while still
-  preserving the normal approval and workspace-boundary rules
+    preserving workspace-boundary rules; in autonomous mode, high-risk
+    `shell_execute` commands do not pause for interactive approval
 
 ### Execution containment
 
@@ -124,7 +125,7 @@ When autonomous mode is active, the prompt is skipped for standard actions. The 
     [Enter] Approve  |  [d] Deny  |  [v] View details  |  [a] Approve all
 ```
 
-High-risk actions never inherit autonomous approval. The prompt always returns for those cases, even if the operator previously chose `Approve all`.
+High-risk actions generally continue to require interactive approval in autonomous mode. The explicit exception is high-risk `shell_execute` calls when `safety.sandbox_mode` is set to `danger-full-access`.
 
 ---
 
@@ -185,7 +186,7 @@ If the agent or user targets a path outside the workspace:
 
 ## High-Risk Actions
 
-These actions **always** require explicit user approval, even in autonomous mode:
+These actions are treated as high risk. They require explicit approval in balanced mode and in autonomous mode under normal postures (`workspace-write` / `read-only`). In autonomous mode with `danger-full-access`, high-risk `shell_execute` calls are allowed without pausing for interactive approval.
 
 | Action | Why It's High-Risk |
 |---|---|

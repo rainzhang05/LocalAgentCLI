@@ -74,6 +74,7 @@ inactivity = 600                # Seconds of agent inactivity before pause
 # Feature toggles to enable or disable specific experimental or stable features.
 # Example:
 # dummy_experimental = true
+sqlite_session_store = false         # When true, sessions persist in ~/.localagent/sessions.db (with JSON auto-migration on load)
 
 [sessions]
 autosave_named = false              # When true, debounce-save named sessions during interactive chat/agent work
@@ -108,6 +109,7 @@ startup_banner = true              # Show a startup context banner with mode/tar
 | `timeouts.model_response` | int | `300` | Model response timeout (seconds) |
 | `timeouts.inactivity` | int | `600` | Agent inactivity timeout (seconds) |
 | `features.*` | bool | (varies) | Individual feature toggles mapping to the internal feature registry. Default depends on feature stage. |
+| `features.sqlite_session_store` | bool | `false` | Enables the SQLite-backed session store (`~/.localagent/sessions.db`). When enabled, named sessions are read from SQLite first, and missing legacy JSON sessions are auto-migrated on first load. |
 | `shell.persistent_details_lane` | bool | `false` | When `true`, streaming surfaces re-render the rolling Details lane at flush boundaries so secondary context remains visible during long-running turns |
 | `shell.thinking_indicator_enabled` | bool | `true` | Enables transient thinking animation while runtime submissions are being drained |
 | `shell.thinking_indicator_style` | string | `"dots"` | Thinking indicator frame set (`dots`, `line`, or `pulse`) |
@@ -209,17 +211,20 @@ class Message:
 #### Save
 
 - Command: `/session save [name]`
-- Serializes the full `Session` object to JSON
-- Storage: `~/.localagent/sessions/<name>.json`
+- Serializes the full `Session` object payload
+- Storage:
+    - default: `~/.localagent/sessions/<name>.json`
+    - when `features.sqlite_session_store=true`: `~/.localagent/sessions.db`
 - If no name is given, uses `session_<timestamp>` format
 - Includes all history, tasks, pinned instructions, and config overrides
 
 #### Load
 
 - Command: `/session load <name>`
-- Deserializes the session from disk
+- Deserializes the session from the active store
 - Restores mode, model, provider, workspace, history, and task state
 - If the referenced model is no longer installed, warns the user and clears the active model
+- When `features.sqlite_session_store=true`, LocalAgentCLI reads from SQLite first; if the name only exists as a legacy JSON file, it is loaded and auto-migrated into SQLite.
 
 #### Fork
 
@@ -245,7 +250,25 @@ When `sessions.autosave_named` is `true` in config (session overrides apply), th
 
 #### Session file format version
 
-Saved session JSON includes `format_version` (currently `1`) for forward compatibility. Older files without this field still load; the next save writes the current version.
+Saved session payloads include `format_version` (currently `1`) for forward compatibility. Older JSON files without this field still load; the next save writes the current version.
+
+#### SQLite session store (opt-in)
+
+When `features.sqlite_session_store` is enabled:
+
+- Session persistence is handled by `~/.localagent/sessions.db`.
+- `/session save`, `/session load`, `/session list`, `exec --session`, and `exec --fork` continue using the same user-facing commands.
+- Legacy JSON session files remain supported as compatibility inputs: if a named session is not present in SQLite but exists as JSON, load succeeds and the session is best-effort migrated into SQLite.
+- If SQLite initialization fails at startup, LocalAgentCLI falls back to the JSON store for safety.
+
+#### Runtime JSONL replay reconciliation
+
+On `/session load`, LocalAgentCLI performs a best-effort reconciliation pass using append-only runtime event logs under `~/.localagent/cache/runtime-events/<session-id>.jsonl`:
+
+- Completed turns in the runtime log (`submission` + `turn_completed`) can recover missing user/assistant pairs into in-memory session history.
+- Recovery is conservative and idempotent for previously saved user/assistant pairs (duplicate pairs are skipped).
+- Invalid/corrupt JSONL lines are ignored rather than failing session load.
+- Replay metadata is recorded under `session.metadata.runtime_replay` for observability.
 
 #### List
 

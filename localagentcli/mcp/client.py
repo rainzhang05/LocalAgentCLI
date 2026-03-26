@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -47,6 +48,12 @@ class McpServerConfig:
     url: str | None = None
     http_headers: dict[str, str] = field(default_factory=dict)
     bearer_token_env_var: str | None = None
+    oauth_authorize_url: str | None = None
+    oauth_token_url: str | None = None
+    oauth_client_id: str | None = None
+    oauth_client_secret_env_var: str | None = None
+    oauth_redirect_uri: str | None = None
+    oauth_scopes: list[str] = field(default_factory=list)
     timeout: float = 15.0
 
 
@@ -579,6 +586,40 @@ class McpManager:
                     bearer_token_env_var=(
                         raw_bearer_env.strip() if isinstance(raw_bearer_env, str) else None
                     ),
+                    oauth_authorize_url=(
+                        payload.get("oauth_authorize_url", "").strip() or None
+                        if isinstance(payload.get("oauth_authorize_url"), str)
+                        else None
+                    ),
+                    oauth_token_url=(
+                        payload.get("oauth_token_url", "").strip() or None
+                        if isinstance(payload.get("oauth_token_url"), str)
+                        else None
+                    ),
+                    oauth_client_id=(
+                        payload.get("oauth_client_id", "").strip() or None
+                        if isinstance(payload.get("oauth_client_id"), str)
+                        else None
+                    ),
+                    oauth_client_secret_env_var=(
+                        payload.get("oauth_client_secret_env_var", "").strip() or None
+                        if isinstance(payload.get("oauth_client_secret_env_var"), str)
+                        else None
+                    ),
+                    oauth_redirect_uri=(
+                        payload.get("oauth_redirect_uri", "").strip() or None
+                        if isinstance(payload.get("oauth_redirect_uri"), str)
+                        else None
+                    ),
+                    oauth_scopes=(
+                        [
+                            str(item).strip()
+                            for item in payload.get("oauth_scopes", [])
+                            if str(item).strip()
+                        ]
+                        if isinstance(payload.get("oauth_scopes"), list)
+                        else []
+                    ),
                     timeout=float(payload.get("timeout", 15.0) or 15.0),
                 )
             )
@@ -592,6 +633,13 @@ class McpManager:
     def configured_server_names(self) -> list[str]:
         """Return configured MCP server names in declaration order."""
         return [server.name for server in self._servers]
+
+    def get_server_config(self, server_name: str) -> McpServerConfig | None:
+        """Return parsed server config for command-layer helpers (e.g., OAuth)."""
+        for server in self._servers:
+            if server.name == server_name:
+                return server
+        return None
 
     def build_dynamic_tool_specs(self) -> list[DynamicToolSpec]:
         specs: list[DynamicToolSpec] = []

@@ -30,6 +30,7 @@ from localagentcli.commands import (
 from localagentcli.commands import (
     session as session_cmd,
 )
+from localagentcli.commands import skills as skills_cmd
 from localagentcli.commands import (
     status as status_cmd,
 )
@@ -42,6 +43,7 @@ from localagentcli.providers.keys import KeyManager
 from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.session.state import Message
 from localagentcli.shell.prompt import SelectionOption
+from localagentcli.skills import SKILL_FILENAME, SkillsManager
 
 
 def _make_router(config, session_manager, tmp_path=None):
@@ -62,10 +64,12 @@ def _make_router(config, session_manager, tmp_path=None):
         registry = ProviderRegistry(config, km)
         mcp_manager = McpManager.from_config(config.get("mcp_servers", {}))
         plugin_manager = PluginManager(tmp_path / "plugins")
+        skills_manager = SkillsManager(tmp_path / "skills")
         model_registry = ModelRegistry(tmp_path / "registry.json")
         hf_token_cmd.register(router, km)
         mcp_cmd.register(router, mcp_manager, km)
         plugin_cmd.register(router, plugin_manager)
+        skills_cmd.register(router, skills_manager)
         providers_cmd.register(router, registry, km, session_manager, config, console)
         set_cmd.register(
             router,
@@ -437,6 +441,33 @@ class TestPluginCommands:
 
         listed_again = router.dispatch("plugin list")
         assert "No local plugins installed" in listed_again.message
+
+
+class TestSkillsCommands:
+    def test_skills_list_shows_empty_state(self, config, session_manager, tmp_path):
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("skills list")
+
+        assert result.success
+        assert "No installed skills" in result.message
+
+    def test_skills_install_list_remove_round_trip(self, config, session_manager, tmp_path):
+        source = tmp_path / "source_skill"
+        source.mkdir()
+        (source / SKILL_FILENAME).write_text("Prefer minimal diffs.", encoding="utf-8")
+
+        router = _make_router(config, session_manager, tmp_path)
+
+        install = router.dispatch(f"skills install {source} minimal")
+        assert install.success
+
+        listed = router.dispatch("skills list")
+        assert listed.success
+        assert "minimal" in listed.message
+
+        removed = router.dispatch("skills remove minimal")
+        assert removed.success
 
 
 class TestSessionCommands:

@@ -104,7 +104,7 @@ The system uses a hybrid approach:
 #### `shell_execute`
 - **Purpose**: Run a shell command
 - **Arguments**: `command` (str, required), `timeout` (int, optional — seconds, default from config), `working_dir` (str, optional — defaults to workspace root)
-- **Behavior**: Executes the command in a subprocess within the workspace. On POSIX, command I/O is captured via PTY with incremental polling and bounded output buffering; on non-POSIX hosts, a subprocess fallback is used. Returns combined output and exit code in a structured `ToolResult`.
+- **Behavior**: Executes commands through an `ExecProcess` abstraction. The default `LocalExecProcess` runs a subprocess within the workspace. On POSIX, command I/O is captured via PTY with incremental polling and bounded output buffering; on non-POSIX hosts, a subprocess fallback is used. A `RemoteExecProcess` seam is available for future delegated execution paths while preserving the same `ToolResult` contract.
 - **Safety**: Requires approval (executes arbitrary commands)
 - **Workspace constraint**: The command runs with `working_dir` set to the workspace root (or specified directory). The Safety Layer may reject commands that attempt to escape the workspace.
 - **Timeout**: Commands are killed if they exceed the timeout. The agent is notified of the timeout.

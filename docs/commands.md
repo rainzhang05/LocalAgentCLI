@@ -212,6 +212,23 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 
 ---
 
+### Plugin Commands
+
+#### `/plugin list`
+- **Syntax**: `/plugin list`
+- **Behavior**: Lists locally installed plugin artifacts from `~/.localagent/plugins`.
+
+#### `/plugin install`
+- **Syntax**: `/plugin install <path> [name]`
+- **Behavior**: Installs a local plugin file or directory into `~/.localagent/plugins`.
+- **Naming**: If `[name]` is omitted, the plugin name is inferred from the source path.
+
+#### `/plugin remove`
+- **Syntax**: `/plugin remove <name>`
+- **Behavior**: Removes an installed local plugin artifact by name.
+
+---
+
 ### Workspace Commands
 
 #### `/workspace set <path>`

@@ -54,6 +54,7 @@ DEFAULT_CONFIG: dict = {
     },
     "features": {
         "sqlite_session_store": False,
+        "mcp_tool_inventory_refresh": False,
     },
 }
 

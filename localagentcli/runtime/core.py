@@ -48,6 +48,7 @@ from localagentcli.safety.layer import SafetyLayer
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.instructions import sync_workspace_instruction
 from localagentcli.session.manager import SessionManager
+from localagentcli.skills import SkillsManager
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
 from localagentcli.tools import create_default_tool_registry
@@ -90,6 +91,7 @@ class RuntimeServices:
     hardware_detector: HardwareDetector
     model_installer: ModelInstaller
     session_manager: SessionManager
+    skills_manager: SkillsManager
     dynamic_tool_specs: list[DynamicToolSpec]
     mcp_manager: McpManager | None
     feature_registry: FeatureRegistry
@@ -138,6 +140,7 @@ class RuntimeServices:
             default_target_resolver=default_target_resolver,
         )
         session_manager.new_session()
+        skills_manager = SkillsManager(storage.skills_dir)
 
         return cls(
             config=config,
@@ -150,6 +153,7 @@ class RuntimeServices:
             hardware_detector=hardware_detector,
             model_installer=model_installer,
             session_manager=session_manager,
+            skills_manager=skills_manager,
             dynamic_tool_specs=[],
             mcp_manager=McpManager.from_config(
                 config.get("mcp_servers", {}),
@@ -268,7 +272,10 @@ class SessionExecutionRuntime:
     def sync_workspace_instruction(self) -> None:
         """Refresh repository instructions for the active session."""
         try:
-            sync_workspace_instruction(self._services.session_manager.current)
+            sync_workspace_instruction(
+                self._services.session_manager.current,
+                skills_manager=self._services.skills_manager,
+            )
         except Exception:
             return
 

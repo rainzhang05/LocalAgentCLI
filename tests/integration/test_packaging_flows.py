@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from localagentcli.models.registry import ModelEntry
 from localagentcli.session.state import Message
+from localagentcli.shell.notifications import ShellNotification
 from localagentcli.shell.prompt import SelectionOption
 from localagentcli.shell.ui import ShellUI
 
@@ -153,6 +154,19 @@ class TestBackendAutoInstallIntegration:
 
         assert active_backend is None
         mock_create_backend.assert_not_called()
-        ui._stream_renderer.render_error.assert_called_once_with(
-            "Failed to install GGUF backend dependencies: pip failed"
+        ui._stream_renderer.render_notification.assert_has_calls(
+            [
+                call(
+                    ShellNotification(
+                        level="status",
+                        message="Installing GGUF backend dependencies...",
+                    )
+                ),
+                call(
+                    ShellNotification(
+                        level="error",
+                        message="Failed to install GGUF backend dependencies: pip failed",
+                    )
+                ),
+            ]
         )

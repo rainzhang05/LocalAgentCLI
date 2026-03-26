@@ -4,6 +4,10 @@
 >
 > **Phase 12 completed (2026-03-25):** shell UX now includes configurable transient thinking indicators during runtime drains (`shell.thinking_indicator_enabled`, `shell.thinking_indicator_style`, `shell.thinking_animation_interval_ms`), theme tokens (`shell.theme`), startup banner control (`shell.startup_banner`), notification dedupe (`shell.notification_dedupe`), richer approval previews (file-change summaries + unified diff/code-fence previews), and markdown/code rendering upgrades (fenced code syntax highlighting in stream output plus markdown-aware message/preview rendering). `agent_task_state` timing metadata (`active`, `started_at`, `ended_at`, `updated_at`) is persisted and surfaced through `/status` and the prompt toolbar.
 >
+> **Phase 13 foundation slice landed (2026-03-25):** session persistence now uses a pluggable store abstraction (`SessionStore`) with default JSON behavior and an opt-in SQLite backend (`features.sqlite_session_store`). When SQLite is enabled, sessions persist in `~/.localagent/sessions.db`; legacy JSON sessions are still loadable and are best-effort auto-migrated into SQLite on first load. Session command surfaces and `exec --session/--fork` flows keep the same operator-facing behavior.
+>
+> **Phase 13 slice 2 landed (2026-03-25):** `/session load` now performs best-effort runtime JSONL reconciliation from `~/.localagent/cache/runtime-events/<session-id>.jsonl`, recovering missing completed turn pairs (`user` + `assistant`) when present, skipping duplicate pairs, tolerating malformed JSONL lines, and recording replay metadata under `session.metadata.runtime_replay`.
+>
 > This document tracks the implementation status of every component. Update it after completing any implementation work.
 
 ---
@@ -38,7 +42,7 @@ After implementing a component:
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
 | `[x]` | Config defaults and validation | 2026-03-25 — adds shell UX controls with schema validation/coercion: `shell.thinking_indicator_enabled`, `shell.thinking_indicator_style`, `shell.thinking_animation_interval_ms`, `shell.theme`, `shell.notification_dedupe`, and `shell.startup_banner`, while preserving existing `persistent_details_lane` and `generation.reasoning_effort` validation |
 | `[x]` | Session state dataclass | 2026-03-17 |
-| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-21 — default-target repair; exec resume/fork; fork lineage metadata; exec persist-on-exit; `format_version` on save; opt-in debounced named autosave and flush from shell drain/exit; chat/agent controllers notify the scheduler when wired from `SessionExecutionRuntime` |
+| `[x]` | Session manager (new/save/load/list/clear) | 2026-03-25 — now delegates persistence through a pluggable `SessionStore` abstraction (JSON default, opt-in SQLite via `features.sqlite_session_store`), while preserving existing command/API behavior; includes legacy JSON compatibility with best-effort auto-migration into SQLite on first load when enabled; prior default-target repair, exec resume/fork, fork lineage metadata, persist-on-exit, and named autosave behaviors remain intact |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
 | `[x]` | Logger (file-based, leveled) | 2026-03-17 |
 

@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from localagentcli.agents.events import TaskComplete, ToolCallResult
+from localagentcli.agents.events import PhaseChanged, TaskComplete, TaskFailed, ToolCallResult
 from localagentcli.agents.loop import AgentLoop
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
@@ -320,3 +320,47 @@ def test_unified_turn_loop_allows_many_tool_rounds_before_final_output(tmp_path:
 
     assert isinstance(events[-1], TaskComplete)
     assert sum(isinstance(event, ToolCallResult) for event in events) == 7
+
+
+def test_unified_turn_loop_repeated_model_errors_report_model_failure_not_budget(
+    tmp_path: Path,
+):
+    responses = [
+        GenerationResult(
+            text="",
+            finish_reason="error",
+            usage={"error": "rate limit exceeded"},
+        )
+        for _ in range(5)
+    ]
+
+    model = _LoopScriptedModel(responses)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        max_consecutive_errors=5,
+        max_step_rounds=24,
+        unified_turn_loop=True,
+    )
+    plan = TaskPlan(task="Inspect", steps=[PlanStep(index=1, description="Inspect")])
+
+    events = list(loop.run("Inspect", [], plan=plan))
+
+    assert isinstance(events[-1], TaskFailed)
+    assert "model error" in events[-1].reason.lower()
+    assert "rate limit exceeded" in events[-1].reason.lower()
+    assert "budget exhausted" not in events[-1].reason.lower()
+    failed_phase = [
+        event for event in events if isinstance(event, PhaseChanged) and event.phase == "failed"
+    ]
+    assert failed_phase
+    assert "model error" in failed_phase[-1].summary.lower()

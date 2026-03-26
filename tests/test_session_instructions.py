@@ -12,6 +12,7 @@ from localagentcli.session.instructions import (
     sync_workspace_instruction,
 )
 from localagentcli.session.state import Message, Session
+from localagentcli.skills import SKILL_FILENAME, SkillsManager
 
 
 def _make_session(workspace: Path) -> Session:
@@ -86,6 +87,40 @@ def test_build_system_instructions_appends_long_horizon_memory_block(tmp_path: P
     assert instructions[1] == "Keep answers concise."
     assert instructions[2].startswith("Long-horizon memory:\n")
     assert "User prefers minimal diffs." in instructions[2]
+
+
+def test_sync_workspace_instruction_adds_skills_overlay(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    (workspace / "skills" / "search").mkdir(parents=True)
+    (workspace / "skills" / "search" / SKILL_FILENAME).write_text(
+        "Use ripgrep first.",
+        encoding="utf-8",
+    )
+    session = _make_session(workspace)
+    manager = SkillsManager(tmp_path / "installed-skills")
+
+    changed = sync_workspace_instruction(session, skills_manager=manager)
+
+    assert changed is True
+    overlay = session.metadata.get("skills_overlay")
+    assert isinstance(overlay, str)
+    assert "Skills overlays:" in overlay
+    assert "Use ripgrep first." in overlay
+
+
+def test_build_system_instructions_includes_skills_overlay_before_pinned(tmp_path: Path):
+    session = _make_session(tmp_path)
+    session.metadata["workspace_instruction"] = "Repo guidance."
+    session.metadata["skills_overlay"] = "Skills overlays:\nSkill content"
+    session.pinned_instructions.append("Pinned guidance.")
+
+    instructions = build_system_instructions(session)
+
+    assert instructions == [
+        "Repo guidance.",
+        "Skills overlays:\nSkill content",
+        "Pinned guidance.",
+    ]
 
 
 def test_build_conversation_model_messages_merges_system_layers(tmp_path: Path):

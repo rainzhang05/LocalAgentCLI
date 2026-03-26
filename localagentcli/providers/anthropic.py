@@ -673,6 +673,27 @@ class AnthropicProvider(RemoteProvider):
                 )
             return chunks
 
+        if event_type == "error":
+            raw_error = data.get("error")
+            if isinstance(raw_error, dict):
+                error_text = str(
+                    raw_error.get("message")
+                    or raw_error.get("type")
+                    or raw_error.get("code")
+                    or "Provider stream error"
+                )
+            else:
+                error_text = str(raw_error or "Provider stream error")
+            return [
+                StreamChunk(text=error_text, kind="error", importance="secondary"),
+                StreamChunk(
+                    kind="done",
+                    is_done=True,
+                    usage={"error": error_text},
+                    payload={"finish_reason": "error"},
+                ),
+            ]
+
         return []
 
     @staticmethod

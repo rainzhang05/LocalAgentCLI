@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 
 from rich.console import Console
 
@@ -87,6 +89,64 @@ for line in sys.stdin:
         encoding="utf-8",
     )
     return script
+
+
+def _start_fake_mcp_http_server(tools: list[dict], *, sse: bool = False) -> tuple[object, str]:
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            message = json.loads(raw.decode("utf-8") or "{}")
+            method = message.get("method")
+            request_id = message.get("id")
+
+            if method == "tools/list":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"tools": tools},
+                }
+            elif method == "tools/call":
+                params = message.get("params", {})
+                name = params.get("name", "")
+                value = params.get("arguments", {}).get("value", "")
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [{"type": "text", "text": name + ":" + str(value)}],
+                        "isError": False,
+                    },
+                }
+            else:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {},
+                }
+
+            payload = json.dumps(response).encode("utf-8")
+            self.send_response(200)
+            if sse:
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(b"data: ")
+                self.wfile.write(payload)
+                self.wfile.write(b"\n\n")
+            else:
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        def log_message(self, _format, *_args):  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}/mcp"
 
 
 _DEFAULT_ECHO_TOOL = {
@@ -267,5 +327,49 @@ class TestMcpRuntime:
             assert r2.status == "success"
             assert "foo-bar" in (r1.output or "") or "foo_bar" in (r1.output or "")
         finally:
+            if services.mcp_manager is not None:
+                services.mcp_manager.close()
+
+    def test_runtime_services_exposes_http_mcp_dynamic_tool(self, config, storage):
+        server, url = _start_fake_mcp_http_server([_DEFAULT_ECHO_TOOL], sse=False)
+        config._config["mcp_servers"] = {
+            "http_demo": {
+                "transport": "http",
+                "url": url,
+            }
+        }
+        services = RuntimeServices.create(config, storage, Console(record=True))
+        try:
+            router = services.build_tool_router(Path(config.get("general.workspace", ".")))
+            definitions = router.get_tool_definitions()
+            assert any(definition["name"] == "mcp__http_demo__echo" for definition in definitions)
+            result = router.execute("mcp__http_demo__echo", value="hello-http")
+            assert result.status == "success"
+            assert "hello-http" in (result.output or "")
+        finally:
+            server.shutdown()
+            server.server_close()
+            if services.mcp_manager is not None:
+                services.mcp_manager.close()
+
+    def test_runtime_services_exposes_sse_mcp_dynamic_tool(self, config, storage):
+        server, url = _start_fake_mcp_http_server([_DEFAULT_ECHO_TOOL], sse=True)
+        config._config["mcp_servers"] = {
+            "sse_demo": {
+                "transport": "sse",
+                "url": url,
+            }
+        }
+        services = RuntimeServices.create(config, storage, Console(record=True))
+        try:
+            router = services.build_tool_router(Path(config.get("general.workspace", ".")))
+            definitions = router.get_tool_definitions()
+            assert any(definition["name"] == "mcp__sse_demo__echo" for definition in definitions)
+            result = router.execute("mcp__sse_demo__echo", value="hello-sse")
+            assert result.status == "success"
+            assert "hello-sse" in (result.output or "")
+        finally:
+            server.shutdown()
+            server.server_close()
             if services.mcp_manager is not None:
                 services.mcp_manager.close()

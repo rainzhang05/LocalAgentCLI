@@ -439,6 +439,7 @@ class ShellUI:
             async for event in self._runtime.aiter_events():
                 await self._ahandle_runtime_event(event)
         finally:
+            self._stream_renderer.finalize()
             self._session_manager.flush_named_autosave()
 
     async def _ahandle_runtime_event(self, event: RuntimeEvent) -> None:
@@ -485,14 +486,13 @@ class ShellUI:
                 await self._adrain_runtime_events()
             return
         if event.type == "turn_completed":
-            if (
-                isinstance(event.data, dict)
-                and event.data.get("mode") == "agent"
-                and event.message.strip()
-            ):
+            if isinstance(event.data, dict) and event.data.get("mode") == "agent":
                 self._stream_renderer.render_success("Task completed.")
                 self._stream_renderer.flush_pending_details()
-                self._console.print(event.message)
+                route = str(event.data.get("route", "") or "")
+                summary = event.message.strip()
+                if summary and route != "direct_answer":
+                    self._console.print(event.message)
             return
         if event.type == "turn_failed":
             self._stream_renderer.render_error(event.message or "Turn failed.")

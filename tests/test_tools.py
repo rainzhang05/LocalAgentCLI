@@ -16,6 +16,7 @@ from localagentcli.tools import (
     GitDiffTool,
     GitStatusTool,
     PatchApplyTool,
+    PythonReplTool,
     ShellExecuteTool,
     TestExecuteTool,
     ToolResult,
@@ -255,6 +256,20 @@ class TestTestExecuteTool:
 
         assert result.status == "error"
         assert "Unable to detect test framework" in result.summary
+
+
+class TestPythonReplTool:
+    def test_executes_python_snippet(self, tmp_path: Path):
+        result = PythonReplTool(tmp_path).execute("print('hello repl')")
+
+        assert result.status == "success"
+        assert "hello repl" in result.output
+
+    def test_reports_nonzero_exit(self, tmp_path: Path):
+        result = PythonReplTool(tmp_path).execute("import sys; sys.exit(3)")
+
+        assert result.status == "error"
+        assert result.exit_code == 3
 
 
 class TestGitStatusTool:

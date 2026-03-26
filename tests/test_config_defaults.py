@@ -28,6 +28,12 @@ class TestDefaultConfig:
     def test_default_features_include_sqlite_session_store_toggle(self):
         assert DEFAULT_CONFIG["features"]["sqlite_session_store"] is False
 
+    def test_default_sessions_include_unnamed_autosave_settings(self):
+        sessions = DEFAULT_CONFIG["sessions"]
+        assert sessions["autosave_unnamed"] is False
+        assert sessions["autosave_unnamed_prefix"] == "autosave_"
+        assert sessions["autosave_unnamed_retention_days"] == 14
+
     def test_default_mode_is_agent(self):
         assert DEFAULT_CONFIG["general"]["default_mode"] == "agent"
 
@@ -104,6 +110,23 @@ class TestValidateConfigValue:
         ok, msg = validate_config_value("sessions.autosave_named", True)
         assert ok
         assert msg == ""
+
+    def test_valid_bool_sessions_autosave_unnamed(self):
+        ok, msg = validate_config_value("sessions.autosave_unnamed", True)
+        assert ok
+        assert msg == ""
+
+    def test_sessions_autosave_unnamed_prefix_non_empty(self):
+        ok, msg = validate_config_value("sessions.autosave_unnamed_prefix", "auto_")
+        assert ok
+        ok, msg = validate_config_value("sessions.autosave_unnamed_prefix", "")
+        assert not ok
+
+    def test_sessions_autosave_unnamed_retention_days_positive(self):
+        ok, msg = validate_config_value("sessions.autosave_unnamed_retention_days", 7)
+        assert ok
+        ok, msg = validate_config_value("sessions.autosave_unnamed_retention_days", 0)
+        assert not ok
 
     def test_bool_coercion_from_string(self):
         ok, msg = validate_config_value("sessions.autosave_named", "true")
@@ -245,6 +268,10 @@ class TestCoerceValue:
     def test_coerce_string_to_bool(self):
         assert coerce_value("sessions.autosave_named", "true") is True
         assert coerce_value("sessions.autosave_named", "false") is False
+
+    def test_coerce_new_sessions_bool(self):
+        assert coerce_value("sessions.autosave_unnamed", "true") is True
+        assert coerce_value("sessions.autosave_unnamed", "false") is False
 
     def test_coerce_shell_bool(self):
         assert coerce_value("shell.persistent_details_lane", "true") is True

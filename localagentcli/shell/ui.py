@@ -6,6 +6,7 @@ import asyncio
 import difflib
 import json
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -25,6 +26,7 @@ from localagentcli.commands import help as help_cmd
 from localagentcli.commands import (
     hf_token as hf_token_cmd,
 )
+from localagentcli.commands import mcp as mcp_cmd
 from localagentcli.commands import mode as mode_cmd
 from localagentcli.commands import models as models_cmd
 from localagentcli.commands import providers as providers_cmd
@@ -55,6 +57,7 @@ from localagentcli.shell.prompt import (
     create_prompt_session,
     get_prompt_history_strings,
     prompt_action,
+    prompt_text,
 )
 from localagentcli.shell.streaming import StreamRenderer
 from localagentcli.shell.themes import resolve_shell_theme
@@ -113,6 +116,8 @@ class ShellUI:
 
         self._router = CommandRouter()
         self._register_commands()
+        if self._services.mcp_manager is not None:
+            self._services.mcp_manager.set_elicitation_handler(self._handle_mcp_elicitation)
         self._prompt_session = create_prompt_session(
             self._router,
             self._session_prompt_history(),
@@ -141,6 +146,7 @@ class ShellUI:
         )
         config_cmd.register(self._router, self._config)
         hf_token_cmd.register(self._router, self._key_manager)
+        mcp_cmd.register(self._router, self._services.mcp_manager, self._key_manager)
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
@@ -945,6 +951,62 @@ class ShellUI:
             f"The {label} backend requires {dependency_list}. Install it now?",
             default=True,
         )
+
+    def _handle_mcp_elicitation(
+        self,
+        server_name: str,
+        tool_name: str,
+        request: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Prompt for MCP elicitation responses requested during tool execution."""
+        message = str(request.get("message", "MCP server requested additional input.")).strip()
+        self._stream_renderer.render_notification(
+            ShellNotification(
+                level="warning",
+                message=f"MCP elicitation requested by {server_name}/{tool_name}: {message}",
+            )
+        )
+
+        schema = request.get("requestedSchema") or request.get("requested_schema")
+        if not isinstance(schema, dict):
+            answer = prompt_text("Elicitation response", default="")
+            if answer is None:
+                return None
+            return {"value": answer}
+
+        properties = schema.get("properties")
+        required = schema.get("required")
+        if not isinstance(properties, dict) or not properties:
+            answer = prompt_text("Elicitation response", default="")
+            if answer is None:
+                return None
+            return {"value": answer}
+
+        required_set = (
+            {item for item in required if isinstance(item, str)}
+            if isinstance(required, list)
+            else set()
+        )
+        response: dict[str, Any] = {}
+        for field_name, field_schema in properties.items():
+            if not isinstance(field_schema, dict):
+                field_schema = {}
+            description = str(field_schema.get("description", "")).strip()
+            prompt_label = f"{field_name}"
+            if description:
+                prompt_label = f"{field_name} ({description})"
+            default_value = ""
+            raw_value = prompt_text(prompt_label, default=default_value)
+            if raw_value is None:
+                return None
+            if not raw_value and field_name in required_set:
+                self._stream_renderer.render_warning(
+                    f"Required elicitation field '{field_name}' cannot be empty."
+                )
+                return None
+            if raw_value:
+                response[str(field_name)] = raw_value
+        return response
 
 
 def _humanize_route(route: str) -> str:

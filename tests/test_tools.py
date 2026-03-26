@@ -163,47 +163,69 @@ class TestPatchApplyTool:
 
 
 class TestShellExecuteTool:
-    def test_runs_successfully(self, tmp_path: Path, monkeypatch):
+    def test_runs_successfully(self, tmp_path: Path):
         captured = {}
 
-        def fake_stream(command, cwd, timeout):
-            captured["command"] = command
-            captured["cwd"] = cwd
-            captured["timeout"] = timeout
+        class _Process:
+            def run(self, command, cwd, timeout):
+                captured["command"] = command
+                captured["cwd"] = cwd
+                captured["timeout"] = timeout
 
-            class _Result:
-                return_code = 0
-                output = "done"
-                timed_out = False
+                class _Result:
+                    return_code = 0
+                    output = "done"
+                    timed_out = False
 
-            return _Result()
+                return _Result()
 
-        monkeypatch.setattr("localagentcli.tools.shell_execute._run_streaming_command", fake_stream)
-
-        result = ShellExecuteTool(tmp_path).execute("echo done", timeout=10)
+        result = ShellExecuteTool(tmp_path, exec_process=_Process()).execute(
+            "echo done", timeout=10
+        )
 
         assert result.status == "success"
         assert result.output == "done"
         assert captured["cwd"] == str(tmp_path.resolve())
 
-    def test_timeout_maps_to_timeout_status(self, tmp_path: Path, monkeypatch):
-        def fake_stream(_command, _cwd, _timeout):
-            class _Result:
-                return_code = 124
-                output = "partial\noops"
-                timed_out = True
+    def test_timeout_maps_to_timeout_status(self, tmp_path: Path):
+        class _Process:
+            def run(self, _command, _cwd, _timeout):
+                class _Result:
+                    return_code = 124
+                    output = "partial\noops"
+                    timed_out = True
 
-            return _Result()
+                return _Result()
 
-        monkeypatch.setattr("localagentcli.tools.shell_execute._run_streaming_command", fake_stream)
-
-        result = ShellExecuteTool(tmp_path).execute("sleep 1", timeout=1)
+        result = ShellExecuteTool(tmp_path, exec_process=_Process()).execute("sleep 1", timeout=1)
 
         assert result.status == "timeout"
         assert "partial" in result.output
 
+    def test_supports_remote_exec_process_seam(self, tmp_path: Path):
+        from localagentcli.tools.exec_process import ExecProcessResult, RemoteExecProcess
+
+        captured = {}
+
+        def _runner(command: str, cwd: str, timeout: int) -> ExecProcessResult:
+            captured["command"] = command
+            captured["cwd"] = cwd
+            captured["timeout"] = timeout
+            return ExecProcessResult(return_code=0, output="remote done")
+
+        result = ShellExecuteTool(
+            tmp_path,
+            exec_process=RemoteExecProcess(_runner),
+        ).execute("echo remote", timeout=15)
+
+        assert result.status == "success"
+        assert result.output == "remote done"
+        assert captured["command"] == "echo remote"
+        assert captured["cwd"] == str(tmp_path.resolve())
+        assert captured["timeout"] == 15
+
     def test_run_streaming_command_uses_fallback_on_windows(self, monkeypatch):
-        from localagentcli.tools import shell_execute as module
+        from localagentcli.tools import exec_process as module
 
         class _Result:
             return_code = 0
@@ -213,7 +235,7 @@ class TestShellExecuteTool:
         monkeypatch.setattr(module.os, "name", "nt", raising=False)
         monkeypatch.setattr(
             module,
-            "_run_streaming_command_fallback",
+            "run_streaming_command_fallback",
             lambda command, cwd, timeout: _Result(),
         )
         called = {"posix": False}
@@ -222,9 +244,9 @@ class TestShellExecuteTool:
             called["posix"] = True
             return _Result()
 
-        monkeypatch.setattr(module, "_run_streaming_command_posix", _posix)
+        monkeypatch.setattr(module, "run_streaming_command_posix", _posix)
 
-        result = module._run_streaming_command("echo ok", ".", 10)
+        result = module.run_streaming_command("echo ok", ".", 10)
 
         assert result.output == "ok"
         assert called["posix"] is False

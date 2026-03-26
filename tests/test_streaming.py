@@ -38,7 +38,10 @@ class TestStreamRendererRenderChunk:
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_chunk(StreamChunk(text="thinking...", is_reasoning=True))
-        console.print.assert_not_called()
+        panel_arg = console.print.call_args.args[0]
+        assert isinstance(panel_arg, Panel)
+        assert panel_arg.title == "Details"
+        assert "thinking..." in panel_arg.renderable
         assert list(renderer._secondary_entries) == ["thinking..."]
 
     def test_done_chunk_prints_newline(self):
@@ -51,7 +54,10 @@ class TestStreamRendererRenderChunk:
         console = MagicMock()
         renderer = StreamRenderer(console)
         renderer.render_chunk(StreamChunk(is_tool_call=True, tool_call_data={"name": "test"}))
-        console.print.assert_not_called()
+        panel_arg = console.print.call_args.args[0]
+        assert isinstance(panel_arg, Panel)
+        assert panel_arg.title == "Details"
+        assert "Tool call: test" in panel_arg.renderable
         assert list(renderer._secondary_entries) == ["Tool call: test"]
 
     def test_text_accumulates_in_buffer(self):

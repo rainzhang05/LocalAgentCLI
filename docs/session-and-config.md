@@ -81,6 +81,12 @@ autosave_debounce_seconds = 2       # Minimum quiet period before writing (secon
 
 [shell]
 persistent_details_lane = false     # When true, re-render the recent Details window at flush boundaries during streaming
+thinking_indicator_enabled = true   # When true, show a transient thinking indicator during runtime drains
+thinking_indicator_style = "dots"   # "dots" | "line" | "pulse"
+thinking_animation_interval_ms = 120 # Minimum 40ms between thinking frames
+theme = "default"                  # "default" | "high-contrast" | "mono"
+notification_dedupe = true         # Deduplicate adjacent repeated shell notifications
+startup_banner = true              # Show a startup context banner with mode/target/workspace/session
 ```
 
 ### Configurable Fields
@@ -103,6 +109,12 @@ persistent_details_lane = false     # When true, re-render the recent Details wi
 | `timeouts.inactivity` | int | `600` | Agent inactivity timeout (seconds) |
 | `features.*` | bool | (varies) | Individual feature toggles mapping to the internal feature registry. Default depends on feature stage. |
 | `shell.persistent_details_lane` | bool | `false` | When `true`, streaming surfaces re-render the rolling Details lane at flush boundaries so secondary context remains visible during long-running turns |
+| `shell.thinking_indicator_enabled` | bool | `true` | Enables transient thinking animation while runtime submissions are being drained |
+| `shell.thinking_indicator_style` | string | `"dots"` | Thinking indicator frame set (`dots`, `line`, or `pulse`) |
+| `shell.thinking_animation_interval_ms` | int | `120` | Thinking animation cadence in milliseconds (minimum `40`) |
+| `shell.theme` | string | `"default"` | Shell style token set (`default`, `high-contrast`, `mono`) used by renderer status/details/panels |
+| `shell.notification_dedupe` | bool | `true` | Deduplicates adjacent identical structured notifications before rendering |
+| `shell.startup_banner` | bool | `true` | Controls startup context banner rendering in interactive shell sessions |
 | `sessions.autosave_named` | bool | `false` | When `true`, the interactive shell debounce-saves the current session to its saved name after chat/agent mutations (only applies when the session already has a name from `/session save`) |
 | `sessions.autosave_debounce_seconds` | int | `2` | Debounce interval for named autosaves; must be greater than zero |
 

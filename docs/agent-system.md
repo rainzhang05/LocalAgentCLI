@@ -106,6 +106,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 8. **Structured step briefings**: Step execution prompts use a fixed structure (execution rules, output contract, task objective, plan status, current step focus) before layered system/session context, reducing ambiguity during long tool-using turns.
 9. **Model-adapted tool exposure**: Per-round tool definitions are filtered by active `ModelInfo` (tool-use capability gates, required capability tags, minimum token-budget thresholds) before the model receives tool schemas.
 10. **Unified turn loop budget**: Each step can span multiple model↔tool rounds in one continuous execution loop up to a configurable round budget, reducing dependence on separate replanning calls for in-step progress.
+11. **Failure classification in unified loops**: When repeated model errors or tool failures hit the retry threshold first, the loop reports an explicit threshold failure reason; round-budget exhaustion is reserved for steps that neither converge nor trip a retry threshold.
 
 ### Runtime Phase Contract
 
@@ -432,4 +433,4 @@ Even though there is no fixed step limit, the system protects against runaway ag
 1. **User interrupt (Ctrl+C)**: Immediately stops the current task and returns control to the prompt.
 2. **Inactivity timeout**: If the agent has not made progress for a configurable duration, the task ends with `TaskTimedOut` and a clear warning.
 3. **Resource limits**: If a single tool call exceeds resource limits (e.g., shell command timeout), it is killed and the agent is notified.
-4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it enters recovery, replans once around the failure, and eventually terminates with `TaskFailed` if progress still cannot be made.
+4. **Error accumulation**: If the agent encounters repeated errors (configurable threshold, default 5 consecutive failures), it enters recovery and may replan around the failure. In unified-loop execution, repeated model/tool failures now terminate with explicit threshold reasons, while separate round-budget exhaustion remains a distinct failure path.

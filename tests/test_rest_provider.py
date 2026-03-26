@@ -175,6 +175,19 @@ class TestRESTStreamGenerate:
             chunks = list(provider.stream_generate([ModelMessage(role="user", content="Hi")]))
         assert chunks[-1].is_done is True
 
+    def test_parse_error_payload_line_emits_error_and_done(self):
+        chunks = GenericRESTProvider._parse_sse_line(
+            'data: {"error":{"message":"backend unavailable"}}',
+            "choices[0].delta.content",
+            "",
+            "",
+        )
+
+        assert chunks[0].kind == "error"
+        assert "backend unavailable" in chunks[0].text
+        assert chunks[-1].is_done is True
+        assert chunks[-1].payload == {"finish_reason": "error"}
+
 
 # ---------------------------------------------------------------------------
 # test_connection() tests

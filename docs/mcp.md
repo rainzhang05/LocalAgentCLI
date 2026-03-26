@@ -73,14 +73,15 @@ High-risk classification still applies where relevant (for example sensitive pat
 
 ---
 
-## Project guidance and “skills”
+## Project guidance and skills overlays
 
-LocalAgentCLI does **not** ship a separate skills pack installer or marketplace. The supported way to give the model **project-specific guidance** is:
+LocalAgentCLI now supports a baseline local skills runtime:
 
-- Repository-root **`AGENTS.md`** (auto-loaded when present), and  
-- **Pinned instructions** on the session.
+- Workspace skill discovery from common project directories (`skills/`, `.skills/`, `.github/skills/`) containing `SKILL.md`
+- Installed local skills under `~/.localagent/skills` managed with `/skills list|install|remove`
+- Skill content is merged into system instructions as a prompt overlay
 
-Treat optional future “skill packs” (curated prompt overlays or tool bundles) as **not part of the current product surface** until explicitly documented and implemented.
+Repository-root **`AGENTS.md`** and session-pinned instructions remain supported and are layered with skill overlays.
 
 ---
 
@@ -88,6 +89,7 @@ Treat optional future “skill packs” (curated prompt overlays or tool bundles
 
 - No full browser/device OAuth automation (interactive token minting must be done out-of-band and then stored with `/mcp login`).
 - Elicitation support is baseline and schema-driven; advanced protocol-specific elicitation variants may need follow-on hardening.
+- Skills runtime is baseline/local-only; remote skill registries and richer skill package metadata are follow-on work.
 - **No guarantee** that a misbehaving or malicious MCP server is confined beyond process boundaries; operators should only configure servers they trust.
 
 ---

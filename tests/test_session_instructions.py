@@ -67,6 +67,27 @@ def test_build_system_instructions_places_agents_before_pinned(tmp_path: Path):
     ]
 
 
+def test_build_system_instructions_appends_long_horizon_memory_block(tmp_path: Path):
+    session = _make_session(tmp_path)
+    session.metadata["workspace_instruction"] = "Follow AGENTS.md."
+    session.pinned_instructions.append("Keep answers concise.")
+    session.metadata["long_horizon_memory"] = [
+        {
+            "kind": "summary",
+            "content": "User prefers minimal diffs.",
+            "source_timestamp": "",
+            "updated_at": "",
+        }
+    ]
+
+    instructions = build_system_instructions(session)
+
+    assert instructions[0] == "Follow AGENTS.md."
+    assert instructions[1] == "Keep answers concise."
+    assert instructions[2].startswith("Long-horizon memory:\n")
+    assert "User prefers minimal diffs." in instructions[2]
+
+
 def test_build_conversation_model_messages_merges_system_layers(tmp_path: Path):
     session = _make_session(tmp_path)
     session.metadata["workspace_instruction"] = "Repo line."

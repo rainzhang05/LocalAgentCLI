@@ -12,6 +12,7 @@ All persistent data is stored under `~/.localagent/`:
 ~/.localagent/
 ├── config.toml              # Global configuration (see session-and-config.md)
 ├── registry.json            # Model registry (see model-system.md)
+├── sessions.db              # SQLite session store (when features.sqlite_session_store=true)
 ├── models/                  # Downloaded model files
 │   ├── codellama-7b/
 │   │   └── v1/
@@ -30,6 +31,8 @@ All persistent data is stored under `~/.localagent/`:
 ├── cache/                   # Temporary data
 │   ├── rollback/            # File backups for undo (see safety-and-permissions.md)
 │   │   └── <session-id>/
+│   ├── runtime-events/      # Append-only per-session submission/event JSONL logs
+│   │   └── <session-id>.jsonl
 │   └── downloads/           # In-progress model downloads + installer telemetry sidecar
 │       └── install_telemetry.jsonl
 └── secrets/                 # Encrypted API keys (fallback; see remote-providers.md)
@@ -45,9 +48,12 @@ All persistent data is stored under `~/.localagent/`:
 | `config.toml` | Global configuration | Permanent (user-managed) |
 | `registry.json` | Model index | Updated on model install/remove |
 | `models/` | Model weights and metadata | Until user removes model |
-| `sessions/` | Saved session snapshots | Until user deletes session |
+| `sessions/` | Saved session snapshots (default store / legacy compatibility) | Until user deletes session |
+| `sessions.db` | SQLite session store (opt-in via `features.sqlite_session_store`) | Until user deletes or resets session data |
 | `logs/` | Runtime logs and exports | Configurable retention (default: 30 days) |
-| `cache/` | Temporary data (rollbacks, downloads, installer telemetry sidecar) | Short-lived (auto-cleaned) |
+| `cache/` | Temporary data (rollbacks, runtime event logs, downloads, installer telemetry sidecar) | Short-lived (auto-cleaned) |
+
+Runtime event logs (`cache/runtime-events/<session-id>.jsonl`) are append-only and are used for best-effort session replay reconciliation during `/session load`.
 
 Installer download telemetry is append-only JSONL (`install_telemetry.jsonl`).
 Current records use telemetry schema version `2` and include completion-path and

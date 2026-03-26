@@ -25,6 +25,9 @@ class TestDefaultConfig:
         assert "providers" in DEFAULT_CONFIG
         assert "sessions" in DEFAULT_CONFIG
 
+    def test_default_features_include_sqlite_session_store_toggle(self):
+        assert DEFAULT_CONFIG["features"]["sqlite_session_store"] is False
+
     def test_default_mode_is_agent(self):
         assert DEFAULT_CONFIG["general"]["default_mode"] == "agent"
 

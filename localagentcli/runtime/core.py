@@ -151,7 +151,12 @@ class RuntimeServices:
             model_installer=model_installer,
             session_manager=session_manager,
             dynamic_tool_specs=[],
-            mcp_manager=McpManager.from_config(config.get("mcp_servers", {})),
+            mcp_manager=McpManager.from_config(
+                config.get("mcp_servers", {}),
+                bearer_token_resolver=lambda server_name: key_manager.retrieve_key(
+                    f"mcp_server:{server_name}"
+                ),
+            ),
             feature_registry=FeatureRegistry(config.get("features", {})),
         )
 

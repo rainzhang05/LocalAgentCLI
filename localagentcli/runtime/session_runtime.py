@@ -251,7 +251,12 @@ class SessionRuntime:
             )
 
         if turn.stream is not None:
-            async for ev in self._adrain_stream(submission_id, turn.stream, mode=turn.mode):
+            async for ev in self._adrain_stream(
+                submission_id,
+                turn.stream,
+                mode=turn.mode,
+                route=turn.route,
+            ):
                 yield ev
             return
 
@@ -276,21 +281,45 @@ class SessionRuntime:
         chunks: AsyncIterator[StreamChunk],
         *,
         mode: str,
+        route: str | None = None,
     ) -> AsyncIterator[RuntimeEvent]:
+        final_parts: list[str] = []
+        completed = False
+
         async for chunk in chunks:
+            if chunk.kind == "final_text" and chunk.text:
+                final_parts.append(chunk.text)
             yield RuntimeEvent(
                 type="stream_chunk",
                 submission_id=submission_id,
                 data=chunk,
             )
             if chunk.is_done:
-                final_text = self._latest_assistant_message()
+                completed = True
+                final_text = "".join(final_parts).strip()
                 yield RuntimeEvent(
                     type="turn_completed",
                     submission_id=submission_id,
-                    data={"mode": mode, "final_text": final_text},
+                    data={"mode": mode, "final_text": final_text, "route": route or ""},
                     message=final_text,
                 )
+
+        if completed:
+            return
+
+        synthetic_done = StreamChunk(kind="done", is_done=True)
+        yield RuntimeEvent(
+            type="stream_chunk",
+            submission_id=submission_id,
+            data=synthetic_done,
+        )
+        final_text = "".join(final_parts).strip()
+        yield RuntimeEvent(
+            type="turn_completed",
+            submission_id=submission_id,
+            data={"mode": mode, "final_text": final_text, "route": route or ""},
+            message=final_text,
+        )
 
     async def _adrain_agent_events(
         self,

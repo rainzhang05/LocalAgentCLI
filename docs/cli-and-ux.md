@@ -56,7 +56,8 @@ The input prompt where the user types:
 - Supports multi-line input (Shift+Enter or `\` continuation)
 - History navigation (Up/Down arrows cycle through previous inputs)
 - Live slash-command menu for `/` commands. Typing `/` shows all commands below the prompt, typing more characters filters the list, Up/Down selects a command, and Enter accepts it. Completion list refreshes are debounced briefly while typing so the menu does not restart on every keystroke when a prompt-toolkit application loop is active.
-- Completion/selection menus keep the terminal background unchanged (no gray textarea fill). Highlighting is text-first, using the shared turquoise accent (`#40E0D0`) for minimalist visual focus.
+- Completion/selection menus keep the terminal background unchanged (no gray textarea fill). Unselected options render as black text, and only the selected option text switches to the turquoise accent (`#40E0D0`).
+- Prompt bottom toolbar uses a black bar for minimalist separation while preserving the same keyboard guidance content.
 - The slash-command menu respects command visibility. Non-executable parent groups stay hidden, while executable commands such as `/hf-token` remain available so users can revisit them later.
 - The same live filtering behavior applies to nested interactive pickers (for example `/set`, `/models`, `/providers test`, and other chooser-driven flows). Backspacing keeps the menu open as long as matching options still exist.
 - Tab still triggers command completion for users who prefer the traditional terminal workflow.

@@ -15,6 +15,7 @@ from localagentcli.agents.events import (
     ToolCallRequested,
 )
 from localagentcli.agents.planner import TaskPlan
+from localagentcli.models.backends.base import StreamChunk
 from localagentcli.runtime.core import RuntimeTurn
 from localagentcli.runtime.protocol import ApprovalDecisionOp, UserTurnOp
 from localagentcli.runtime.session_runtime import SessionRuntime
@@ -163,3 +164,52 @@ async def test_approval_resume_then_task_complete():
     async for ev in rt.aiter_events():
         tail.append(ev)
     assert any(e.type == "turn_completed" for e in tail)
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_completed_uses_streamed_text_instead_of_session_history():
+    async def chunks():
+        yield StreamChunk(text="fresh ", kind="final_text")
+        yield StreamChunk(text="answer", kind="final_text")
+        yield StreamChunk(kind="done", is_done=True)
+
+    ex = _exec_mock()
+    ex._services.session_manager.current.mode = "agent"
+    ex._services.session_manager.current.history = [
+        MagicMock(role="assistant", content="stale summary")
+    ]
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="agent", stream=chunks(), route="direct_answer")
+    )
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="agent"))
+    out = await _collect(rt)
+
+    completed = [event for event in out if event.type == "turn_completed"]
+    assert completed
+    assert completed[-1].message == "fresh answer"
+    assert completed[-1].data["final_text"] == "fresh answer"
+
+
+@pytest.mark.asyncio
+async def test_stream_without_done_still_emits_turn_completed_event():
+    async def chunks():
+        yield StreamChunk(text="partial", kind="final_text")
+
+    ex = _exec_mock()
+    ex._services.session_manager.current.mode = "chat"
+    ex.adispatch_agent_turn = AsyncMock(
+        return_value=RuntimeTurn(mode="chat", stream=chunks(), route=None)
+    )
+    ex.arun_chat_turn = AsyncMock(return_value=RuntimeTurn(mode="chat", stream=chunks()))
+    ex.resolve_active_model = MagicMock(return_value=object())
+
+    rt = SessionRuntime(ex)
+    rt.submit(UserTurnOp(prompt="hi", mode="chat"))
+    out = await _collect(rt)
+
+    completed = [event for event in out if event.type == "turn_completed"]
+    assert completed
+    assert completed[-1].data["final_text"] == "partial"

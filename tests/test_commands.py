@@ -20,6 +20,7 @@ from localagentcli.commands import (
 from localagentcli.commands import (
     hf_token as hf_token_cmd,
 )
+from localagentcli.commands import mcp as mcp_cmd
 from localagentcli.commands import (
     providers as providers_cmd,
 )
@@ -30,6 +31,7 @@ from localagentcli.commands import (
     status as status_cmd,
 )
 from localagentcli.commands.router import CommandRouter
+from localagentcli.mcp import McpManager
 from localagentcli.models.detector import HardwareDetector
 from localagentcli.models.registry import ModelRegistry
 from localagentcli.providers.keys import KeyManager
@@ -54,8 +56,10 @@ def _make_router(config, session_manager, tmp_path=None):
         km = KeyManager(secrets_dir)
         km._keyring_available = False
         registry = ProviderRegistry(config, km)
+        mcp_manager = McpManager.from_config(config.get("mcp_servers", {}))
         model_registry = ModelRegistry(tmp_path / "registry.json")
         hf_token_cmd.register(router, km)
+        mcp_cmd.register(router, mcp_manager, km)
         providers_cmd.register(router, registry, km, session_manager, config, console)
         set_cmd.register(
             router,
@@ -100,6 +104,7 @@ class TestHelpCommand:
         assert "Provider" in result.message
         assert "/providers" in result.message
         assert "/set" in result.message
+        assert "/mcp" in result.message
 
     def test_help_unknown_command(self, config, session_manager):
         router = _make_router(config, session_manager)
@@ -363,6 +368,39 @@ class TestHFTokenCommand:
         assert first.success
         assert second.success
         assert os.environ["HF_TOKEN"] == "second-token"
+
+
+class TestMcpCommands:
+    def test_mcp_list_reports_configured_servers(self, config, session_manager, tmp_path):
+        config._config["mcp_servers"] = {
+            "demo": {"command": "python", "args": ["fake.py"]},
+            "remote": {"transport": "http", "url": "http://127.0.0.1:8123/mcp"},
+        }
+        router = _make_router(config, session_manager, tmp_path)
+
+        result = router.dispatch("mcp list")
+
+        assert result.success
+        assert "demo" in result.message
+        assert "remote" in result.message
+
+    def test_mcp_login_and_logout_manage_key_storage(self, config, session_manager, tmp_path):
+        config._config["mcp_servers"] = {
+            "demo": {"transport": "http", "url": "http://127.0.0.1:8123/mcp"}
+        }
+        router = _make_router(config, session_manager, tmp_path)
+
+        login = router.dispatch("mcp login demo test-token")
+        assert login.success
+
+        secrets_dir = tmp_path / "secrets"
+        km = KeyManager(secrets_dir)
+        km._keyring_available = False
+        assert km.retrieve_key("mcp_server:demo") == "test-token"
+
+        logout = router.dispatch("mcp logout demo")
+        assert logout.success
+        assert km.retrieve_key("mcp_server:demo") is None
 
 
 class TestSessionCommands:

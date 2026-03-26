@@ -100,6 +100,13 @@ class AgentController:
         if self._on_session_mutated is not None:
             self._on_session_mutated()
 
+    def set_tool_registry(self, tool_registry: ToolRegistry | ToolRouter) -> None:
+        """Replace the active tool registry when no task is currently running."""
+        if self.has_active_task:
+            raise RuntimeError("Cannot refresh tools while an agent task is active.")
+        self._tools = tool_registry
+        self._loop.set_tools(tool_registry)
+
     @property
     def has_active_task(self) -> bool:
         """Whether an agent task is currently running or paused for approval."""

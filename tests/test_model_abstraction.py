@@ -285,3 +285,17 @@ class TestModelAbstractionLayer:
         assert "Near memory limit" in chunks[0].text
         assert chunks[1].kind == "final_text"
         assert chunks[1].text == "Hello"
+
+    def test_stream_generate_synthesizes_done_when_backend_omits_terminal_chunk(self):
+        class NoDoneBackend(ConcreteBackend):
+            def stream_generate(
+                self, messages: list[ModelMessage], **kwargs: object
+            ) -> Iterator[StreamChunk]:
+                yield StreamChunk(text="partial")
+
+        layer = ModelAbstractionLayer(NoDoneBackend())
+
+        chunks = list(layer.stream_generate([ModelMessage(role="user", content="hi")]))
+
+        assert [chunk.text for chunk in chunks if chunk.text] == ["partial"]
+        assert chunks[-1].is_done is True

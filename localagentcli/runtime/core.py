@@ -45,13 +45,19 @@ from localagentcli.providers.registry import ProviderRegistry
 from localagentcli.safety.approval import ApprovalManager
 from localagentcli.safety.boundary import WorkspaceBoundary
 from localagentcli.safety.layer import SafetyLayer
+from localagentcli.safety.policy import RuntimeSandboxPolicy
+from localagentcli.safety.posture import parse_sandbox_mode
 from localagentcli.safety.rollback import RollbackManager
 from localagentcli.session.instructions import sync_workspace_instruction
 from localagentcli.session.manager import SessionManager
 from localagentcli.skills import SkillsManager
 from localagentcli.storage.logger import Logger
 from localagentcli.storage.manager import StorageManager
-from localagentcli.tools import create_default_tool_registry
+from localagentcli.tools import (
+    LocalExecProcess,
+    build_shell_exec_process,
+    create_default_tool_registry,
+)
 from localagentcli.tools.router import DynamicToolSpec, ToolRouter
 
 RuntimeMessageKind = Literal["info", "status", "warning", "error", "success"]
@@ -237,9 +243,36 @@ class RuntimeServices:
         dynamic_tools = list(self.dynamic_tool_specs)
         if self.mcp_manager is not None:
             dynamic_tools.extend(self.mcp_manager.build_dynamic_tool_specs())
+
+        sandbox_mode_value = str(
+            self.session_manager.get_effective_config("safety.sandbox_mode") or "workspace-write"
+        )
+        sandbox_policy = RuntimeSandboxPolicy.from_posture(
+            parse_sandbox_mode(sandbox_mode_value),
+            workspace_root,
+        )
+        backend_value = str(
+            self.session_manager.get_effective_config("safety.os_sandbox_backend") or "off"
+        )
+        try:
+            shell_exec_process = build_shell_exec_process(
+                policy=sandbox_policy,
+                backend=backend_value,
+            )
+        except Exception as exc:
+            self.logger.normal(
+                "Failed to configure OS sandbox backend '%s'; falling back to local exec: %s",
+                backend_value,
+                exc,
+            )
+            shell_exec_process = LocalExecProcess()
+
         return ToolRouter(
             workspace_root=workspace_root,
-            builtins=create_default_tool_registry(workspace_root),
+            builtins=create_default_tool_registry(
+                workspace_root,
+                shell_exec_process=shell_exec_process,
+            ),
             dynamic_tools=dynamic_tools,
         )
 

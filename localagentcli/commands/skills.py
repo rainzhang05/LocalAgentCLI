@@ -11,14 +11,15 @@ from localagentcli.skills import SkillsManager
 class SkillsParentHandler(CommandHandler):
     def execute(self, args: list[str]) -> CommandResult:
         return CommandResult.error(
-            "/skills requires a subcommand: list, install, remove. Use /help skills for details."
+            "/skills requires a subcommand: list, install, remove, sync-remote. "
+            "Use /help skills for details."
         )
 
     def describe(self) -> CommandSpec:
         return CommandSpec(
             group="Skills",
             summary="Manage local skill overlays.",
-            usage="/skills <list|install|remove>",
+            usage="/skills <list|install|remove|sync-remote>",
             argument_hint="<subcommand>",
             details=(
                 "Installed skills live under ~/.localagent/skills and are merged into "
@@ -111,8 +112,42 @@ class SkillsRemoveHandler(CommandHandler):
         )
 
 
+class SkillsSyncRemoteHandler(CommandHandler):
+    def __init__(self, manager: SkillsManager):
+        self._manager = manager
+
+    def execute(self, args: list[str]) -> CommandResult:
+        if not args:
+            return CommandResult.error(
+                "Manifest URL is required. Usage: /skills sync-remote <manifest-url>"
+            )
+        try:
+            synced = self._manager.sync_from_manifest_url(args[0])
+        except Exception as exc:
+            return CommandResult.error(f"Remote skills sync failed: {exc}")
+        if not synced:
+            return CommandResult.ok(
+                "No new remote skills were installed.",
+                presentation="status",
+            )
+        names = ", ".join(skill.name for skill in synced)
+        return CommandResult.ok(
+            f"Installed {len(synced)} skill(s) from remote manifest: {names}",
+            presentation="success",
+        )
+
+    def describe(self) -> CommandSpec:
+        return CommandSpec(
+            group="Skills",
+            summary="Install skills from a remote manifest URL.",
+            usage="/skills sync-remote <manifest-url>",
+            argument_hint="<manifest-url>",
+        )
+
+
 def register(router: CommandRouter, manager: SkillsManager) -> None:
     router.register("skills", SkillsParentHandler(), visible_in_menu=False)
     router.register("skills list", SkillsListHandler(manager))
     router.register("skills install", SkillsInstallHandler(manager))
     router.register("skills remove", SkillsRemoveHandler(manager))
+    router.register("skills sync-remote", SkillsSyncRemoteHandler(manager))

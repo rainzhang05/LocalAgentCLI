@@ -49,7 +49,9 @@ DEFAULT_CONFIG: dict = {
         "autosave_named": False,
         "autosave_debounce_seconds": 2,
     },
-    "features": {},
+    "features": {
+        "sqlite_session_store": False,
+    },
 }
 
 # Schema: maps dotted key -> (expected_type, optional_validator)

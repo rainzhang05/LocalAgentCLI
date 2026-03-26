@@ -57,6 +57,11 @@ Runtime sandbox posture is controlled separately through `safety.sandbox_mode`
     preserving workspace-boundary rules; in autonomous mode, high-risk
     `shell_execute` commands do not pause for interactive approval
 
+Internally, posture is normalized into a typed runtime sandbox policy model that
+tracks posture, writable roots, and network-access flags for future containment
+slices. Current enforcement remains application-layer (approval + boundaries),
+with OS-level sandboxing still deferred.
+
 ### Execution containment
 
 What the product enforces today:

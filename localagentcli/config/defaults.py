@@ -47,6 +47,9 @@ DEFAULT_CONFIG: dict = {
     "mcp_servers": {},
     "sessions": {
         "autosave_named": False,
+        "autosave_unnamed": False,
+        "autosave_unnamed_prefix": "autosave_",
+        "autosave_unnamed_retention_days": 14,
         "autosave_debounce_seconds": 2,
     },
     "features": {
@@ -78,6 +81,9 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "shell.notification_dedupe": (bool, None),
     "shell.startup_banner": (bool, None),
     "sessions.autosave_named": (bool, None),
+    "sessions.autosave_unnamed": (bool, None),
+    "sessions.autosave_unnamed_prefix": (str, lambda v: len(v.strip()) > 0),
+    "sessions.autosave_unnamed_retention_days": (int, lambda v: v > 0),
     "sessions.autosave_debounce_seconds": (int, lambda v: v > 0),
 }
 

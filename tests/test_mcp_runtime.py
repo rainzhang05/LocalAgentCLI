@@ -9,6 +9,7 @@ from threading import Thread
 
 from rich.console import Console
 
+from localagentcli.mcp import McpManager
 from localagentcli.runtime import RuntimeServices
 from localagentcli.safety.approval import ApprovalManager, RiskLevel
 from localagentcli.safety.boundary import WorkspaceBoundary
@@ -92,6 +93,8 @@ for line in sys.stdin:
 
 
 def _start_fake_mcp_http_server(tools: list[dict], *, sse: bool = False) -> tuple[object, str]:
+    auth_headers: list[str] = []
+
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
             length = int(self.headers.get("Content-Length", "0"))
@@ -99,6 +102,7 @@ def _start_fake_mcp_http_server(tools: list[dict], *, sse: bool = False) -> tupl
             message = json.loads(raw.decode("utf-8") or "{}")
             method = message.get("method")
             request_id = message.get("id")
+            auth_headers.append(self.headers.get("Authorization", ""))
 
             if method == "tools/list":
                 response = {
@@ -138,6 +142,83 @@ def _start_fake_mcp_http_server(tools: list[dict], *, sse: bool = False) -> tupl
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+
+        def log_message(self, _format, *_args):  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    setattr(server, "seen_auth_headers", auth_headers)
+    return server, f"http://{host}:{port}/mcp"
+
+
+def _start_fake_mcp_http_server_with_elicitation(tools: list[dict]) -> tuple[object, str]:
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            message = json.loads(raw.decode("utf-8") or "{}")
+            method = message.get("method")
+            request_id = message.get("id")
+
+            if method == "tools/list":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"tools": tools},
+                }
+            elif method == "tools/call":
+                params = message.get("params", {})
+                elicitation_response = params.get("elicitationResponse")
+                if not elicitation_response:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "elicitation": {
+                                "message": "Need extra context",
+                                "requestedSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "detail": {
+                                            "type": "string",
+                                            "description": "extra detail",
+                                        }
+                                    },
+                                    "required": ["detail"],
+                                },
+                            }
+                        },
+                    }
+                else:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"elicited:{elicitation_response.get('detail', '')}",
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+            else:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {},
+                }
+
+            payload = json.dumps(response).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
 
         def log_message(self, _format, *_args):  # noqa: A003
             return
@@ -373,3 +454,57 @@ class TestMcpRuntime:
             server.server_close()
             if services.mcp_manager is not None:
                 services.mcp_manager.close()
+
+    def test_http_mcp_uses_bearer_token_resolver(self):
+        server, url = _start_fake_mcp_http_server([_DEFAULT_ECHO_TOOL], sse=False)
+        manager = None
+        try:
+            manager = McpManager.from_config(
+                {
+                    "auth_demo": {
+                        "transport": "http",
+                        "url": url,
+                    }
+                },
+                bearer_token_resolver=lambda server_name: (
+                    "secret-token" if server_name == "auth_demo" else None
+                ),
+            )
+            specs = manager.build_dynamic_tool_specs()
+            assert any(spec.name == "mcp__auth_demo__echo" for spec in specs)
+            result = specs[0].executor(value="token-check")
+            assert result.status == "success"
+            seen = getattr(server, "seen_auth_headers", [])
+            assert any(value == "Bearer secret-token" for value in seen)
+        finally:
+            if manager is not None:
+                manager.close()
+            server.shutdown()
+            server.server_close()
+
+    def test_http_mcp_elicitation_handler_continues_tool_call(self):
+        server, url = _start_fake_mcp_http_server_with_elicitation([_DEFAULT_ECHO_TOOL])
+        manager = None
+        try:
+            manager = McpManager.from_config(
+                {
+                    "elicitation_demo": {
+                        "transport": "http",
+                        "url": url,
+                    }
+                }
+            )
+            manager.set_elicitation_handler(
+                lambda _server, _tool, request: {
+                    "detail": "approved" if isinstance(request, dict) else "",
+                }
+            )
+            specs = manager.build_dynamic_tool_specs()
+            result = specs[0].executor(value="ignored")
+            assert result.status == "success"
+            assert "elicited:approved" in (result.output or "")
+        finally:
+            if manager is not None:
+                manager.close()
+            server.shutdown()
+            server.server_close()

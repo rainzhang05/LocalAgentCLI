@@ -18,6 +18,7 @@ from localagentcli.runtime import (
     SessionRuntime,
     UserTurnOp,
 )
+from localagentcli.tools.exec_process import LocalExecProcess
 
 
 class FakeBackend:
@@ -240,6 +241,53 @@ class TestSessionExecutionRuntime:
         assert allowed is False
         assert any("tool use: yes [legacy_fallback]" in message.text for message in emitted)
         assert any("Tradeoff:" in message.text for message in emitted)
+
+    def test_build_tool_router_uses_configured_os_sandbox_backend(
+        self, config, storage, monkeypatch
+    ):
+        runtime, _emitted = _make_runtime(config, storage)
+        config.set("safety.os_sandbox_backend", "off")
+        captured: dict[str, object] = {}
+
+        class _Process:
+            def run(self, _command: str, _cwd: str, _timeout: int):
+                raise AssertionError("not expected to execute in this test")
+
+        import localagentcli.runtime.core as runtime_core
+
+        def _builder(*, policy, backend):
+            captured["policy"] = policy
+            captured["backend"] = backend
+            return _Process()
+
+        monkeypatch.setattr(runtime_core, "build_shell_exec_process", _builder)
+
+        runtime._services.build_tool_router(runtime.workspace_root())
+
+        assert captured["backend"] == "off"
+        assert str(captured["policy"].posture.value) == "workspace-write"
+
+    def test_build_tool_router_falls_back_to_local_exec_on_sandbox_setup_error(
+        self,
+        config,
+        storage,
+        monkeypatch,
+    ):
+        runtime, _emitted = _make_runtime(config, storage)
+        config.set("safety.os_sandbox_backend", "macos-seatbelt")
+
+        import localagentcli.runtime.core as runtime_core
+
+        def _raise(*, policy, backend):
+            raise RuntimeError("sandbox backend unavailable")
+
+        monkeypatch.setattr(runtime_core, "build_shell_exec_process", _raise)
+
+        router = runtime._services.build_tool_router(runtime.workspace_root())
+        shell_tool = router.get_tool("shell_execute")
+
+        assert shell_tool is not None
+        assert isinstance(shell_tool._exec_process, LocalExecProcess)
 
 
 class TestSessionRuntime:

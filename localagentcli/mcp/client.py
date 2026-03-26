@@ -75,7 +75,7 @@ class StdioMcpClient:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "LocalAgentCLI", "version": "0.1.0"},
+                "clientInfo": {"name": "LocalAgentCLI", "version": "0.2.0"},
             },
         )
         self.notify("notifications/initialized")

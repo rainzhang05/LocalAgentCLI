@@ -149,6 +149,36 @@ class TestSessionExecutionRuntime:
         assert turn.compaction_count == 2
         controller.adispatch_input.assert_called_once_with("answer directly")
 
+    async def test_dispatch_agent_turn_refreshes_tools_when_feature_enabled(self, config, storage):
+        config._config.setdefault("features", {})["mcp_tool_inventory_refresh"] = True
+        runtime, _emitted = _make_runtime(config, storage)
+        runtime._services.session_manager.current.mode = "agent"
+        runtime._services.build_tool_router = MagicMock(return_value=MagicMock())
+
+        model = MagicMock()
+        controller = MagicMock()
+        controller.has_active_task = False
+        controller.last_compaction_count = 0
+
+        async def _empty_stream():
+            if False:
+                yield  # pragma: no cover
+
+        controller.adispatch_input = AsyncMock(
+            return_value=SimpleNamespace(
+                stream=_empty_stream(),
+                events=None,
+                triage=SimpleNamespace(outcome="direct_answer"),
+            )
+        )
+        runtime.resolve_active_model = MagicMock(return_value=model)
+        runtime.get_or_create_agent_controller = MagicMock(return_value=controller)
+
+        turn = await runtime.adispatch_agent_turn("refresh tools")
+
+        assert turn is not None
+        controller.set_tool_registry.assert_called_once()
+
     async def test_async_agent_gate_reports_tradeoff_for_unknown_provider(self, config, storage):
         runtime, emitted = _make_runtime(config, storage)
         runtime._services.session_manager.current.provider = "openai"

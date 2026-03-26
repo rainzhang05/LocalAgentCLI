@@ -303,13 +303,16 @@ class TestCompletionMenuDebounce:
 class TestPromptHelpers:
     """Tests for the shared prompt helper contract."""
 
-    def test_prompt_style_uses_turquoise_text_without_menu_background(self):
+    def test_prompt_style_uses_black_unselected_and_turquoise_selected_text(self):
         rules = dict(prompt_module._PROMPT_STYLE.style_rules)
 
         assert rules["completion-menu"] == "bg:default"
         assert "bg:default" in rules["completion-menu.completion"]
+        assert "fg:black" in rules["completion-menu.completion"]
         assert "fg:#40E0D0" in rules["completion-menu.completion.current"]
         assert "bg:default" in rules["completion-menu.completion.current"]
+        assert "noreverse" in rules["completion-menu.completion.current"]
+        assert rules["bottom-toolbar"] == "bg:black fg:white"
 
     @patch("localagentcli.shell.prompt.supports_interactive_prompt", return_value=True)
     @patch("localagentcli.shell.prompt.PromptSession")

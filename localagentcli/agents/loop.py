@@ -52,6 +52,8 @@ class _AsyncStepDone:
     summary: str | None
     new_messages: list[ModelMessage]
     errors: int
+    failure_kind: str = ""
+    last_model_error: str = ""
 
 
 _STEP_PROMPT = """You are LocalAgentCLI operating in agent mode.
@@ -160,7 +162,13 @@ class AgentLoop:
             step.status = "in_progress"
             yield StepStarted(step=step)
 
-            step_summary, new_messages, errors = yield from self._run_step(
+            (
+                step_summary,
+                new_messages,
+                errors,
+                failure_kind,
+                last_model_error,
+            ) = yield from self._run_step(
                 task,
                 plan,
                 step,
@@ -175,6 +183,65 @@ class AgentLoop:
                 break
 
             if step_summary is None:
+                if failure_kind == "model_error_threshold":
+                    detail = (
+                        f"Model errors prevented step {step.index} from completing "
+                        f"after {self._max_consecutive_errors} retries."
+                    )
+                    if last_model_error:
+                        detail = f"{detail} Last model error: {last_model_error}"
+                    plan.update_step(step.index, "failed", "Repeated model errors.")
+                    plan.status = "failed"
+                    yield PhaseChanged(
+                        phase="failed",
+                        summary=detail,
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Step {step.index} failed after repeated model errors "
+                            "reached the retry threshold."
+                        ),
+                    )
+                    reason = (
+                        f"Failed while executing step {step.index}: {step.description} "
+                        "(model error threshold reached)."
+                    )
+                    if last_model_error:
+                        reason = f"{reason} Last model error: {last_model_error}"
+                    yield TaskFailed(reason=reason, plan=plan)
+                    return
+
+                if failure_kind == "tool_error_threshold" and self._unified_turn_loop:
+                    plan.update_step(step.index, "failed", "Repeated tool failures.")
+                    plan.status = "failed"
+                    yield PhaseChanged(
+                        phase="failed",
+                        summary=(
+                            f"Step {step.index} reached the repeated tool-failure "
+                            f"threshold ({self._max_consecutive_errors})."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Step {step.index} failed after repeated tool failures "
+                            "reached the retry threshold."
+                        ),
+                    )
+                    yield TaskFailed(
+                        reason=(
+                            f"Failed while executing step {step.index}: {step.description} "
+                            "(tool failure threshold reached)."
+                        ),
+                        plan=plan,
+                    )
+                    return
+
                 if self._unified_turn_loop:
                     plan.update_step(
                         step.index, "failed", "Unified turn loop could not complete step."
@@ -312,6 +379,8 @@ class AgentLoop:
             step_summary: str | None = None
             new_messages: list[ModelMessage] = []
             errors = 0
+            failure_kind = ""
+            last_model_error = ""
             async for piece in self._arun_step_async(
                 task, plan, step, transcript, options, session
             ):
@@ -319,6 +388,8 @@ class AgentLoop:
                     step_summary = piece.summary
                     new_messages = piece.new_messages
                     errors = piece.errors
+                    failure_kind = piece.failure_kind
+                    last_model_error = piece.last_model_error
                     break
                 yield piece
             transcript.extend(new_messages)
@@ -328,6 +399,65 @@ class AgentLoop:
                 break
 
             if step_summary is None:
+                if failure_kind == "model_error_threshold":
+                    detail = (
+                        f"Model errors prevented step {step.index} from completing "
+                        f"after {self._max_consecutive_errors} retries."
+                    )
+                    if last_model_error:
+                        detail = f"{detail} Last model error: {last_model_error}"
+                    plan.update_step(step.index, "failed", "Repeated model errors.")
+                    plan.status = "failed"
+                    yield PhaseChanged(
+                        phase="failed",
+                        summary=detail,
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Step {step.index} failed after repeated model errors "
+                            "reached the retry threshold."
+                        ),
+                    )
+                    reason = (
+                        f"Failed while executing step {step.index}: {step.description} "
+                        "(model error threshold reached)."
+                    )
+                    if last_model_error:
+                        reason = f"{reason} Last model error: {last_model_error}"
+                    yield TaskFailed(reason=reason, plan=plan)
+                    return
+
+                if failure_kind == "tool_error_threshold" and self._unified_turn_loop:
+                    plan.update_step(step.index, "failed", "Repeated tool failures.")
+                    plan.status = "failed"
+                    yield PhaseChanged(
+                        phase="failed",
+                        summary=(
+                            f"Step {step.index} reached the repeated tool-failure "
+                            f"threshold ({self._max_consecutive_errors})."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Step {step.index} failed after repeated tool failures "
+                            "reached the retry threshold."
+                        ),
+                    )
+                    yield TaskFailed(
+                        reason=(
+                            f"Failed while executing step {step.index}: {step.description} "
+                            "(tool failure threshold reached)."
+                        ),
+                        plan=plan,
+                    )
+                    return
+
                 if self._unified_turn_loop:
                     plan.update_step(
                         step.index, "failed", "Unified turn loop could not complete step."
@@ -428,10 +558,18 @@ class AgentLoop:
         """Mirror _run_step: model rounds with tool events, then emit _AsyncStepDone."""
         conversation: list[ModelMessage] = []
         consecutive_errors = 0
+        failure_kind = ""
+        last_model_error = ""
 
         for _ in range(self._max_step_rounds):
             if self._stop_requested:
-                yield _AsyncStepDone(None, conversation, consecutive_errors)
+                yield _AsyncStepDone(
+                    None,
+                    conversation,
+                    consecutive_errors,
+                    failure_kind,
+                    last_model_error,
+                )
                 return
 
             model_info = self._resolve_model_info()
@@ -445,6 +583,9 @@ class AgentLoop:
 
             if result.finish_reason == "error":
                 consecutive_errors += 1
+                error_detail = self._model_error_detail(result)
+                if error_detail:
+                    last_model_error = error_detail
                 yield PhaseChanged(
                     phase="retrying",
                     summary=(
@@ -463,6 +604,7 @@ class AgentLoop:
                         )
                     )
                 if consecutive_errors >= self._max_consecutive_errors:
+                    failure_kind = "model_error_threshold"
                     break
                 continue
 
@@ -492,6 +634,7 @@ class AgentLoop:
                         step_description=step.description,
                     )
                     if consecutive_errors >= self._max_consecutive_errors:
+                        failure_kind = "tool_error_threshold"
                         break
                 else:
                     consecutive_errors = 0
@@ -500,7 +643,13 @@ class AgentLoop:
             text = (result.text or "").strip()
             if text:
                 conversation.append(assistant_message)
-                yield _AsyncStepDone(text, conversation, consecutive_errors)
+                yield _AsyncStepDone(
+                    text,
+                    conversation,
+                    consecutive_errors,
+                    failure_kind,
+                    last_model_error,
+                )
                 return
 
             if conversation:
@@ -508,10 +657,20 @@ class AgentLoop:
                     self._summarize_observations(conversation),
                     conversation,
                     consecutive_errors,
+                    failure_kind,
+                    last_model_error,
                 )
                 return
 
-        yield _AsyncStepDone(None, conversation, consecutive_errors)
+        if not failure_kind:
+            failure_kind = "round_budget_exhausted"
+        yield _AsyncStepDone(
+            None,
+            conversation,
+            consecutive_errors,
+            failure_kind,
+            last_model_error,
+        )
 
     async def _ahandle_tool_calls_async(
         self,
@@ -721,13 +880,15 @@ class AgentLoop:
         transcript: list[ModelMessage],
         options: dict[str, object],
         session: Session | None,
-    ) -> Generator[AgentEvent, bool, tuple[str | None, list[ModelMessage], int]]:
+    ) -> Generator[AgentEvent, bool, tuple[str | None, list[ModelMessage], int, str, str]]:
         conversation: list[ModelMessage] = []
         consecutive_errors = 0
+        failure_kind = ""
+        last_model_error = ""
 
         for _ in range(self._max_step_rounds):
             if self._stop_requested:
-                return None, conversation, consecutive_errors
+                return None, conversation, consecutive_errors, failure_kind, last_model_error
 
             model_info = self._resolve_model_info()
 
@@ -740,6 +901,9 @@ class AgentLoop:
 
             if result.finish_reason == "error":
                 consecutive_errors += 1
+                error_detail = self._model_error_detail(result)
+                if error_detail:
+                    last_model_error = error_detail
                 yield PhaseChanged(
                     phase="retrying",
                     summary=(
@@ -758,6 +922,7 @@ class AgentLoop:
                         )
                     )
                 if consecutive_errors >= self._max_consecutive_errors:
+                    failure_kind = "model_error_threshold"
                     break
                 continue
 
@@ -782,6 +947,7 @@ class AgentLoop:
                         step_description=step.description,
                     )
                     if consecutive_errors >= self._max_consecutive_errors:
+                        failure_kind = "tool_error_threshold"
                         break
                 else:
                     consecutive_errors = 0
@@ -790,12 +956,20 @@ class AgentLoop:
             text = (result.text or "").strip()
             if text:
                 conversation.append(assistant_message)
-                return text, conversation, consecutive_errors
+                return text, conversation, consecutive_errors, failure_kind, last_model_error
 
             if conversation:
-                return self._summarize_observations(conversation), conversation, consecutive_errors
+                return (
+                    self._summarize_observations(conversation),
+                    conversation,
+                    consecutive_errors,
+                    failure_kind,
+                    last_model_error,
+                )
 
-        return None, conversation, consecutive_errors
+        if not failure_kind:
+            failure_kind = "round_budget_exhausted"
+        return None, conversation, consecutive_errors, failure_kind, last_model_error
 
     def _handle_tool_calls(
         self,
@@ -1095,6 +1269,14 @@ class AgentLoop:
             return "Step completed."
         latest = tool_messages[-1].content
         return f"Step completed after tool execution. Latest observation: {latest[:240]}"
+
+    @staticmethod
+    def _model_error_detail(result: GenerationResult) -> str:
+        usage = result.usage if isinstance(result.usage, dict) else {}
+        raw = usage.get("error")
+        if isinstance(raw, str):
+            return raw.strip()
+        return ""
 
     def _summarize_plan(self, plan: TaskPlan) -> str:
         completed = [step for step in plan.steps if step.status == "completed"]

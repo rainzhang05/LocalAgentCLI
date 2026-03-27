@@ -101,7 +101,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
-6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, approval mode, rollback availability, and timing fields (`active`, `started_at`, `ended_at`, `updated_at`) are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
+6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, approval mode, rollback availability, latest usage counters (`usage_prompt_tokens`, `usage_completion_tokens`, `usage_total_tokens`), and timing fields (`active`, `started_at`, `ended_at`, `updated_at`) are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
 7. **Model-aware generation profiles**: Triage, planning, and step execution each use phase-specific generation profiles derived from shared config and `ModelInfo.default_max_tokens`; this avoids hardcoded loop token limits and keeps controller and loop behavior aligned.
 8. **Structured step briefings**: Step execution prompts use a fixed structure (execution rules, output contract, task objective, plan status, current step focus) before layered system/session context, reducing ambiguity during long tool-using turns.
 9. **Model-adapted tool exposure**: Per-round tool definitions are filtered by active `ModelInfo` (tool-use capability gates, required capability tags, minimum token-budget thresholds) before the model receives tool schemas.
@@ -291,7 +291,7 @@ class AgentLoop:
         """
 ```
 
-**Runtime task status in step prompts:** When `AgentController` runs the loop, it passes the active `Session`. For each step, the first system message includes the usual task/plan/step instructions plus an **Agent task status (runtime):** block when `session.metadata["agent_task_state"]` exists, `session.mode == "agent"`, and the recorded task is **active**. The block lists fields such as route, phase, step index and description, pending tool (if any), approval mode, rollback count, and a truncated summary so the model sees up-to-date execution state alongside the transcript. Formatting lives in `localagentcli/session/task_context.py`.
+**Runtime task status in step prompts:** When `AgentController` runs the loop, it passes the active `Session`. For each step, the first system message includes the usual task/plan/step instructions plus an **Agent task status (runtime):** block when `session.metadata["agent_task_state"]` exists, `session.mode == "agent"`, and the recorded task is **active**. The block lists fields such as route, phase, step index and description, pending tool (if any), approval mode, rollback count, latest usage counters, and a truncated summary so the model sees up-to-date execution state alongside the transcript. Formatting lives in `localagentcli/session/task_context.py`.
 
 The step system message also merges any system-role context already present in the transcript (for example repository instructions and environment context produced by shared conversation assembly). If that upstream system context is absent, the loop falls back to session-derived workspace/pinned instructions plus a freshly generated `<environment_context>` block.
 
@@ -406,7 +406,7 @@ Rendering rules:
 - `TaskStopped` and `TaskTimedOut` render warning-style non-failure outcomes
 - `TaskFailed` renders a failure line
 
-Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They stream normalized `StreamChunk` events directly, but the controller still records route and phase in `agent_task_state` before streaming starts and persists the final response with metadata marking `agent_task="direct_answer"` and `fast_path=True`.
+Direct-answer fast-path responses are not wrapped in `AgentEvent` objects. They stream normalized `StreamChunk` events directly, but the controller still records route and phase in `agent_task_state` before streaming starts and persists the final response with metadata marking `agent_task="direct_answer"`, `fast_path=True`, and normalized usage counters when available.
 
 ---
 

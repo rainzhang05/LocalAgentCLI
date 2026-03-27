@@ -40,6 +40,12 @@ active_provider = ""            # CLI-wide default provider for remote targets
 [safety]
 approval_mode = "balanced"      # "balanced" | "autonomous"
 sandbox_mode = "workspace-write"  # "workspace-write" | "read-only" | "danger-full-access"
+os_sandbox_backend = "off"      # "off" | "auto" | "macos-seatbelt" | "linux-bwrap" | "container-docker"
+sandbox_network_access = "auto" # "auto" | "allow" | "deny"
+sandbox_writable_roots = ""      # Comma-separated extra writable roots (absolute or workspace-relative)
+os_sandbox_container_image = "python:3.12-slim"  # Container image for container-docker backend
+os_sandbox_container_cpu_limit = ""  # Optional container CPU limit (for example "1.5")
+os_sandbox_container_memory_limit = "" # Optional container memory limit (for example "2g")
 
 [generation]
 temperature = 0.7
@@ -104,6 +110,12 @@ startup_banner = true              # Show a startup context banner with mode/tar
 | `provider.active_provider` | string | `""` | CLI-wide default remote provider name. Empty means the default target is local or unset. |
 | `safety.approval_mode` | string | `"balanced"` | Approval mode (`balanced` or `autonomous`) |
 | `safety.sandbox_mode` | string | `"workspace-write"` | Runtime sandbox posture: `workspace-write`, `read-only`, or `danger-full-access` (invalid values are rejected when validated) |
+| `safety.os_sandbox_backend` | string | `"off"` | Optional command wrapper backend: `off`, `auto`, `macos-seatbelt`, `linux-bwrap`, `container-docker` |
+| `safety.sandbox_network_access` | string | `"auto"` | Runtime network policy override for typed sandbox policy (`auto`, `allow`, `deny`) |
+| `safety.sandbox_writable_roots` | string | `""` | Comma-separated extra writable roots merged with workspace roots in `workspace-write` posture |
+| `safety.os_sandbox_container_image` | string | `"python:3.12-slim"` | Container image used when `safety.os_sandbox_backend = container-docker` |
+| `safety.os_sandbox_container_cpu_limit` | string | `""` | Optional docker `--cpus` value for container backend |
+| `safety.os_sandbox_container_memory_limit` | string | `""` | Optional docker `--memory` value for container backend |
 | `generation.temperature` | float | `0.7` | Sampling temperature |
 | `generation.max_tokens` | int | `4096` | Maximum tokens to generate |
 | `generation.top_p` | float | `1.0` | Nucleus sampling threshold |

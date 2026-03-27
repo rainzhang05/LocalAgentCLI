@@ -26,7 +26,7 @@ class FakeModel:
         yield StreamChunk(text="thinking", is_reasoning=True)
         yield StreamChunk(text="Hello")
         yield StreamChunk(text=" world")
-        yield StreamChunk(is_done=True)
+        yield StreamChunk(is_done=True, usage={"prompt_tokens": 9, "completion_tokens": 3})
 
 
 def _make_session(**kwargs) -> Session:
@@ -63,6 +63,13 @@ class TestChatController:
         assert session.history[1].content == "Hello world"
         assert session.history[1].metadata["reasoning"] == "thinking"
         assert len(session.history[1].metadata["chunks"]) == 3
+        assert session.history[1].metadata["usage"] == {
+            "prompt_tokens": 9,
+            "completion_tokens": 3,
+            "total_tokens": 12,
+        }
+        assert session.metadata["usage_budget"]["latest"]["prompt_tokens"] == 9
+        assert session.metadata["usage_budget"]["cumulative"]["total_tokens"] == 12
         assert model.stream_calls[0][1]["temperature"] == 0.2
         assert model.stream_calls[0][1]["max_tokens"] == 200
 

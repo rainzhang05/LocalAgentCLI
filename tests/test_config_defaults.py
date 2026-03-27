@@ -43,6 +43,14 @@ class TestDefaultConfig:
     def test_default_os_sandbox_backend(self):
         assert DEFAULT_CONFIG["safety"]["os_sandbox_backend"] == "off"
 
+    def test_default_sandbox_policy_override_fields(self):
+        safety = DEFAULT_CONFIG["safety"]
+        assert safety["sandbox_network_access"] == "auto"
+        assert safety["sandbox_writable_roots"] == ""
+        assert safety["os_sandbox_container_image"] == "python:3.12-slim"
+        assert safety["os_sandbox_container_cpu_limit"] == ""
+        assert safety["os_sandbox_container_memory_limit"] == ""
+
     def test_shell_ux_defaults_present(self):
         shell = DEFAULT_CONFIG["shell"]
         assert shell["thinking_indicator_enabled"] is True
@@ -209,13 +217,38 @@ class TestValidateConfigValue:
         assert "Invalid sandbox mode" in msg
 
     def test_os_sandbox_backend_valid_values(self):
-        for value in ("off", "auto", "macos-seatbelt", "linux-bwrap"):
+        for value in ("off", "auto", "macos-seatbelt", "linux-bwrap", "container-docker"):
             ok, msg = validate_config_value("safety.os_sandbox_backend", value)
             assert ok, msg
 
     def test_os_sandbox_backend_invalid_value(self):
         ok, _msg = validate_config_value("safety.os_sandbox_backend", "seatbelt")
         assert not ok
+
+    def test_sandbox_network_access_valid_values(self):
+        for value in ("auto", "allow", "deny"):
+            ok, msg = validate_config_value("safety.sandbox_network_access", value)
+            assert ok, msg
+
+    def test_sandbox_network_access_invalid_value(self):
+        ok, _msg = validate_config_value("safety.sandbox_network_access", "full")
+        assert not ok
+
+    def test_sandbox_writable_roots_accepts_string(self):
+        ok, msg = validate_config_value("safety.sandbox_writable_roots", "tmp,src")
+        assert ok, msg
+
+    def test_container_image_must_be_non_empty(self):
+        ok, msg = validate_config_value("safety.os_sandbox_container_image", "python:3.12")
+        assert ok, msg
+        ok, _msg = validate_config_value("safety.os_sandbox_container_image", "")
+        assert not ok
+
+    def test_container_resource_limit_fields_accept_strings(self):
+        ok, msg = validate_config_value("safety.os_sandbox_container_cpu_limit", "1.5")
+        assert ok, msg
+        ok, msg = validate_config_value("safety.os_sandbox_container_memory_limit", "2g")
+        assert ok, msg
 
     def test_all_schema_keys_have_defaults(self):
         """Every key in the schema should exist in the default config."""

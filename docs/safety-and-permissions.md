@@ -84,10 +84,12 @@ What the product enforces today:
 
 What is **not** guaranteed:
 
-- **OS-level isolation** for `shell_execute` or MCP subprocesses. Commands run
-  as the same operating-system user and process privileges as the CLI. There is
-  no Seatbelt, Landlock, container wrapper, or separate sandbox user account in
-  the shipped product.
+- **Full OS-level isolation guarantees** for `shell_execute` or MCP subprocesses.
+    The product now supports optional command wrapping via `safety.os_sandbox_backend`
+    (`macos-seatbelt` / `linux-bwrap`), but commands still run as the same
+    operating-system user and do not yet provide complete parity with dedicated
+    kernel-level sandbox pipelines (Landlock, Windows sandbox, container runtime,
+    or separate sandbox user-account orchestration).
 - **Network or filesystem containment** beyond what normal Unix/Windows process
   permissions already impose. Operators who need stronger containment should run
   the CLI inside an external sandbox or VM they trust.

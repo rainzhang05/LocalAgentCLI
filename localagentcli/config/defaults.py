@@ -23,6 +23,11 @@ DEFAULT_CONFIG: dict = {
         "approval_mode": "balanced",
         "sandbox_mode": "workspace-write",
         "os_sandbox_backend": "off",
+        "sandbox_network_access": "auto",
+        "sandbox_writable_roots": "",
+        "os_sandbox_container_image": "python:3.12-slim",
+        "os_sandbox_container_cpu_limit": "",
+        "os_sandbox_container_memory_limit": "",
     },
     "generation": {
         "temperature": 0.7,
@@ -70,8 +75,19 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "safety.sandbox_mode": (str, None),
     "safety.os_sandbox_backend": (
         str,
-        lambda v: v in ("off", "auto", "macos-seatbelt", "linux-bwrap"),
+        lambda v: v in ("off", "auto", "macos-seatbelt", "linux-bwrap", "container-docker"),
     ),
+    "safety.sandbox_network_access": (
+        str,
+        lambda v: v in ("auto", "allow", "deny"),
+    ),
+    "safety.sandbox_writable_roots": (str, None),
+    "safety.os_sandbox_container_image": (
+        str,
+        lambda v: len(v.strip()) > 0,
+    ),
+    "safety.os_sandbox_container_cpu_limit": (str, None),
+    "safety.os_sandbox_container_memory_limit": (str, None),
     "generation.temperature": (float, lambda v: 0.0 <= v <= 2.0),
     "generation.max_tokens": (int, lambda v: v > 0),
     "generation.top_p": (float, lambda v: 0.0 <= v <= 1.0),

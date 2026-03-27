@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from rich.console import Console
 
 from localagentcli.models.abstraction import ModelAbstractionLayer
@@ -267,7 +268,39 @@ class TestSessionExecutionRuntime:
         assert captured["backend"] == "off"
         assert str(captured["policy"].posture.value) == "workspace-write"
 
-    def test_build_tool_router_falls_back_to_local_exec_on_sandbox_setup_error(
+    def test_build_tool_router_updates_mcp_exec_policy(self, config, storage):
+        runtime, _emitted = _make_runtime(config, storage)
+        fake_mcp = MagicMock()
+        fake_mcp.build_dynamic_tool_specs.return_value = []
+        runtime._services.mcp_manager = fake_mcp
+
+        runtime._services.build_tool_router(runtime.workspace_root())
+
+        fake_mcp.update_exec_policy.assert_called_once()
+
+    def test_build_tool_router_falls_back_to_local_exec_on_auto_sandbox_setup_error(
+        self,
+        config,
+        storage,
+        monkeypatch,
+    ):
+        runtime, _emitted = _make_runtime(config, storage)
+        config.set("safety.os_sandbox_backend", "auto")
+
+        import localagentcli.runtime.core as runtime_core
+
+        def _raise(*, policy, backend):
+            raise RuntimeError("sandbox backend unavailable")
+
+        monkeypatch.setattr(runtime_core, "build_shell_exec_process", _raise)
+
+        router = runtime._services.build_tool_router(runtime.workspace_root())
+        shell_tool = router.get_tool("shell_execute")
+
+        assert shell_tool is not None
+        assert isinstance(shell_tool._exec_process, LocalExecProcess)
+
+    def test_build_tool_router_raises_on_explicit_sandbox_setup_error(
         self,
         config,
         storage,
@@ -283,11 +316,8 @@ class TestSessionExecutionRuntime:
 
         monkeypatch.setattr(runtime_core, "build_shell_exec_process", _raise)
 
-        router = runtime._services.build_tool_router(runtime.workspace_root())
-        shell_tool = router.get_tool("shell_execute")
-
-        assert shell_tool is not None
-        assert isinstance(shell_tool._exec_process, LocalExecProcess)
+        with pytest.raises(RuntimeError, match="explicit OS sandbox backend"):
+            runtime._services.build_tool_router(runtime.workspace_root())
 
 
 class TestSessionRuntime:

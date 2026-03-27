@@ -14,6 +14,7 @@ from localagentcli.session.replay import replay_session_from_event_log
 from localagentcli.session.sqlite_store import SqliteSessionStore
 from localagentcli.session.state import Session
 from localagentcli.session.store import JsonSessionStore, SessionStore
+from localagentcli.session.task_context import build_turn_context_snapshot
 
 
 class SessionManager:
@@ -77,6 +78,7 @@ class SessionManager:
     def fork_session(self, name: str, fork_name: str | None = None) -> Session:
         """Fork a saved session into a new in-memory session with a fresh id."""
         source = self.load_session(name)
+        parent_snapshot = build_turn_context_snapshot(source)
         parent_id = source.id
         data = source.to_dict()
         now = datetime.now()
@@ -88,6 +90,8 @@ class SessionManager:
         forked.metadata["fork_parent_name"] = name
         forked.metadata["fork_parent_id"] = parent_id
         forked.metadata["forked_at"] = now.isoformat()
+        forked.metadata["fork_parent_startup_context"] = parent_snapshot
+        forked.metadata["context_diff_baseline"] = parent_snapshot
         self._current = forked
         return forked
 

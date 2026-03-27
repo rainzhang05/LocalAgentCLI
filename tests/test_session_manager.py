@@ -121,6 +121,24 @@ class TestSessionManagerSaveLoad:
         assert forked.metadata.get("fork_parent_name") == "base"
         assert forked.metadata.get("fork_parent_id") == base_id
         assert forked.metadata.get("forked_at")
+        startup_context = forked.metadata.get("fork_parent_startup_context")
+        assert isinstance(startup_context, dict)
+        assert startup_context.get("session", {}).get("model") == session_manager.current.model
+        assert forked.metadata.get("context_diff_baseline") == startup_context
+
+    def test_fork_startup_context_persists_after_save_load(self, session_manager):
+        session_manager.current.history.append(
+            Message(role="user", content="hello", timestamp=datetime.now())
+        )
+        session_manager.save_session("base")
+        forked = session_manager.fork_session("base", "forked")
+        startup_context = forked.metadata.get("fork_parent_startup_context")
+
+        session_manager.save_session("forked")
+        loaded = session_manager.load_session("forked")
+
+        assert loaded.metadata.get("fork_parent_startup_context") == startup_context
+        assert loaded.metadata.get("context_diff_baseline") == startup_context
 
 
 class TestSessionManagerList:

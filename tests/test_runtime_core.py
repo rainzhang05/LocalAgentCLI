@@ -248,6 +248,9 @@ class TestSessionExecutionRuntime:
     ):
         runtime, _emitted = _make_runtime(config, storage)
         config.set("safety.os_sandbox_backend", "off")
+        config.set("safety.os_sandbox_container_image", "python:3.12-slim")
+        config.set("safety.sandbox_network_access", "allow")
+        config.set("safety.sandbox_writable_roots", "extra-one,extra-two")
         captured: dict[str, object] = {}
 
         class _Process:
@@ -256,9 +259,14 @@ class TestSessionExecutionRuntime:
 
         import localagentcli.runtime.core as runtime_core
 
-        def _builder(*, policy, backend):
+        def _builder(
+            *, policy, backend, container_image, container_cpu_limit, container_memory_limit
+        ):
             captured["policy"] = policy
             captured["backend"] = backend
+            captured["container_image"] = container_image
+            captured["container_cpu_limit"] = container_cpu_limit
+            captured["container_memory_limit"] = container_memory_limit
             return _Process()
 
         monkeypatch.setattr(runtime_core, "build_shell_exec_process", _builder)
@@ -267,6 +275,10 @@ class TestSessionExecutionRuntime:
 
         assert captured["backend"] == "off"
         assert str(captured["policy"].posture.value) == "workspace-write"
+        assert captured["policy"].network_access is True
+        writable_roots = {path.name for path in captured["policy"].writable_roots}
+        assert {"extra-one", "extra-two"}.issubset(writable_roots)
+        assert captured["container_image"] == "python:3.12-slim"
 
     def test_build_tool_router_updates_mcp_exec_policy(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)
@@ -277,6 +289,8 @@ class TestSessionExecutionRuntime:
         runtime._services.build_tool_router(runtime.workspace_root())
 
         fake_mcp.update_exec_policy.assert_called_once()
+        _, kwargs = fake_mcp.update_exec_policy.call_args
+        assert kwargs["os_sandbox_container_image"] == "python:3.12-slim"
 
     def test_build_tool_router_falls_back_to_local_exec_on_auto_sandbox_setup_error(
         self,
@@ -289,7 +303,14 @@ class TestSessionExecutionRuntime:
 
         import localagentcli.runtime.core as runtime_core
 
-        def _raise(*, policy, backend):
+        def _raise(
+            *,
+            policy,
+            backend,
+            container_image,
+            container_cpu_limit,
+            container_memory_limit,
+        ):
             raise RuntimeError("sandbox backend unavailable")
 
         monkeypatch.setattr(runtime_core, "build_shell_exec_process", _raise)
@@ -311,7 +332,14 @@ class TestSessionExecutionRuntime:
 
         import localagentcli.runtime.core as runtime_core
 
-        def _raise(*, policy, backend):
+        def _raise(
+            *,
+            policy,
+            backend,
+            container_image,
+            container_cpu_limit,
+            container_memory_limit,
+        ):
             raise RuntimeError("sandbox backend unavailable")
 
         monkeypatch.setattr(runtime_core, "build_shell_exec_process", _raise)

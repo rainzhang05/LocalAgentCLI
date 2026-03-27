@@ -241,8 +241,6 @@ class RuntimeServices:
     def build_tool_router(self, workspace_root: Path) -> ToolRouter:
         """Build the runtime tool router for the current turn."""
         dynamic_tools = list(self.dynamic_tool_specs)
-        if self.mcp_manager is not None:
-            dynamic_tools.extend(self.mcp_manager.build_dynamic_tool_specs())
 
         sandbox_mode_value = str(
             self.session_manager.get_effective_config("safety.sandbox_mode") or "workspace-write"
@@ -260,12 +258,24 @@ class RuntimeServices:
                 backend=backend_value,
             )
         except Exception as exc:
-            self.logger.normal(
-                "Failed to configure OS sandbox backend '%s'; falling back to local exec: %s",
-                backend_value,
-                exc,
+            if backend_value.strip().lower() == "auto":
+                self.logger.normal(
+                    "Failed to configure OS sandbox backend '%s'; falling back to local exec: %s",
+                    backend_value,
+                    exc,
+                )
+                shell_exec_process = LocalExecProcess()
+            else:
+                raise RuntimeError(
+                    f"Failed to configure explicit OS sandbox backend '{backend_value}': {exc}"
+                ) from exc
+
+        if self.mcp_manager is not None:
+            self.mcp_manager.update_exec_policy(
+                os_sandbox_backend=backend_value,
+                sandbox_policy=sandbox_policy,
             )
-            shell_exec_process = LocalExecProcess()
+            dynamic_tools.extend(self.mcp_manager.build_dynamic_tool_specs())
 
         return ToolRouter(
             workspace_root=workspace_root,

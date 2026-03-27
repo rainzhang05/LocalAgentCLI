@@ -37,6 +37,12 @@ from localagentcli.session.instructions import (
     build_system_instructions,
 )
 from localagentcli.session.state import Message, Session
+from localagentcli.session.usage import (
+    latest_usage_counts,
+    update_session_usage_budget,
+    usage_budget_snapshot,
+    usage_from_stream_chunks,
+)
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.router import ToolRouter
 
@@ -421,7 +427,10 @@ class AgentController:
     def compact_if_needed(self) -> int:
         """Compact the stored session history if needed before a task."""
         self._last_compaction_count = 0
-        if not self._compactor.needs_compaction(self._messages_for_token_estimation()):
+        if not self._compactor.needs_compaction(
+            self._messages_for_token_estimation(),
+            usage_snapshot=usage_budget_snapshot(self._session.metadata),
+        ):
             return 0
 
         compacted = self._compactor.compact(
@@ -775,6 +784,11 @@ class AgentController:
                     reasoning_parts.append(chunk.text)
                 yield chunk
         finally:
+            normalized_usage = update_session_usage_budget(
+                self._session,
+                usage_from_stream_chunks(chunks),
+                source="agent_direct_stream",
+            )
             stopped = self.task_state.get("phase") == "stopped"
             assistant_text = "".join(assistant_parts).strip()
             reasoning_text = "".join(reasoning_parts).strip()
@@ -796,6 +810,7 @@ class AgentController:
                             "response_model": self._session.model,
                             "response_provider": self._session.provider,
                             "response_route": "direct_answer",
+                            "usage": dict(normalized_usage) if normalized_usage else {},
                         },
                     )
                 )
@@ -807,6 +822,9 @@ class AgentController:
                 )
             elif stopped:
                 self._update_task_state(active=False, pending_tool=None)
+            elif normalized_usage:
+                self._session.touch()
+                self._notify_autosave()
             self._finish_task()
             self._session.touch()
 
@@ -828,6 +846,11 @@ class AgentController:
                     reasoning_parts.append(chunk.text)
                 yield chunk
         finally:
+            normalized_usage = update_session_usage_budget(
+                self._session,
+                usage_from_stream_chunks(chunks),
+                source="agent_direct_stream",
+            )
             stopped = self.task_state.get("phase") == "stopped"
             assistant_text = "".join(assistant_parts).strip()
             reasoning_text = "".join(reasoning_parts).strip()
@@ -849,6 +872,7 @@ class AgentController:
                             "response_model": self._session.model,
                             "response_provider": self._session.provider,
                             "response_route": "direct_answer",
+                            "usage": dict(normalized_usage) if normalized_usage else {},
                         },
                     )
                 )
@@ -860,6 +884,9 @@ class AgentController:
                 )
             elif stopped:
                 self._update_task_state(active=False, pending_tool=None)
+            elif normalized_usage:
+                self._session.touch()
+                self._notify_autosave()
             self._finish_task()
             self._session.touch()
 
@@ -926,6 +953,10 @@ class AgentController:
 
         state["approval_mode"] = self._approval.mode
         state["rollback_count"] = self.rollback_count
+        latest_usage = latest_usage_counts(self._session.metadata)
+        state["usage_prompt_tokens"] = latest_usage.get("prompt_tokens", 0)
+        state["usage_completion_tokens"] = latest_usage.get("completion_tokens", 0)
+        state["usage_total_tokens"] = latest_usage.get("total_tokens", 0)
         state["updated_at"] = now_iso
         self._session.metadata["agent_task_state"] = state
         self._session.touch()

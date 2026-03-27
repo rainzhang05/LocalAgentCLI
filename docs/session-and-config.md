@@ -253,6 +253,8 @@ Forking creates a new in-memory session from a saved JSON snapshot with a **new 
   - `fork_parent_name` — saved session name that was forked from
   - `fork_parent_id` — UUID of the source session at fork time
   - `forked_at` — ISO timestamp when the fork was created
+    - `fork_parent_startup_context` — normalized parent turn-context snapshot captured at fork creation
+    - `context_diff_baseline` — initial diff baseline seeded from the parent snapshot for first-turn fork context updates
 
 #### Headless `exec` session persistence
 

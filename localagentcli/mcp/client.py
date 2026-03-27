@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import urllib.error
 import urllib.parse
@@ -14,7 +15,13 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from localagentcli.safety.policy import RuntimeSandboxPolicy
 from localagentcli.tools import DynamicToolSpec, ToolResult
+from localagentcli.tools.exec_process import (
+    is_os_sandbox_backend_available,
+    resolve_os_sandbox_backend,
+    wrap_command_for_os_sandbox,
+)
 
 BearerTokenResolver = Callable[[str], str | None]
 ElicitationHandler = Callable[[str, str, dict[str, Any]], dict[str, Any] | None]
@@ -73,17 +80,21 @@ class StdioMcpClient:
         *,
         server_name: str,
         elicitation_handler: ElicitationHandler | None = None,
+        os_sandbox_backend: str = "off",
+        sandbox_policy: RuntimeSandboxPolicy | None = None,
     ):
         self._config = config
         self._server_name = server_name
         self._elicitation_handler = elicitation_handler
+        self._os_sandbox_backend = os_sandbox_backend
+        self._sandbox_policy = sandbox_policy
         self._process: subprocess.Popen[str] | None = None
         self._request_id = 0
 
     def start(self) -> None:
         if self._process is not None:
             return
-        command = [self._config.command, *self._config.args]
+        command = self._launch_command()
         self._process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -103,6 +114,33 @@ class StdioMcpClient:
             },
         )
         self.notify("notifications/initialized")
+
+    def _launch_command(self) -> list[str]:
+        command = [self._config.command, *self._config.args]
+        policy = self._sandbox_policy
+        if policy is None:
+            return command
+
+        resolved = resolve_os_sandbox_backend(self._os_sandbox_backend)
+        if resolved == "off":
+            return command
+
+        if not is_os_sandbox_backend_available(resolved):
+            if self._os_sandbox_backend.strip().lower() == "auto":
+                return command
+            raise RuntimeError(
+                f"Configured OS sandbox backend '{resolved}' is unavailable for MCP server "
+                f"'{self._server_name}'."
+            )
+
+        command_text = " ".join(shlex.quote(part) for part in command)
+        wrapped = wrap_command_for_os_sandbox(
+            command_text,
+            cwd=self._config.cwd or os.getcwd(),
+            backend=resolved,
+            policy=policy,
+        )
+        return ["/bin/sh", "-lc", wrapped]
 
     def list_tools(self) -> list[McpTool]:
         payload = self.request("tools/list", {})
@@ -540,9 +578,13 @@ class McpManager:
         servers: list[McpServerConfig],
         *,
         bearer_token_resolver: BearerTokenResolver | None = None,
+        os_sandbox_backend: str = "off",
+        sandbox_policy: RuntimeSandboxPolicy | None = None,
     ):
         self._servers = servers
         self._bearer_token_resolver = bearer_token_resolver
+        self._os_sandbox_backend = os_sandbox_backend
+        self._sandbox_policy = sandbox_policy
         self._elicitation_handler: ElicitationHandler | None = None
         self._clients: dict[str, StdioMcpClient | HttpMcpClient | SseMcpClient] = {}
         self._tools: dict[str, tuple[str, McpTool]] = {}
@@ -553,6 +595,8 @@ class McpManager:
         raw_config: dict[str, Any],
         *,
         bearer_token_resolver: BearerTokenResolver | None = None,
+        os_sandbox_backend: str = "off",
+        sandbox_policy: RuntimeSandboxPolicy | None = None,
     ) -> McpManager:
         servers: list[McpServerConfig] = []
         for name, payload in raw_config.items():
@@ -623,12 +667,33 @@ class McpManager:
                     timeout=float(payload.get("timeout", 15.0) or 15.0),
                 )
             )
-        return cls(servers, bearer_token_resolver=bearer_token_resolver)
+        return cls(
+            servers,
+            bearer_token_resolver=bearer_token_resolver,
+            os_sandbox_backend=os_sandbox_backend,
+            sandbox_policy=sandbox_policy,
+        )
 
     def set_elicitation_handler(self, handler: ElicitationHandler | None) -> None:
         """Set/clear the operator callback used for MCP elicitation requests."""
         self._elicitation_handler = handler
         self._clients.clear()
+
+    def update_exec_policy(
+        self,
+        *,
+        os_sandbox_backend: str,
+        sandbox_policy: RuntimeSandboxPolicy,
+    ) -> None:
+        """Update stdio subprocess execution policy for subsequent MCP launches."""
+        if (
+            self._os_sandbox_backend == os_sandbox_backend
+            and self._sandbox_policy == sandbox_policy
+        ):
+            return
+        self._os_sandbox_backend = os_sandbox_backend
+        self._sandbox_policy = sandbox_policy
+        self.close()
 
     def configured_server_names(self) -> list[str]:
         """Return configured MCP server names in declaration order."""
@@ -698,6 +763,8 @@ class McpManager:
                 config,
                 server_name=server_name,
                 elicitation_handler=self._elicitation_handler,
+                os_sandbox_backend=self._os_sandbox_backend,
+                sandbox_policy=self._sandbox_policy,
             )
         self._clients[server_name] = client
         return client

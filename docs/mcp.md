@@ -86,8 +86,14 @@ For `stdio` servers, subprocess launch now also follows
 - `off`: launch server command directly.
 - `auto`: attempt platform backend (`macos-seatbelt`/`linux-bwrap`) and fall
 	back to direct launch when backend binaries are unavailable.
-- explicit backend (`macos-seatbelt` / `linux-bwrap`): fail server launch if
-	backend setup is unavailable.
+- explicit backend (`macos-seatbelt` / `linux-bwrap` / `container-docker`):
+	fail server launch if backend setup is unavailable.
+
+When `container-docker` is selected, stdio server launch also respects:
+
+- `safety.os_sandbox_container_image`
+- `safety.os_sandbox_container_cpu_limit`
+- `safety.os_sandbox_container_memory_limit`
 
 ---
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import ModelMessage
@@ -51,10 +52,53 @@ class ContextCompactor:
         """Return the number of messages summarized by the last compaction."""
         return self._last_compacted_count
 
-    def needs_compaction(self, messages: list[Message]) -> bool:
+    def needs_compaction(
+        self,
+        messages: list[Message],
+        usage_snapshot: dict[str, Any] | None = None,
+    ) -> bool:
         """Return True when the history exceeds the configured threshold."""
         effective = max(self._context_limit - self._generation_headroom, 1)
-        return self.estimate_tokens(messages) >= int(effective * self._threshold)
+        return self._estimate_context_tokens(messages, usage_snapshot) >= int(
+            effective * self._threshold
+        )
+
+    def _estimate_context_tokens(
+        self,
+        messages: list[Message],
+        usage_snapshot: dict[str, Any] | None = None,
+    ) -> int:
+        heuristic_estimate = self.estimate_tokens(messages)
+        observed_estimate = self._observed_usage_estimate(usage_snapshot)
+        if observed_estimate is None:
+            return heuristic_estimate
+        # Prefer provider-reported usage where available, but do not undercount
+        # growth from newly-added local context in this turn.
+        return max(heuristic_estimate, observed_estimate)
+
+    @staticmethod
+    def _observed_usage_estimate(usage_snapshot: dict[str, Any] | None) -> int | None:
+        if not isinstance(usage_snapshot, dict):
+            return None
+        for key in ("latest_prompt_tokens", "latest_total_tokens"):
+            value = usage_snapshot.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                return max(value, 0)
+            if isinstance(value, float):
+                if value != value:  # NaN guard
+                    continue
+                return max(int(value), 0)
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    continue
+                try:
+                    return max(int(float(stripped)), 0)
+                except ValueError:
+                    continue
+        return None
 
     def compact(self, messages: list[Message], pinned: list[str]) -> list[Message]:
         """Replace older messages with a summary while keeping recent turns verbatim."""

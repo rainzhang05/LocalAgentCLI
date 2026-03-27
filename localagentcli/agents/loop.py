@@ -30,11 +30,13 @@ from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.models.model_info import ModelInfo
 from localagentcli.safety.layer import SafetyLayer
+from localagentcli.session.context_diff import ContextDiffTracker, render_context_diff_for_prompt
 from localagentcli.session.environment_context import get_environment_context_xml
 from localagentcli.session.instructions import build_system_instructions
 from localagentcli.session.state import Session
 from localagentcli.session.task_context import (
     AGENT_TASK_RUNTIME_HEADING,
+    build_turn_context_snapshot,
     format_agent_task_runtime_section,
 )
 from localagentcli.session.usage import update_session_usage_budget
@@ -1203,6 +1205,16 @@ class AgentLoop:
             if runtime:
                 content = f"{content}\n\n{AGENT_TASK_RUNTIME_HEADING}\n{runtime}"
 
+        context_updates: str | None = None
+        if session is not None:
+            baseline = session.metadata.get("context_diff_baseline")
+            tracker = ContextDiffTracker(baseline if isinstance(baseline, dict) else None)
+            current_snapshot = build_turn_context_snapshot(session)
+            diff = tracker.compute(current_snapshot)
+            session.metadata["last_context_diff"] = diff.to_dict()
+            session.metadata["context_diff_baseline"] = tracker.baseline or current_snapshot
+            context_updates = render_context_diff_for_prompt(diff)
+
         transcript_system: list[str] = []
         transcript_messages: list[ModelMessage] = []
         for message in transcript:
@@ -1225,6 +1237,8 @@ class AgentLoop:
                 transcript_system.append(env_xml)
 
         system_parts = [content]
+        if context_updates:
+            system_parts.append("Context updates since previous turn:\n" + context_updates)
         if transcript_system:
             system_parts.append(
                 "Session instructions and environment context:\n" + "\n\n".join(transcript_system)

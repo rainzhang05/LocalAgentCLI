@@ -79,6 +79,16 @@ High-risk classification still applies where relevant (for example sensitive pat
 - **`read-only`**: any tool with `is_read_only == false` is **blocked** before execution, including MCP tools without `readOnlyHint: true`.
 - **`workspace-write`** and **`danger-full-access`**: follow the normal approval and boundary rules described in [safety-and-permissions.md](safety-and-permissions.md).
 
+For `stdio` servers, subprocess launch now also follows
+`safety.os_sandbox_backend` using the same backend-selection behavior as
+`shell_execute`:
+
+- `off`: launch server command directly.
+- `auto`: attempt platform backend (`macos-seatbelt`/`linux-bwrap`) and fall
+	back to direct launch when backend binaries are unavailable.
+- explicit backend (`macos-seatbelt` / `linux-bwrap`): fail server launch if
+	backend setup is unavailable.
+
 ---
 
 ## Project guidance and skills overlays

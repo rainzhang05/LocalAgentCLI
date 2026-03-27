@@ -82,12 +82,18 @@ class StdioMcpClient:
         elicitation_handler: ElicitationHandler | None = None,
         os_sandbox_backend: str = "off",
         sandbox_policy: RuntimeSandboxPolicy | None = None,
+        os_sandbox_container_image: str = "python:3.12-slim",
+        os_sandbox_container_cpu_limit: str = "",
+        os_sandbox_container_memory_limit: str = "",
     ):
         self._config = config
         self._server_name = server_name
         self._elicitation_handler = elicitation_handler
         self._os_sandbox_backend = os_sandbox_backend
         self._sandbox_policy = sandbox_policy
+        self._os_sandbox_container_image = os_sandbox_container_image
+        self._os_sandbox_container_cpu_limit = os_sandbox_container_cpu_limit
+        self._os_sandbox_container_memory_limit = os_sandbox_container_memory_limit
         self._process: subprocess.Popen[str] | None = None
         self._request_id = 0
 
@@ -139,6 +145,9 @@ class StdioMcpClient:
             cwd=self._config.cwd or os.getcwd(),
             backend=resolved,
             policy=policy,
+            container_image=self._os_sandbox_container_image,
+            container_cpu_limit=self._os_sandbox_container_cpu_limit,
+            container_memory_limit=self._os_sandbox_container_memory_limit,
         )
         return ["/bin/sh", "-lc", wrapped]
 
@@ -580,11 +589,17 @@ class McpManager:
         bearer_token_resolver: BearerTokenResolver | None = None,
         os_sandbox_backend: str = "off",
         sandbox_policy: RuntimeSandboxPolicy | None = None,
+        os_sandbox_container_image: str = "python:3.12-slim",
+        os_sandbox_container_cpu_limit: str = "",
+        os_sandbox_container_memory_limit: str = "",
     ):
         self._servers = servers
         self._bearer_token_resolver = bearer_token_resolver
         self._os_sandbox_backend = os_sandbox_backend
         self._sandbox_policy = sandbox_policy
+        self._os_sandbox_container_image = os_sandbox_container_image
+        self._os_sandbox_container_cpu_limit = os_sandbox_container_cpu_limit
+        self._os_sandbox_container_memory_limit = os_sandbox_container_memory_limit
         self._elicitation_handler: ElicitationHandler | None = None
         self._clients: dict[str, StdioMcpClient | HttpMcpClient | SseMcpClient] = {}
         self._tools: dict[str, tuple[str, McpTool]] = {}
@@ -597,6 +612,9 @@ class McpManager:
         bearer_token_resolver: BearerTokenResolver | None = None,
         os_sandbox_backend: str = "off",
         sandbox_policy: RuntimeSandboxPolicy | None = None,
+        os_sandbox_container_image: str = "python:3.12-slim",
+        os_sandbox_container_cpu_limit: str = "",
+        os_sandbox_container_memory_limit: str = "",
     ) -> McpManager:
         servers: list[McpServerConfig] = []
         for name, payload in raw_config.items():
@@ -672,6 +690,9 @@ class McpManager:
             bearer_token_resolver=bearer_token_resolver,
             os_sandbox_backend=os_sandbox_backend,
             sandbox_policy=sandbox_policy,
+            os_sandbox_container_image=os_sandbox_container_image,
+            os_sandbox_container_cpu_limit=os_sandbox_container_cpu_limit,
+            os_sandbox_container_memory_limit=os_sandbox_container_memory_limit,
         )
 
     def set_elicitation_handler(self, handler: ElicitationHandler | None) -> None:
@@ -684,15 +705,24 @@ class McpManager:
         *,
         os_sandbox_backend: str,
         sandbox_policy: RuntimeSandboxPolicy,
+        os_sandbox_container_image: str,
+        os_sandbox_container_cpu_limit: str,
+        os_sandbox_container_memory_limit: str,
     ) -> None:
         """Update stdio subprocess execution policy for subsequent MCP launches."""
         if (
             self._os_sandbox_backend == os_sandbox_backend
             and self._sandbox_policy == sandbox_policy
+            and self._os_sandbox_container_image == os_sandbox_container_image
+            and self._os_sandbox_container_cpu_limit == os_sandbox_container_cpu_limit
+            and self._os_sandbox_container_memory_limit == os_sandbox_container_memory_limit
         ):
             return
         self._os_sandbox_backend = os_sandbox_backend
         self._sandbox_policy = sandbox_policy
+        self._os_sandbox_container_image = os_sandbox_container_image
+        self._os_sandbox_container_cpu_limit = os_sandbox_container_cpu_limit
+        self._os_sandbox_container_memory_limit = os_sandbox_container_memory_limit
         self.close()
 
     def configured_server_names(self) -> list[str]:
@@ -765,6 +795,9 @@ class McpManager:
                 elicitation_handler=self._elicitation_handler,
                 os_sandbox_backend=self._os_sandbox_backend,
                 sandbox_policy=self._sandbox_policy,
+                os_sandbox_container_image=self._os_sandbox_container_image,
+                os_sandbox_container_cpu_limit=self._os_sandbox_container_cpu_limit,
+                os_sandbox_container_memory_limit=self._os_sandbox_container_memory_limit,
             )
         self._clients[server_name] = client
         return client

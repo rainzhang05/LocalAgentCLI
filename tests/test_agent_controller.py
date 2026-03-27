@@ -236,7 +236,11 @@ class TestAgentController:
                     text="GitHub is a code hosting platform.",
                     kind="final_text",
                 )
-                yield StreamChunk(kind="done", is_done=True)
+                yield StreamChunk(
+                    kind="done",
+                    is_done=True,
+                    usage={"prompt_tokens": 6, "completion_tokens": 4},
+                )
 
             def supports_tools(self) -> bool:
                 return False
@@ -254,7 +258,13 @@ class TestAgentController:
         texts = [chunk.text for chunk in dispatch.stream if chunk.text]
         assert texts[-1] == "GitHub is a code hosting platform."
         assert controller._session.history[-1].metadata["fast_path"] is True
+        assert controller._session.history[-1].metadata["usage"] == {
+            "prompt_tokens": 6,
+            "completion_tokens": 4,
+            "total_tokens": 10,
+        }
         assert controller.task_state["phase"] == "completed"
+        assert controller.task_state["usage_total_tokens"] == 10
 
     def test_build_conversation_model_messages_includes_workspace_agents_instruction(
         self, tmp_path: Path

@@ -242,20 +242,28 @@ class RuntimeServices:
         """Build the runtime tool router for the current turn."""
         dynamic_tools = list(self.dynamic_tool_specs)
 
-        sandbox_mode_value = str(
-            self.session_manager.get_effective_config("safety.sandbox_mode") or "workspace-write"
-        )
-        sandbox_policy = RuntimeSandboxPolicy.from_posture(
-            parse_sandbox_mode(sandbox_mode_value),
-            workspace_root,
-        )
+        sandbox_policy = _build_runtime_sandbox_policy(self.session_manager, workspace_root)
         backend_value = str(
             self.session_manager.get_effective_config("safety.os_sandbox_backend") or "off"
+        )
+        container_image_value = str(
+            self.session_manager.get_effective_config("safety.os_sandbox_container_image")
+            or "python:3.12-slim"
+        )
+        container_cpu_limit_value = str(
+            self.session_manager.get_effective_config("safety.os_sandbox_container_cpu_limit") or ""
+        )
+        container_memory_limit_value = str(
+            self.session_manager.get_effective_config("safety.os_sandbox_container_memory_limit")
+            or ""
         )
         try:
             shell_exec_process = build_shell_exec_process(
                 policy=sandbox_policy,
                 backend=backend_value,
+                container_image=container_image_value,
+                container_cpu_limit=container_cpu_limit_value,
+                container_memory_limit=container_memory_limit_value,
             )
         except Exception as exc:
             if backend_value.strip().lower() == "auto":
@@ -274,6 +282,9 @@ class RuntimeServices:
             self.mcp_manager.update_exec_policy(
                 os_sandbox_backend=backend_value,
                 sandbox_policy=sandbox_policy,
+                os_sandbox_container_image=container_image_value,
+                os_sandbox_container_cpu_limit=container_cpu_limit_value,
+                os_sandbox_container_memory_limit=container_memory_limit_value,
             )
             dynamic_tools.extend(self.mcp_manager.build_dynamic_tool_specs())
 
@@ -863,3 +874,52 @@ def _refresh_model_entry(
         except KeyError:
             return entry
     return entry
+
+
+def _build_runtime_sandbox_policy(
+    session_manager: SessionManager,
+    workspace_root: Path,
+) -> RuntimeSandboxPolicy:
+    sandbox_mode_value = str(
+        session_manager.get_effective_config("safety.sandbox_mode") or "workspace-write"
+    )
+    posture = parse_sandbox_mode(sandbox_mode_value)
+    network_override = _parse_network_access_override(
+        str(session_manager.get_effective_config("safety.sandbox_network_access") or "auto"),
+    )
+    extra_writable_roots = _parse_sandbox_writable_roots(
+        str(session_manager.get_effective_config("safety.sandbox_writable_roots") or ""),
+        workspace_root,
+    )
+    return RuntimeSandboxPolicy.from_posture(
+        posture,
+        workspace_root,
+        writable_roots=extra_writable_roots,
+        network_access_override=network_override,
+    )
+
+
+def _parse_network_access_override(value: str) -> bool | None:
+    normalized = value.strip().lower()
+    if normalized in {"", "auto"}:
+        return None
+    if normalized == "allow":
+        return True
+    if normalized == "deny":
+        return False
+    raise ValueError("Invalid safety.sandbox_network_access. Expected one of: auto, allow, deny")
+
+
+def _parse_sandbox_writable_roots(raw_value: str, workspace_root: Path) -> tuple[Path, ...]:
+    if not raw_value.strip():
+        return ()
+    roots: list[Path] = []
+    for token in raw_value.replace("\n", ",").split(","):
+        candidate = token.strip()
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if not path.is_absolute():
+            path = workspace_root / path
+        roots.append(path.resolve(strict=False))
+    return tuple(roots)

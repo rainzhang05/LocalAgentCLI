@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
+import pytest
 from rich.console import Console
 
 from localagentcli.mcp import McpManager
@@ -14,6 +15,8 @@ from localagentcli.runtime import RuntimeServices
 from localagentcli.safety.approval import ApprovalManager, RiskLevel
 from localagentcli.safety.boundary import WorkspaceBoundary
 from localagentcli.safety.layer import SafetyLayer
+from localagentcli.safety.policy import RuntimeSandboxPolicy
+from localagentcli.safety.posture import SandboxPosture
 from localagentcli.safety.rollback import RollbackManager
 
 
@@ -243,6 +246,95 @@ _DEFAULT_ECHO_TOOL = {
 
 
 class TestMcpRuntime:
+    def test_stdio_client_launch_command_wraps_with_configured_backend(
+        self, tmp_path: Path, monkeypatch
+    ):
+        from localagentcli.mcp import client as mcp_client
+
+        config = mcp_client.McpServerConfig(
+            name="demo",
+            command="python",
+            args=["-V"],
+            cwd=str(tmp_path),
+        )
+        policy = RuntimeSandboxPolicy.from_posture(SandboxPosture.WORKSPACE_WRITE, tmp_path)
+        stdio = mcp_client.StdioMcpClient(
+            config,
+            server_name="demo",
+            os_sandbox_backend="macos-seatbelt",
+            sandbox_policy=policy,
+        )
+        monkeypatch.setattr(mcp_client, "is_os_sandbox_backend_available", lambda _backend: True)
+
+        launch = stdio._launch_command()
+
+        assert launch[:2] == ["/bin/sh", "-lc"]
+        assert "sandbox-exec" in launch[2]
+
+    def test_stdio_client_launch_command_auto_falls_back_when_backend_unavailable(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        from localagentcli.mcp import client as mcp_client
+
+        config = mcp_client.McpServerConfig(
+            name="demo",
+            command="python",
+            args=["-V"],
+            cwd=str(tmp_path),
+        )
+        policy = RuntimeSandboxPolicy.from_posture(SandboxPosture.WORKSPACE_WRITE, tmp_path)
+        stdio = mcp_client.StdioMcpClient(
+            config,
+            server_name="demo",
+            os_sandbox_backend="auto",
+            sandbox_policy=policy,
+        )
+        monkeypatch.setattr(
+            mcp_client,
+            "resolve_os_sandbox_backend",
+            lambda _backend: "macos-seatbelt",
+        )
+        monkeypatch.setattr(
+            mcp_client,
+            "is_os_sandbox_backend_available",
+            lambda _backend: False,
+        )
+
+        launch = stdio._launch_command()
+
+        assert launch == ["python", "-V"]
+
+    def test_stdio_client_launch_command_explicit_unavailable_backend_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        from localagentcli.mcp import client as mcp_client
+
+        config = mcp_client.McpServerConfig(
+            name="demo",
+            command="python",
+            args=["-V"],
+            cwd=str(tmp_path),
+        )
+        policy = RuntimeSandboxPolicy.from_posture(SandboxPosture.WORKSPACE_WRITE, tmp_path)
+        stdio = mcp_client.StdioMcpClient(
+            config,
+            server_name="demo",
+            os_sandbox_backend="linux-bwrap",
+            sandbox_policy=policy,
+        )
+        monkeypatch.setattr(
+            mcp_client,
+            "is_os_sandbox_backend_available",
+            lambda _backend: False,
+        )
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            stdio._launch_command()
+
     def test_runtime_services_exposes_mcp_dynamic_tool(self, config, storage, tmp_path: Path):
         server_path = _write_fake_mcp_server(tmp_path, [_DEFAULT_ECHO_TOOL])
         config._config["mcp_servers"] = {

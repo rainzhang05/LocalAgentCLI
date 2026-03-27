@@ -338,10 +338,11 @@ The system implements automatic context compaction (summarization) to maintain u
 ### How It Works
 
 1. **Token counting**: After each interaction, the system estimates tokens for the full prompt budget (repository instructions, pinned instructions, and message history). The estimate is a **coarse lower bound**: UTF-8 byte length of each message’s role and content, converted with a ceiling divide-by-four heuristic (not a real tokenizer), plus a small fixed per-message overhead and a capped contribution from non-empty `metadata` (so tool payloads are not treated as free).
-2. **Threshold check**: If the estimate reaches **75% of an effective context limit**, compaction triggers. The effective limit is the model context window minus a **generation headroom** reserved for the next reply (default: the smaller of one-eighth of the window, one-quarter of the window, and 2048 tokens). Pass `generation_headroom_tokens=0` to `ContextCompactor` to disable that reserve.
-3. **Summarization**: The oldest messages (excluding pinned instructions and the most recent N messages) are sent to the model with a summarization prompt
-4. **Replacement**: The summarized messages are replaced with a single `Message(role="system", content=summary, is_summary=True)`
-5. **Retention**: Pinned instructions and the most recent messages (configurable, default: last 10) are always kept verbatim
+2. **API usage-aware threshold check**: When providers return usage counters, LocalAgentCLI stores normalized prompt/completion/total counts in session metadata (`metadata.usage_budget`). Compaction checks consider both the heuristic estimate and the latest provider-reported prompt budget (falling back cleanly when usage is unavailable).
+3. **Threshold gate**: If the effective estimate reaches **75% of an effective context limit**, compaction triggers. The effective limit is the model context window minus a **generation headroom** reserved for the next reply (default: the smaller of one-eighth of the window, one-quarter of the window, and 2048 tokens). Pass `generation_headroom_tokens=0` to `ContextCompactor` to disable that reserve.
+4. **Summarization**: The oldest messages (excluding pinned instructions and the most recent N messages) are sent to the model with a summarization prompt
+5. **Replacement**: The summarized messages are replaced with a single `Message(role="system", content=summary, is_summary=True)`
+6. **Retention**: Pinned instructions and the most recent messages (configurable, default: last 10) are always kept verbatim
 
 ### ContextCompactor
 
@@ -360,7 +361,11 @@ class ContextCompactor:
         self._threshold = 0.75  # Trigger at 75% of effective context limit
         self._keep_recent = 10  # Always keep the last N messages
 
-    def needs_compaction(self, messages: list[Message]) -> bool:
+    def needs_compaction(
+        self,
+        messages: list[Message],
+        usage_snapshot: dict[str, Any] | None = None,
+    ) -> bool:
         """Check if the message history exceeds the compaction threshold."""
 
     def compact(self, messages: list[Message],
@@ -387,6 +392,16 @@ class ContextCompactor:
 7. **Transparency**: When compaction occurs, the user sees an inline activity log message: `"Context compacted: summarized N messages"`
 
 **Regression coverage:** Pytest covers compaction on chat input and on agent-mode dispatch when history exceeds the configured threshold, including direct-answer and multi-step `handle_task` paths after compaction (`tests/test_compaction_integration.py`).
+
+### Usage budget metadata
+
+When remote providers return usage counters, LocalAgentCLI persists a normalized usage snapshot in `session.metadata["usage_budget"]`:
+
+- `latest`: latest normalized prompt/completion/total counts with source + timestamp
+- `cumulative`: running aggregate prompt/completion/total counts across model calls
+- `turns_with_usage`: number of model calls that included usage data
+
+This state is used for budgeting/compaction decisions and for agent task-state telemetry.
 
 ### Persistent Summaries
 

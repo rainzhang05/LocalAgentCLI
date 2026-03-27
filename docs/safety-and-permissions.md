@@ -64,6 +64,17 @@ Optional OS-level command wrapping can be selected with
     backend binaries are available; otherwise fall back to local execution
 - `macos-seatbelt`: force Seatbelt-wrapped shell command execution
 - `linux-bwrap`: force bubblewrap-wrapped shell command execution
+- `container-docker`: force Docker container-wrapped command execution (fails
+    setup when Docker is unavailable)
+
+Typed policy overrides are available for runtime process wrappers:
+- `safety.sandbox_network_access`: `auto` (posture default), `allow`, `deny`
+- `safety.sandbox_writable_roots`: comma-separated extra writable roots merged
+    with workspace roots in `workspace-write` posture
+- `safety.os_sandbox_container_image`,
+    `safety.os_sandbox_container_cpu_limit`,
+    `safety.os_sandbox_container_memory_limit`: optional container backend
+    settings
 
 Internally, posture is normalized into a typed runtime sandbox policy model that
 tracks posture, writable roots, and network-access flags for future containment
@@ -85,11 +96,10 @@ What the product enforces today:
 What is **not** guaranteed:
 
 - **Full OS-level isolation guarantees** for `shell_execute` or MCP subprocesses.
-    The product now supports optional command wrapping via `safety.os_sandbox_backend`
-    (`macos-seatbelt` / `linux-bwrap`), but commands still run as the same
-    operating-system user and do not yet provide complete parity with dedicated
-    kernel-level sandbox pipelines (Landlock, Windows sandbox, container runtime,
-    or separate sandbox user-account orchestration).
+    The product supports optional command wrapping via `safety.os_sandbox_backend`
+    (`macos-seatbelt` / `linux-bwrap` / `container-docker`), but commands still
+    do not provide complete parity with dedicated kernel-level sandbox pipelines
+    (for example Landlock- or Windows-sandbox-native implementations).
 - **Network or filesystem containment** beyond what normal Unix/Windows process
   permissions already impose. Operators who need stronger containment should run
   the CLI inside an external sandbox or VM they trust.

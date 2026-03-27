@@ -48,7 +48,7 @@ After implementing a component:
 | `[x]` | `/config` command | 2026-03-19 — `/config` now opens an interactive schema-aware editor in TTY mode while keeping explicit dotted-key reads/writes for scripted use, and free-form edits now use the shared text-prompt helper |
 | `[x]` | `/setup` wizard | 2026-03-19 — simplified for Phase 1 (workspace, mode, logging level), now uses the shared prompt contract for wizard questions, and still falls back to persisted defaults in non-interactive launches |
 | `[x]` | Config system (TOML read/write) | 2026-03-17 |
-| `[x]` | Config defaults and validation | 2026-03-26 — adds optional OS-sandbox backend config validation (`safety.os_sandbox_backend`: `off`/`auto`/`macos-seatbelt`/`linux-bwrap`) in addition to existing shell UX controls and prior `safety.sandbox_mode` parsing |
+| `[x]` | Config defaults and validation | 2026-03-26 — safety config now includes OS-wrapper backend validation (`off`/`auto`/`macos-seatbelt`/`linux-bwrap`/`container-docker`), typed sandbox policy overrides (`safety.sandbox_network_access`, `safety.sandbox_writable_roots`), and optional container backend image/resource settings |
 | `[x]` | Session state dataclass | 2026-03-17 |
 | `[x]` | Session manager (new/save/load/list/clear) | 2026-03-25 — now delegates persistence through a pluggable `SessionStore` abstraction (JSON default, opt-in SQLite via `features.sqlite_session_store`), while preserving existing command/API behavior; includes legacy JSON compatibility with best-effort auto-migration into SQLite on first load when enabled; prior default-target repair, exec resume/fork, fork lineage metadata, persist-on-exit, and named autosave behaviors remain intact |
 | `[x]` | Storage manager (directory init) | 2026-03-17 |
@@ -122,13 +122,13 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Tool base class (ABC) | 2026-03-18 |
-| `[x]` | Tool registry | 2026-03-26 — `ToolRouter` merges built-in, dynamic, and MCP tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration; MCP client honors `timeout`, merges env with parent process, avoids qualified-name collisions, and now receives runtime sandbox execution policy updates for stdio server launches; per-turn tool definitions are model-adapted using active `ModelInfo` capability and token-budget gates |
+| `[x]` | Tool registry | 2026-03-26 — `ToolRouter` merges built-in, dynamic, and MCP tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration; MCP client honors `timeout`, merges env with parent process, avoids qualified-name collisions, and now receives full runtime execution-policy updates (backend + typed policy + container options) for stdio launches; per-turn tool definitions are model-adapted using active `ModelInfo` capability and token-budget gates |
 | `[x]` | `file_read` tool | 2026-03-18 |
 | `[x]` | `file_search` tool | 2026-03-18 |
 | `[x]` | `directory_list` tool | 2026-03-18 |
 | `[x]` | `file_write` tool | 2026-03-18 |
 | `[x]` | `patch_apply` tool | 2026-03-23 — supports diff-style patch operations with optional `@@` anchors, context-aware matching, and indentation-tolerant replacement while keeping legacy exact single-match `old_text/new_text` mode |
-| `[x]` | `shell_execute` tool | 2026-03-26 — execution routes through `ExecProcess` (`LocalExecProcess` default + `RemoteExecProcess` seam), and now supports optional OS-sandbox command wrapping (`safety.os_sandbox_backend`) with safe fallback in `auto` mode when sandbox binaries are unavailable |
+| `[x]` | `shell_execute` tool | 2026-03-26 — execution routes through `ExecProcess` (`LocalExecProcess` default + `RemoteExecProcess` seam) and supports optional wrappers (`macos-seatbelt`, `linux-bwrap`, `container-docker`) with typed policy overrides for network/writable roots and optional container image/cpu/memory settings; `auto` backend still falls back safely |
 | `[x]` | `test_execute` tool | 2026-03-18 |
 | `[x]` | `git_status` tool | 2026-03-18 |
 | `[x]` | `git_diff` tool | 2026-03-18 |
@@ -167,7 +167,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-26 — full suite now includes OS-sandbox backend config validation (`safety.os_sandbox_backend`), exec-process backend/wrapper coverage, runtime sandbox-process fallback/strict-backend behavior checks, MCP stdio launch wrapping policy tests, MCP env merge, approval/sandbox integration for MCP tools, colliding sanitized MCP name disambiguation, and cross-platform environment-context cwd assertions; run `pytest --cov` for current counts and coverage |
+| `[x]` | Unit tests | 2026-03-26 — full suite now includes backend/wrapper coverage for seatbelt/bwrap/container, typed policy override parsing tests (network + writable roots), runtime fallback/strict-backend behavior checks, MCP stdio launch-policy propagation tests (including container mode), MCP env merge, approval/sandbox integration for MCP tools, and cross-platform environment-context cwd assertions; run `pytest --cov` for current counts and coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -200,9 +200,9 @@ After implementing a component:
 | `[x]` | `docs/remote-providers.md` | 2026-03-22 — adds readiness posture/tradeoff guidance surfaces and operator-facing behavior for `/mode agent`, runtime dispatch checks, `/providers list`, and `/providers test` |
 | `[x]` | `docs/agent-system.md` | 2026-03-22 — entry requirements now explicitly include posture/tradeoff wording for readiness-based agent-mode rejections |
 | `[x]` | `docs/tool-system.md` | 2026-03-26 — now documents feature-gated turn-boundary MCP tool inventory refresh (`features.mcp_tool_inventory_refresh`) in addition to schema and parallel read-only batch rules |
-| `[x]` | `docs/mcp.md` | 2026-03-26 — transport config covers `stdio`/`http`/`sse`, auth header options, and now documents stdio subprocess execution policy propagation from `safety.os_sandbox_backend` (including `auto` fallback vs explicit-backend failure behavior) |
-| `[x]` | `docs/safety-and-permissions.md` | 2026-03-26 — MCP `readOnlyHint` approval table rows, autonomous mode wording, explicit sandbox-aware high-risk approval exception (`danger-full-access` + high-risk `shell_execute`), and clarified optional OS-sandbox wrapper limits for shell/MCP subprocesses |
-| `[x]` | `docs/session-and-config.md` | 2026-03-22 — `[mcp_servers]` example comments reference MCP doc and optional `env` / `timeout` keys |
+| `[x]` | `docs/mcp.md` | 2026-03-26 — transport config covers `stdio`/`http`/`sse`, auth header options, and stdio subprocess execution policy propagation including `container-docker` + `auto` fallback/explicit-backend failure behavior |
+| `[x]` | `docs/safety-and-permissions.md` | 2026-03-26 — MCP `readOnlyHint` approval table rows, autonomous mode wording, explicit sandbox-aware high-risk approval exception (`danger-full-access` + high-risk `shell_execute`), typed policy override controls, and clarified wrapper isolation limits |
+| `[x]` | `docs/session-and-config.md` | 2026-03-26 — safety config examples now include backend selection (`container-docker` included), typed policy override fields, and container backend settings |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
 | `[x]` | `docs/packaging-and-release.md` | 2026-03-18 — release checklist, trusted-publishing prerequisites, `pipx` smoke path guidance, non-interactive first-run setup expectations, and local wheel refresh command documented |

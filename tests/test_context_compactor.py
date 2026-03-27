@@ -41,6 +41,28 @@ class TestContextCompactor:
         compactor = ContextCompactor(FakeModel(), context_limit=50)
         assert compactor.needs_compaction(_messages(3, "x" * 80)) is True
 
+    def test_needs_compaction_uses_usage_snapshot_when_larger_than_heuristic(self):
+        compactor = ContextCompactor(FakeModel(), context_limit=1000)
+
+        assert (
+            compactor.needs_compaction(
+                _messages(2, "short"),
+                usage_snapshot={"latest_prompt_tokens": 900},
+            )
+            is True
+        )
+
+    def test_needs_compaction_uses_heuristic_when_usage_snapshot_is_stale(self):
+        compactor = ContextCompactor(FakeModel(), context_limit=50)
+
+        assert (
+            compactor.needs_compaction(
+                _messages(3, "x" * 80),
+                usage_snapshot={"latest_prompt_tokens": 1},
+            )
+            is True
+        )
+
     def test_compact_replaces_older_messages_with_summary(self):
         compactor = ContextCompactor(FakeModel(text="Compacted summary"), context_limit=100)
         messages = _messages(12, "content " * 20)

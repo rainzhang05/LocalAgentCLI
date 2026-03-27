@@ -24,6 +24,10 @@ def test_resolve_os_sandbox_backend_rejects_unknown_values():
         exec_process.resolve_os_sandbox_backend("invalid")
 
 
+def test_resolve_os_sandbox_backend_accepts_container_backend():
+    assert exec_process.resolve_os_sandbox_backend("container-docker") == "container-docker"
+
+
 def test_build_shell_exec_process_auto_falls_back_when_backend_unavailable(
     monkeypatch, tmp_path: Path
 ):
@@ -42,6 +46,20 @@ def test_build_shell_exec_process_explicit_backend_requires_binary(monkeypatch, 
 
     with pytest.raises(RuntimeError, match="unavailable"):
         exec_process.build_shell_exec_process(policy=policy, backend="macos-seatbelt")
+
+
+def test_build_shell_exec_process_container_backend_requires_docker(monkeypatch, tmp_path: Path):
+    policy = RuntimeSandboxPolicy.from_posture(SandboxPosture.WORKSPACE_WRITE, tmp_path)
+
+    def _which(name: str):
+        if name == "docker":
+            return None
+        return "/usr/bin/true"
+
+    monkeypatch.setattr(exec_process.shutil, "which", _which)
+
+    with pytest.raises(RuntimeError, match="unavailable"):
+        exec_process.build_shell_exec_process(policy=policy, backend="container-docker")
 
 
 def test_wrap_command_for_os_sandbox_danger_full_access_is_passthrough(tmp_path: Path):
@@ -87,3 +105,27 @@ def test_wrap_command_for_os_sandbox_linux_bwrap_includes_net_and_bind(tmp_path:
     assert "bwrap" in wrapped
     assert "--unshare-net" in wrapped
     assert "--bind" in wrapped
+
+
+def test_wrap_command_for_os_sandbox_container_docker_includes_limits(tmp_path: Path):
+    policy = RuntimeSandboxPolicy.from_posture(
+        SandboxPosture.WORKSPACE_WRITE,
+        tmp_path,
+        network_access_override=False,
+    )
+
+    wrapped = exec_process.wrap_command_for_os_sandbox(
+        "echo hi",
+        cwd=str(tmp_path),
+        backend="container-docker",
+        policy=policy,
+        container_image="python:3.12-slim",
+        container_cpu_limit="1.5",
+        container_memory_limit="1g",
+    )
+
+    assert "docker" in wrapped
+    assert "--network" in wrapped
+    assert "none" in wrapped
+    assert "--cpus" in wrapped
+    assert "--memory" in wrapped

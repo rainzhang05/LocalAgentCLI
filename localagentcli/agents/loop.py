@@ -37,6 +37,7 @@ from localagentcli.session.task_context import (
     AGENT_TASK_RUNTIME_HEADING,
     format_agent_task_runtime_section,
 )
+from localagentcli.session.usage import update_session_usage_budget
 from localagentcli.tools.base import Tool, ToolResult
 from localagentcli.tools.registry import ToolRegistry
 from localagentcli.tools.router import ToolRouter
@@ -584,6 +585,7 @@ class AgentLoop:
                 tool_choice="auto",
                 **options,
             )
+            self._record_usage_budget(session, result.usage)
 
             if result.finish_reason == "error":
                 consecutive_errors += 1
@@ -902,6 +904,7 @@ class AgentLoop:
                 tool_choice="auto",
                 **options,
             )
+            self._record_usage_budget(session, result.usage)
 
             if result.finish_reason == "error":
                 consecutive_errors += 1
@@ -1266,6 +1269,12 @@ class AgentLoop:
             "files_changed": result.files_changed,
         }
         return json.dumps(payload, ensure_ascii=False)
+
+    @staticmethod
+    def _record_usage_budget(session: Session | None, usage: object) -> None:
+        if session is None:
+            return
+        update_session_usage_budget(session, usage, source="agent_step")
 
     def _summarize_observations(self, conversation: list[ModelMessage]) -> str:
         tool_messages = [msg for msg in conversation if msg.role == "tool"]

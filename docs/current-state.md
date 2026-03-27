@@ -122,7 +122,7 @@ After implementing a component:
 | Status | Component | Notes |
 |---|---|---|
 | `[x]` | Tool base class (ABC) | 2026-03-18 |
-| `[x]` | Tool registry | 2026-03-23 — `ToolRouter` merges built-in, dynamic, and MCP stdio tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration; MCP client honors `timeout`, merges env with parent process, and avoids qualified-name collisions; per-turn tool definitions are now model-adapted using active `ModelInfo` capability and token-budget gates |
+| `[x]` | Tool registry | 2026-03-26 — `ToolRouter` merges built-in, dynamic, and MCP tools; `tools/schema.py` validates `parameters_schema` on `Tool.definition()` and dynamic registration; MCP client honors `timeout`, merges env with parent process, avoids qualified-name collisions, and now receives runtime sandbox execution policy updates for stdio server launches; per-turn tool definitions are model-adapted using active `ModelInfo` capability and token-budget gates |
 | `[x]` | `file_read` tool | 2026-03-18 |
 | `[x]` | `file_search` tool | 2026-03-18 |
 | `[x]` | `directory_list` tool | 2026-03-18 |
@@ -167,7 +167,7 @@ After implementing a component:
 |---|---|---|
 | `[x]` | `pyproject.toml` configuration | 2026-03-18 — production metadata, project URLs, license files, classifiers, and release tooling extras added |
 | `[x]` | Backend auto-install on demand | 2026-03-18 — shell prompts to install missing MLX/GGUF/Torch dependencies and installs direct backend requirements before retrying model load |
-| `[x]` | Unit tests | 2026-03-22 — full suite includes MCP env merge, approval/sandbox integration for MCP tools, colliding sanitized MCP name disambiguation, `SandboxPosture`/read-only sandbox tests, config `safety.sandbox_mode` validation, and cross-platform environment-context cwd assertions that resolve the expected absolute path before comparing; run `pytest --cov` for current counts and coverage |
+| `[x]` | Unit tests | 2026-03-26 — full suite now includes OS-sandbox backend config validation (`safety.os_sandbox_backend`), exec-process backend/wrapper coverage, runtime sandbox-process fallback/strict-backend behavior checks, MCP stdio launch wrapping policy tests, MCP env merge, approval/sandbox integration for MCP tools, colliding sanitized MCP name disambiguation, and cross-platform environment-context cwd assertions; run `pytest --cov` for current counts and coverage |
 | `[x]` | Integration tests | 2026-03-18 — setup/save/load and backend auto-install flows covered in `tests/integration/test_packaging_flows.py` |
 | `[x]` | CLI tests | 2026-03-18 — subprocess coverage for interactive and non-interactive first-run setup, session restore, single- and double-`Ctrl+C` handling in `tests/cli/test_packaging_cli.py`, with a Windows-safe non-interactive interrupt path |
 | `[x]` | Agent workflow tests | 2026-03-18 — planner, controller, shell integration, provider tool-calling, and `/agent` command coverage added |
@@ -200,8 +200,8 @@ After implementing a component:
 | `[x]` | `docs/remote-providers.md` | 2026-03-22 — adds readiness posture/tradeoff guidance surfaces and operator-facing behavior for `/mode agent`, runtime dispatch checks, `/providers list`, and `/providers test` |
 | `[x]` | `docs/agent-system.md` | 2026-03-22 — entry requirements now explicitly include posture/tradeoff wording for readiness-based agent-mode rejections |
 | `[x]` | `docs/tool-system.md` | 2026-03-26 — now documents feature-gated turn-boundary MCP tool inventory refresh (`features.mcp_tool_inventory_refresh`) in addition to schema and parallel read-only batch rules |
-| `[x]` | `docs/mcp.md` | 2026-03-26 — transport config now covers `stdio`/`http`/`sse`, plus HTTP headers and optional bearer-token env injection, while keeping OAuth/eliciation/skills-runtime limitations explicit |
-| `[x]` | `docs/safety-and-permissions.md` | 2026-03-26 — MCP `readOnlyHint` approval table rows, autonomous mode wording, and explicit sandbox-aware high-risk approval exception (`danger-full-access` + high-risk `shell_execute`) |
+| `[x]` | `docs/mcp.md` | 2026-03-26 — transport config covers `stdio`/`http`/`sse`, auth header options, and now documents stdio subprocess execution policy propagation from `safety.os_sandbox_backend` (including `auto` fallback vs explicit-backend failure behavior) |
+| `[x]` | `docs/safety-and-permissions.md` | 2026-03-26 — MCP `readOnlyHint` approval table rows, autonomous mode wording, explicit sandbox-aware high-risk approval exception (`danger-full-access` + high-risk `shell_execute`), and clarified optional OS-sandbox wrapper limits for shell/MCP subprocesses |
 | `[x]` | `docs/session-and-config.md` | 2026-03-22 — `[mcp_servers]` example comments reference MCP doc and optional `env` / `timeout` keys |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |

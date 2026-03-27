@@ -109,7 +109,7 @@ def build_shell_exec_process(*, policy: RuntimeSandboxPolicy, backend: str) -> E
     if resolved == "off":
         return base
 
-    if not _is_backend_available(resolved):
+    if not is_os_sandbox_backend_available(resolved):
         if (backend or "").strip().lower() == "auto":
             return base
         raise RuntimeError(f"Configured OS sandbox backend '{resolved}' is unavailable")
@@ -123,6 +123,11 @@ def _is_backend_available(backend: str) -> bool:
     if backend == "linux-bwrap":
         return shutil.which("bwrap") is not None
     return True
+
+
+def is_os_sandbox_backend_available(backend: str) -> bool:
+    """Return whether the resolved backend is currently available."""
+    return _is_backend_available(backend)
 
 
 def wrap_command_for_os_sandbox(

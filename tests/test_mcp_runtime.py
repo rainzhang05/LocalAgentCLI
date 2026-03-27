@@ -335,6 +335,38 @@ class TestMcpRuntime:
         with pytest.raises(RuntimeError, match="unavailable"):
             stdio._launch_command()
 
+    def test_stdio_client_launch_command_container_backend_uses_docker_wrapper(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        from localagentcli.mcp import client as mcp_client
+
+        config = mcp_client.McpServerConfig(
+            name="demo",
+            command="python",
+            args=["-V"],
+            cwd=str(tmp_path),
+        )
+        policy = RuntimeSandboxPolicy.from_posture(SandboxPosture.WORKSPACE_WRITE, tmp_path)
+        stdio = mcp_client.StdioMcpClient(
+            config,
+            server_name="demo",
+            os_sandbox_backend="container-docker",
+            sandbox_policy=policy,
+            os_sandbox_container_image="python:3.12-slim",
+            os_sandbox_container_cpu_limit="1.0",
+            os_sandbox_container_memory_limit="1g",
+        )
+        monkeypatch.setattr(mcp_client, "is_os_sandbox_backend_available", lambda _backend: True)
+
+        launch = stdio._launch_command()
+
+        assert launch[:2] == ["/bin/sh", "-lc"]
+        assert "docker run" in launch[2]
+        assert "--cpus" in launch[2]
+        assert "--memory" in launch[2]
+
     def test_runtime_services_exposes_mcp_dynamic_tool(self, config, storage, tmp_path: Path):
         server_path = _write_fake_mcp_server(tmp_path, [_DEFAULT_ECHO_TOOL])
         config._config["mcp_servers"] = {

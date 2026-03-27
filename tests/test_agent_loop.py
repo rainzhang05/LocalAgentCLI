@@ -211,6 +211,101 @@ def test_build_messages_uses_enriched_step_prompt_sections(tmp_path: Path):
     assert "Current step focus:" in content
 
 
+def test_build_messages_includes_context_diff_on_first_snapshot(tmp_path: Path):
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(_LoopModel(), registry, TaskPlanner(_LoopModel()), safety)
+    plan = TaskPlan(task="Do work", steps=[PlanStep(index=1, description="Step one")])
+    step = plan.steps[0]
+    session = _session_agent(
+        tmp_path,
+        metadata={
+            "agent_task_state": {
+                "active": True,
+                "phase": "executing",
+                "summary": "Running step.",
+            }
+        },
+    )
+
+    messages = loop._build_messages("Do work", plan, step, [], [], session)
+
+    assert "Context updates since previous turn:" in messages[0].content
+    assert "initial_context: established" in messages[0].content
+    assert isinstance(session.metadata.get("context_diff_baseline"), dict)
+    assert isinstance(session.metadata.get("last_context_diff"), dict)
+
+
+def test_build_messages_omits_context_diff_when_snapshot_unchanged(tmp_path: Path):
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(_LoopModel(), registry, TaskPlanner(_LoopModel()), safety)
+    plan = TaskPlan(task="Do work", steps=[PlanStep(index=1, description="Step one")])
+    step = plan.steps[0]
+    session = _session_agent(
+        tmp_path,
+        metadata={
+            "agent_task_state": {
+                "active": True,
+                "phase": "executing",
+                "summary": "Running step.",
+            }
+        },
+    )
+
+    first = loop._build_messages("Do work", plan, step, [], [], session)
+    second = loop._build_messages("Do work", plan, step, [], [], session)
+
+    assert "Context updates since previous turn:" in first[0].content
+    assert "Context updates since previous turn:" not in second[0].content
+
+
+def test_build_messages_emits_context_diff_for_task_state_change(tmp_path: Path):
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(_LoopModel(), registry, TaskPlanner(_LoopModel()), safety)
+    plan = TaskPlan(task="Do work", steps=[PlanStep(index=1, description="Step one")])
+    step = plan.steps[0]
+    session = _session_agent(
+        tmp_path,
+        metadata={
+            "agent_task_state": {
+                "active": True,
+                "phase": "planning",
+                "retry_count": 0,
+                "summary": "Planning step.",
+            }
+        },
+    )
+
+    loop._build_messages("Do work", plan, step, [], [], session)
+    session.metadata["agent_task_state"]["phase"] = "executing"
+    session.metadata["agent_task_state"]["retry_count"] = 1
+
+    messages = loop._build_messages("Do work", plan, step, [], [], session)
+
+    assert "Context updates since previous turn:" in messages[0].content
+    assert "task_state.phase" in messages[0].content
+    assert "planning" in messages[0].content
+    assert "executing" in messages[0].content
+    assert "task_state.retry_count" in messages[0].content
+
+
 def test_run_uses_model_default_max_tokens_when_generation_options_not_provided(
     tmp_path: Path,
 ):

@@ -293,6 +293,8 @@ class AgentLoop:
 
 **Runtime task status in step prompts:** When `AgentController` runs the loop, it passes the active `Session`. For each step, the first system message includes the usual task/plan/step instructions plus an **Agent task status (runtime):** block when `session.metadata["agent_task_state"]` exists, `session.mode == "agent"`, and the recorded task is **active**. The block lists fields such as route, phase, step index and description, pending tool (if any), approval mode, rollback count, latest usage counters, and a truncated summary so the model sees up-to-date execution state alongside the transcript. Formatting lives in `localagentcli/session/task_context.py`.
 
+**Structured context updates in step prompts:** Agent step assembly now builds a normalized turn-context snapshot (session target/workspace identity, instruction and environment fingerprints, task-state subset, and relevant config overrides), diffs it against `session.metadata["context_diff_baseline"]`, and appends a concise **Context updates since previous turn:** section when changes exist. The latest structured diff is persisted in `session.metadata["last_context_diff"]`, and the baseline is advanced after each step-prompt build.
+
 The step system message also merges any system-role context already present in the transcript (for example repository instructions and environment context produced by shared conversation assembly). If that upstream system context is absent, the loop falls back to session-derived workspace/pinned instructions plus a freshly generated `<environment_context>` block.
 
 Independent of transcript/session layering, each step now starts with a deterministic execution brief:

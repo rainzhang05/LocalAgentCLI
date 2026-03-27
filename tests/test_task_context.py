@@ -8,6 +8,7 @@ from pathlib import Path
 from localagentcli.session.state import Session
 from localagentcli.session.task_context import (
     AGENT_TASK_RUNTIME_HEADING,
+    build_turn_context_snapshot,
     format_agent_task_runtime_section,
 )
 
@@ -131,3 +132,34 @@ def test_format_omits_whitespace_only_summary(tmp_path: Path):
 
 def test_heading_constant_for_loop_use():
     assert "runtime" in AGENT_TASK_RUNTIME_HEADING.lower()
+
+
+def test_build_turn_context_snapshot_includes_stable_sections(tmp_path: Path):
+    session = _session(
+        tmp_path,
+        metadata={
+            "workspace_instruction": "Follow AGENTS",
+            "agent_task_state": {
+                "active": True,
+                "phase": "executing",
+                "retry_count": 1,
+                "summary": "Running task.",
+                "updated_at": "volatile",
+            },
+            "long_horizon_memory": [{"fact": "x"}],
+        },
+        config_overrides={"generation.reasoning_effort": "high"},
+    )
+    session.pinned_instructions.append("Use type hints")
+
+    snapshot = build_turn_context_snapshot(session)
+
+    assert snapshot["session"]["mode"] == "agent"
+    assert snapshot["session"]["workspace"] == str(tmp_path)
+    assert snapshot["instructions"]["count"] >= 1
+    assert snapshot["instructions"]["fingerprint"]
+    assert snapshot["environment"]["fingerprint"]
+    assert snapshot["task_state"]["phase"] == "executing"
+    assert "updated_at" not in snapshot["task_state"]
+    assert snapshot["memory"]["long_horizon_count"] == 1
+    assert snapshot["config_overrides"]["generation.reasoning_effort"] == "high"

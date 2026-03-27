@@ -20,6 +20,9 @@ _RUNTIME_FIELD_KEYS = (
     "last_error",
     "approval_mode",
     "rollback_count",
+    "usage_prompt_tokens",
+    "usage_completion_tokens",
+    "usage_total_tokens",
     "summary",
     "updated_at",
 )

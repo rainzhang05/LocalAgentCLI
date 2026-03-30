@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from localagentcli.models.backends.base import ModelMessage
+from localagentcli.models.prompt_profile import (
+    DEFAULT_PROMPT_PROFILE,
+    ProviderPromptProfile,
+)
 from localagentcli.session.memory import (
     LONG_HORIZON_MEMORY_KEY,
     render_long_horizon_memory_instruction,
@@ -21,6 +25,7 @@ WORKSPACE_INSTRUCTION_PATH_KEY = "workspace_instruction_path"
 WORKSPACE_INSTRUCTION_MTIME_KEY = "workspace_instruction_mtime_ns"
 SKILLS_OVERLAY_KEY = "skills_overlay"
 SKILLS_OVERLAY_FINGERPRINT_KEY = "skills_overlay_fingerprint"
+SYSTEM_SEGMENTS_METADATA_KEY = "system_segments"
 
 
 @dataclass(frozen=True)
@@ -120,7 +125,11 @@ def build_instruction_messages(session: Session) -> list[Message]:
     ]
 
 
-def build_conversation_model_messages(session: Session) -> list[ModelMessage]:
+def build_conversation_model_messages(
+    session: Session,
+    *,
+    prompt_profile: ProviderPromptProfile | None = None,
+) -> list[ModelMessage]:
     """Assemble model input: workspace + pinned instructions, then non-system history.
 
     History entries with role ``system`` are folded into the leading system message
@@ -128,13 +137,14 @@ def build_conversation_model_messages(session: Session) -> list[ModelMessage]:
     """
     from localagentcli.session.environment_context import get_environment_context_xml
 
-    system_parts = build_system_instructions(session)
-    system_parts.append(get_environment_context_xml(session.workspace))
+    active_profile = prompt_profile or DEFAULT_PROMPT_PROFILE
+    stable_system_parts = build_system_instructions(session)
+    dynamic_system_parts = [get_environment_context_xml(session.workspace)]
     conversation: list[ModelMessage] = []
 
     for message in session.history:
         if message.role == "system":
-            system_parts.append(message.content)
+            dynamic_system_parts.append(message.content)
             continue
         conversation.append(
             ModelMessage(
@@ -144,9 +154,51 @@ def build_conversation_model_messages(session: Session) -> list[ModelMessage]:
             )
         )
 
-    if system_parts:
-        return [ModelMessage(role="system", content="\n\n".join(system_parts)), *conversation]
+    system_parts = [*stable_system_parts, *dynamic_system_parts]
+    filtered_parts = [part for part in system_parts if isinstance(part, str) and part.strip()]
+    if filtered_parts:
+        metadata: dict[str, object] = {}
+        if active_profile.structured_system_blocks:
+            metadata[SYSTEM_SEGMENTS_METADATA_KEY] = _system_segments(
+                stable_parts=stable_system_parts,
+                dynamic_parts=dynamic_system_parts,
+                stable_cache_control_type=active_profile.stable_system_cache_control_type,
+            )
+        return [
+            ModelMessage(
+                role="system",
+                content="\n\n".join(filtered_parts),
+                metadata=metadata,
+            ),
+            *conversation,
+        ]
     return conversation
+
+
+def _system_segments(
+    *,
+    stable_parts: list[str],
+    dynamic_parts: list[str],
+    stable_cache_control_type: str | None,
+) -> list[dict[str, str]]:
+    segments: list[dict[str, str]] = []
+
+    for part in stable_parts:
+        text = part.strip()
+        if not text:
+            continue
+        segment: dict[str, str] = {"text": text}
+        if stable_cache_control_type is not None:
+            segment["cache_control_type"] = stable_cache_control_type
+        segments.append(segment)
+
+    for part in dynamic_parts:
+        text = part.strip()
+        if not text:
+            continue
+        segments.append({"text": text})
+
+    return segments
 
 
 def _instruction_search_root(workspace: str) -> Path | None:

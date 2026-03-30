@@ -169,7 +169,12 @@ class AgentController:
             raise RuntimeError("An agent task is already running.")
 
         self._append_user_input(task_input)
-        context = build_conversation_model_messages(self._session)
+        profile_getter = getattr(self._model, "prompt_profile", None)
+        prompt_profile = profile_getter() if callable(profile_getter) else None
+        context = build_conversation_model_messages(
+            self._session,
+            prompt_profile=prompt_profile,
+        )
         triage = self._triage.classify(
             task_input,
             context,
@@ -244,7 +249,12 @@ class AgentController:
             raise RuntimeError("An agent task is already running.")
 
         self._append_user_input(task_input)
-        context = build_conversation_model_messages(self._session)
+        profile_getter = getattr(self._model, "prompt_profile", None)
+        prompt_profile = profile_getter() if callable(profile_getter) else None
+        context = build_conversation_model_messages(
+            self._session,
+            prompt_profile=prompt_profile,
+        )
         triage = await self._triage.aclassify(
             task_input,
             context,

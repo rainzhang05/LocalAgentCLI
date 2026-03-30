@@ -37,6 +37,7 @@ class Feature(str, Enum):
     # Example feature for future roadmap work
     TOOL_MCP_OAUTH = "tool_mcp_oauth"
     MCP_TOOL_INVENTORY_REFRESH = "mcp_tool_inventory_refresh"
+    MULTI_AGENT_PATH_ROUTING = "multi_agent_path_routing"
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,12 @@ FEATURES: tuple[FeatureSpec, ...] = (
         stage=FeatureStage.UNDER_DEVELOPMENT,
         default_enabled=False,
         description="Refresh MCP-backed tool inventory between agent turns.",
+    ),
+    FeatureSpec(
+        id=Feature.MULTI_AGENT_PATH_ROUTING,
+        stage=FeatureStage.UNDER_DEVELOPMENT,
+        default_enabled=False,
+        description="Enable path-based multi-agent routing tool surfaces.",
     ),
 )
 

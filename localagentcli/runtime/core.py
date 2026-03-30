@@ -7,13 +7,14 @@ import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, Mapping, cast
 
 from rich.console import Console
 
 from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import AgentEvent
+from localagentcli.agents.multi_agent import ManagedAgent, MultiAgentManager
 from localagentcli.config.manager import ConfigManager
 from localagentcli.features import FeatureRegistry
 from localagentcli.mcp import McpManager
@@ -317,6 +318,8 @@ class SessionExecutionRuntime:
         self._active_backend_model = ""
         self._agent_controller: AgentController | None = None
         self._agent_controller_key: tuple[object, ...] | None = None
+        self._multi_agent_manager: MultiAgentManager | None = None
+        self._setup_multi_agent_runtime()
 
     @property
     def agent_controller(self) -> AgentController | None:
@@ -592,6 +595,10 @@ class SessionExecutionRuntime:
 
     def close(self) -> None:
         """Release any cached runtime resources."""
+        if self._multi_agent_manager is not None:
+            self._multi_agent_manager.shutdown()
+            self._multi_agent_manager = None
+
         if self._active_backend is not None:
             try:
                 self._active_backend.unload()
@@ -618,6 +625,10 @@ class SessionExecutionRuntime:
 
     async def aclose(self) -> None:
         """Async close (closes remote AsyncClient when a loop is running)."""
+        if self._multi_agent_manager is not None:
+            self._multi_agent_manager.shutdown()
+            self._multi_agent_manager = None
+
         if self._active_backend is not None:
             try:
                 self._active_backend.unload()
@@ -764,6 +775,292 @@ class SessionExecutionRuntime:
 
     def _emit_message(self, kind: RuntimeMessageKind, text: str) -> None:
         self._emit(RuntimeMessage(kind=kind, text=text))
+
+    def _setup_multi_agent_runtime(self) -> None:
+        """Initialize feature-gated multi-agent tool surfaces."""
+        enabled = bool(self._services.feature_registry.is_enabled("multi_agent_path_routing"))
+        if not enabled:
+            return
+        self._multi_agent_manager = MultiAgentManager()
+        self._register_multi_agent_dynamic_tools()
+        self._sync_active_agents_metadata()
+
+    def _register_multi_agent_dynamic_tools(self) -> None:
+        """Register path-based multi-agent dynamic tools once per runtime."""
+        existing = {spec.name for spec in self._services.dynamic_tool_specs}
+
+        specs = [
+            DynamicToolSpec(
+                name="spawn_agent",
+                description="Spawn a sub-agent for a bounded task.",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string"},
+                        "task_name": {"type": "string"},
+                        "role": {"type": "string"},
+                        "current_agent_path": {"type": "string"},
+                    },
+                    "required": ["message"],
+                },
+                executor=lambda **kwargs: self._tool_spawn_agent(**kwargs),
+                requires_approval=False,
+                is_read_only=False,
+            ),
+            DynamicToolSpec(
+                name="send_input",
+                description="Send additional input to an existing sub-agent.",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "target_path": {"type": "string"},
+                        "input_text": {"type": "string"},
+                        "current_agent_path": {"type": "string"},
+                    },
+                    "required": ["target_path", "input_text"],
+                },
+                executor=lambda **kwargs: self._tool_send_input(**kwargs),
+                requires_approval=False,
+                is_read_only=False,
+            ),
+            DynamicToolSpec(
+                name="wait_agent",
+                description="Wait for one or more sub-agents to reach final status.",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "target_paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "timeout_ms": {"type": "integer"},
+                        "current_agent_path": {"type": "string"},
+                    },
+                    "required": ["target_paths"],
+                },
+                executor=lambda **kwargs: self._tool_wait_agent(**kwargs),
+                requires_approval=False,
+                is_read_only=True,
+            ),
+            DynamicToolSpec(
+                name="close_agent",
+                description="Close a sub-agent and return its previous status.",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "target_path": {"type": "string"},
+                        "current_agent_path": {"type": "string"},
+                    },
+                    "required": ["target_path"],
+                },
+                executor=lambda **kwargs: self._tool_close_agent(**kwargs),
+                requires_approval=False,
+                is_read_only=False,
+            ),
+            DynamicToolSpec(
+                name="resume_agent",
+                description="Resume a closed sub-agent and optionally pass fresh input.",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "target_path": {"type": "string"},
+                        "input_override": {"type": "string"},
+                        "current_agent_path": {"type": "string"},
+                    },
+                    "required": ["target_path"],
+                },
+                executor=lambda **kwargs: self._tool_resume_agent(**kwargs),
+                requires_approval=False,
+                is_read_only=False,
+            ),
+        ]
+
+        for spec in specs:
+            if spec.name not in existing:
+                self._services.register_dynamic_tool(spec)
+
+    def _tool_spawn_agent(
+        self,
+        message: str,
+        task_name: str = "",
+        role: str = "",
+        current_agent_path: str = "",
+    ):
+        manager = self._multi_agent_manager
+        if manager is None:
+            return _error_tool_result(
+                "spawn_agent unavailable",
+                "Feature 'multi_agent_path_routing' is disabled.",
+            )
+        try:
+            agent = manager.spawn_agent(
+                message,
+                worker=self._run_subagent_task,
+                current_agent_path=current_agent_path or None,
+                task_name=task_name or None,
+                role=role or None,
+            )
+            self._sync_active_agents_metadata()
+            payload = {
+                "agent_path": agent.path.as_str(),
+                "status": agent.status,
+                "nickname": agent.nickname,
+                "role": agent.role,
+            }
+            return _success_tool_result("Spawned sub-agent.", payload)
+        except Exception as exc:
+            return _error_tool_result("Failed to spawn sub-agent.", str(exc))
+
+    def _tool_send_input(
+        self,
+        target_path: str,
+        input_text: str,
+        current_agent_path: str = "",
+    ):
+        manager = self._multi_agent_manager
+        if manager is None:
+            return _error_tool_result(
+                "send_input unavailable",
+                "Feature 'multi_agent_path_routing' is disabled.",
+            )
+        try:
+            agent = manager.send_input(
+                target_path,
+                input_text,
+                current_agent_path=current_agent_path or None,
+            )
+            self._sync_active_agents_metadata()
+            return _success_tool_result(
+                "Queued input for sub-agent.",
+                {
+                    "agent_path": agent.path.as_str(),
+                    "status": agent.status,
+                },
+            )
+        except Exception as exc:
+            return _error_tool_result("Failed to send input.", str(exc))
+
+    def _tool_wait_agent(
+        self,
+        target_paths: list[str],
+        timeout_ms: int = 30000,
+        current_agent_path: str = "",
+    ):
+        manager = self._multi_agent_manager
+        if manager is None:
+            return _error_tool_result(
+                "wait_agent unavailable",
+                "Feature 'multi_agent_path_routing' is disabled.",
+            )
+        try:
+            statuses, timed_out = manager.wait_for_targets(
+                target_paths,
+                current_agent_path=current_agent_path or None,
+                timeout_ms=timeout_ms,
+            )
+            self._sync_active_agents_metadata()
+            return _success_tool_result(
+                "Wait completed." if not timed_out else "Wait timed out.",
+                {
+                    "status": statuses,
+                    "timed_out": timed_out,
+                },
+            )
+        except Exception as exc:
+            return _error_tool_result("Failed while waiting for sub-agents.", str(exc))
+
+    def _tool_close_agent(
+        self,
+        target_path: str,
+        current_agent_path: str = "",
+    ):
+        manager = self._multi_agent_manager
+        if manager is None:
+            return _error_tool_result(
+                "close_agent unavailable",
+                "Feature 'multi_agent_path_routing' is disabled.",
+            )
+        try:
+            agent, previous_status = manager.close_agent(
+                target_path,
+                current_agent_path=current_agent_path or None,
+            )
+            self._sync_active_agents_metadata()
+            return _success_tool_result(
+                "Closed sub-agent.",
+                {
+                    "agent_path": agent.path.as_str(),
+                    "previous_status": previous_status,
+                    "status": agent.status,
+                },
+            )
+        except Exception as exc:
+            return _error_tool_result("Failed to close sub-agent.", str(exc))
+
+    def _tool_resume_agent(
+        self,
+        target_path: str,
+        input_override: str = "",
+        current_agent_path: str = "",
+    ):
+        manager = self._multi_agent_manager
+        if manager is None:
+            return _error_tool_result(
+                "resume_agent unavailable",
+                "Feature 'multi_agent_path_routing' is disabled.",
+            )
+        try:
+            agent = manager.resume_agent(
+                target_path,
+                current_agent_path=current_agent_path or None,
+                input_override=input_override or None,
+            )
+            self._sync_active_agents_metadata()
+            return _success_tool_result(
+                "Resumed sub-agent.",
+                {
+                    "agent_path": agent.path.as_str(),
+                    "status": agent.status,
+                },
+            )
+        except Exception as exc:
+            return _error_tool_result("Failed to resume sub-agent.", str(exc))
+
+    def _run_subagent_task(self, agent: ManagedAgent, prompt: str) -> str:
+        """Baseline worker behavior for feature-gated multi-agent tasks.
+
+        This Slice 4 baseline intentionally keeps sub-agent execution lightweight
+        and deterministic; deeper delegated model/runtime orchestration is a
+        follow-on increment.
+        """
+        prompt_text = prompt.strip()
+        if not prompt_text:
+            raise ValueError("input_text must not be empty")
+        return f"[{agent.path.name()}] {prompt_text}"
+
+    def _sync_active_agents_metadata(self) -> None:
+        """Persist the latest active-agent snapshot into session metadata."""
+        session = self._services.session_manager.current
+        manager = self._multi_agent_manager
+        if manager is None:
+            session.metadata.pop("active_agents", None)
+            session.touch()
+            return
+        session.metadata["active_agents"] = manager.snapshot()
+        session.touch()
+        self._services.session_manager.schedule_named_autosave()
+
+
+def _success_tool_result(summary: str, payload: Mapping[str, object]):
+    from localagentcli.tools.base import ToolResult
+
+    return ToolResult.success(summary, output=json.dumps(dict(payload), ensure_ascii=False))
+
+
+def _error_tool_result(summary: str, error: str):
+    from localagentcli.tools.base import ToolResult
+
+    return ToolResult.error_result(summary, error)
 
 
 def _resolve_default_target(

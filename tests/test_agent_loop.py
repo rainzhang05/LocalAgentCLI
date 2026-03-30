@@ -6,7 +6,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from localagentcli.agents.events import PhaseChanged, TaskComplete, TaskFailed, ToolCallResult
+from localagentcli.agents.events import (
+    PhaseChanged,
+    TaskComplete,
+    TaskFailed,
+    ToolCallRequested,
+    ToolCallResult,
+)
 from localagentcli.agents.loop import AgentLoop
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
@@ -459,3 +465,131 @@ def test_unified_turn_loop_repeated_model_errors_report_model_failure_not_budget
     ]
     assert failed_phase
     assert "model error" in failed_phase[-1].summary.lower()
+
+
+def test_tool_denial_triggers_replan_with_unified_loop(tmp_path: Path):
+    responses = [
+        GenerationResult(
+            text="",
+            tool_calls=[
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "file_write",
+                        "arguments": '{"path":"out.txt","content":"hello"}',
+                    },
+                }
+            ],
+        ),
+        GenerationResult(text='{"steps":[{"description":"Use a safer path"}]}'),
+        GenerationResult(text="Completed after replanning."),
+    ]
+
+    model = _LoopScriptedModel(responses)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        max_consecutive_errors=5,
+        max_step_rounds=8,
+        unified_turn_loop=True,
+    )
+    plan = TaskPlan(task="Write file", steps=[PlanStep(index=1, description="Write file")])
+
+    events = []
+    iterator = loop.run("Write file", [], plan=plan)
+    decision: bool | None = None
+    while True:
+        try:
+            event = next(iterator) if decision is None else iterator.send(decision)
+        except StopIteration:
+            break
+        decision = (
+            False if isinstance(event, ToolCallRequested) and event.requires_approval else None
+        )
+        events.append(event)
+
+    assert any(isinstance(event, PhaseChanged) and event.phase == "replanning" for event in events)
+    assert isinstance(events[-1], TaskComplete)
+
+
+def test_terminal_model_failure_sets_failure_type_without_retrying(tmp_path: Path):
+    responses = [
+        GenerationResult(
+            text="",
+            finish_reason="error",
+            usage={"error": "Invalid API key"},
+        )
+    ]
+
+    model = _LoopScriptedModel(responses)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        max_consecutive_errors=5,
+        max_step_rounds=4,
+        unified_turn_loop=True,
+    )
+    plan = TaskPlan(task="Inspect", steps=[PlanStep(index=1, description="Inspect")])
+
+    events = list(loop.run("Inspect", [], plan=plan))
+
+    retrying_events = [
+        event for event in events if isinstance(event, PhaseChanged) and event.phase == "retrying"
+    ]
+    assert retrying_events == []
+    assert isinstance(events[-1], TaskFailed)
+    assert events[-1].failure_type == "model_terminal"
+
+
+def test_transient_model_failure_retries_then_completes(tmp_path: Path):
+    responses = [
+        GenerationResult(
+            text="",
+            finish_reason="error",
+            usage={"error": "Rate limit exceeded"},
+        ),
+        GenerationResult(text="Recovered after retry."),
+    ]
+
+    model = _LoopScriptedModel(responses)
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        max_consecutive_errors=5,
+        max_step_rounds=6,
+        unified_turn_loop=True,
+    )
+    plan = TaskPlan(task="Inspect", steps=[PlanStep(index=1, description="Inspect")])
+
+    events = list(loop.run("Inspect", [], plan=plan))
+
+    assert any(isinstance(event, PhaseChanged) and event.phase == "retrying" for event in events)
+    assert isinstance(events[-1], TaskComplete)

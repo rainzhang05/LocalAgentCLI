@@ -20,6 +20,18 @@ When `features.mcp_tool_inventory_refresh = true`, agent dispatch refreshes the
 active tool router at turn boundaries so newly available MCP tools can be
 picked up without restarting the process.
 
+When `features.multi_agent_path_routing = true`, runtime also registers a
+feature-gated baseline multi-agent dynamic tool surface:
+- `spawn_agent` (spawn a path-addressable sub-agent under `/root/...`)
+- `send_input` (queue additional input for a target path)
+- `wait_agent` (wait for one-or-more targets to reach final status)
+- `close_agent` (close a target agent and report previous status)
+- `resume_agent` (resume a closed target, optionally with immediate input)
+
+This baseline uses validated path semantics (`AgentPath`) and a shared
+reference resolver (`resolve_agent_reference(...)`) for relative/absolute
+target addressing. It is intentionally feature-gated and incrementally scoped.
+
 ### Parameter schema rules
 
 Every tool’s `parameters_schema` must follow a small JSON Schema subset checked by `localagentcli/tools/schema.py` before the model sees the tool:

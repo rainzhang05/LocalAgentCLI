@@ -101,12 +101,13 @@ The loop continues until the task is complete, fails, or the user intervenes.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
-6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, approval mode, rollback availability, latest usage counters (`usage_prompt_tokens`, `usage_completion_tokens`, `usage_total_tokens`), and timing fields (`active`, `started_at`, `ended_at`, `updated_at`) are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
+6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, `last_error_type`, approval mode, rollback availability, latest usage counters (`usage_prompt_tokens`, `usage_completion_tokens`, `usage_total_tokens`), and timing fields (`active`, `started_at`, `ended_at`, `updated_at`) are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
 7. **Model-aware generation profiles**: Triage, planning, and step execution each use phase-specific generation profiles derived from shared config and `ModelInfo.default_max_tokens`; this avoids hardcoded loop token limits and keeps controller and loop behavior aligned.
 8. **Structured step briefings**: Step execution prompts use a fixed structure (execution rules, output contract, task objective, plan status, current step focus) before layered system/session context, reducing ambiguity during long tool-using turns.
 9. **Model-adapted tool exposure**: Per-round tool definitions are filtered by active `ModelInfo` (tool-use capability gates, required capability tags, minimum token-budget thresholds) before the model receives tool schemas.
 10. **Unified turn loop budget**: Each step can span multiple model↔tool rounds in one continuous execution loop up to a configurable round budget, reducing dependence on separate replanning calls for in-step progress.
-11. **Failure classification in unified loops**: When repeated model errors or tool failures hit the retry threshold first, the loop reports an explicit threshold failure reason; round-budget exhaustion is reserved for steps that neither converge nor trip a retry threshold.
+11. **Failure classification in unified loops**: Retry policy is class-aware (`model_transient`, `model_terminal`, `tool_timeout`, `tool_denied`, `tool_blocked`, `tool_error`) with per-class budgets instead of one generic consecutive-error counter.
+12. **Class-aware replanning**: Tool policy failures (`tool_denied`, `tool_blocked`, `tool_error`) trigger explicit replanning with failure-context hints, while terminal model failures fail fast and transient failures retry in-place.
 
 ### Runtime Phase Contract
 
@@ -196,7 +197,8 @@ Planned agent work carries one visible phase at a time. The current phase is ren
   - Retry the current step (with modifications)
   - Abort the task (with explanation)
 - Recovery after denials, blocked actions, cancelled tools, and timeouts is surfaced as `recovering`
-- Revisions to the remaining plan are surfaced as `replanning` when replanning is enabled for the loop mode
+- Revisions to the remaining plan are surfaced as `replanning` when the active failure class is replanning-eligible (`tool_denied`, `tool_blocked`, `tool_error`)
+- Retry and failure summaries include the classified failure type and budget context so operators can distinguish transient retries from terminal failures
 - Plan updates are displayed to the user
 
 ### Agent Capabilities

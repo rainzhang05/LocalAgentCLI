@@ -259,6 +259,10 @@ class ModelAbstractionLayer:
     def cancel(self) -> None:
         """Cancel an in-flight generation when the backend supports it."""
         self._backend.cancel()
+
+    def prompt_profile(self) -> ProviderPromptProfile:
+        """Provider-aware prompt assembly preferences (cacheability + system-block shape)."""
+        ...
 ```
 
 ### Key Rules
@@ -267,6 +271,7 @@ class ModelAbstractionLayer:
 2. **Normalize all outputs**: Regardless of backend, output is normalized into ordered `StreamChunk` events with `kind`, `importance`, `transient`, and optional `payload` metadata.
 3. **Hide backend differences**: Callers never know or care whether the model is local or remote. The same interface applies uniformly.
 4. **Agent mode gate**: If `supports_tools()` returns `False`, the system must refuse to enter agent mode and display a clear message to the user.
+5. **Provider-aware prompt hints**: `prompt_profile()` exposes provider-specific prompt-shaping hints (for example, structured Anthropic system blocks and stable-layer cacheability) while preserving generic fallback behavior for local and OpenAI-compatible paths.
 
 ### Normalized Output Schema
 

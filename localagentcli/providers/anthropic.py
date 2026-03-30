@@ -18,6 +18,7 @@ from localagentcli.models.backends.base import (
     StreamChunk,
 )
 from localagentcli.models.model_info import ModelInfo
+from localagentcli.models.prompt_profile import ProviderPromptProfile
 from localagentcli.models.readiness import (
     inferred_remote_capability_provenance,
     legacy_fallback_capability_provenance,
@@ -450,6 +451,14 @@ class AnthropicProvider(RemoteProvider):
     def capabilities(self) -> dict:
         return self._capabilities_for_model(self.active_model)
 
+    def prompt_profile(self) -> ProviderPromptProfile:
+        cache_type = self._prompt_cache_type({}) if self._prompt_cache_enabled({}) else None
+        return ProviderPromptProfile(
+            provider_kind="anthropic",
+            structured_system_blocks=True,
+            stable_system_cache_control_type=cache_type,
+        )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -472,17 +481,14 @@ class AnthropicProvider(RemoteProvider):
         }
         prompt_cache_enabled = self._prompt_cache_enabled(kwargs)
         prompt_cache_type = self._prompt_cache_type(kwargs)
-        if system_text:
-            if prompt_cache_enabled:
-                body["system"] = [
-                    {
-                        "type": "text",
-                        "text": system_text,
-                        "cache_control": {"type": prompt_cache_type},
-                    }
-                ]
-            else:
-                body["system"] = system_text
+        system_payload = self._build_system_payload(
+            messages,
+            fallback_text=system_text,
+            prompt_cache_enabled=prompt_cache_enabled,
+            prompt_cache_type=prompt_cache_type,
+        )
+        if system_payload is not None:
+            body["system"] = system_payload
         if "temperature" in kwargs:
             body["temperature"] = kwargs["temperature"]
         tool_definitions = kwargs.get("tools")
@@ -516,6 +522,65 @@ class AnthropicProvider(RemoteProvider):
         if isinstance(value, str) and value.strip():
             return value.strip()
         return "ephemeral"
+
+    def _build_system_payload(
+        self,
+        messages: list[ModelMessage],
+        *,
+        fallback_text: str,
+        prompt_cache_enabled: bool,
+        prompt_cache_type: str,
+    ) -> str | list[dict] | None:
+        blocks: list[dict] = []
+
+        for message in messages:
+            if message.role != "system":
+                continue
+            segmented = self._system_segments_from_message(message)
+            if segmented:
+                blocks.extend(segmented)
+
+        if blocks:
+            return blocks
+
+        if not fallback_text:
+            return None
+
+        if prompt_cache_enabled:
+            return [
+                {
+                    "type": "text",
+                    "text": fallback_text,
+                    "cache_control": {"type": prompt_cache_type},
+                }
+            ]
+
+        return fallback_text
+
+    @staticmethod
+    def _system_segments_from_message(message: ModelMessage) -> list[dict]:
+        raw_segments = message.metadata.get("system_segments")
+        if not isinstance(raw_segments, list):
+            return []
+
+        blocks: list[dict] = []
+        for raw_segment in raw_segments:
+            if not isinstance(raw_segment, dict):
+                continue
+            text = raw_segment.get("text")
+            if not isinstance(text, str):
+                continue
+            trimmed = text.strip()
+            if not trimmed:
+                continue
+
+            block: dict[str, object] = {"type": "text", "text": trimmed}
+            cache_control_type = raw_segment.get("cache_control_type")
+            if isinstance(cache_control_type, str) and cache_control_type.strip():
+                block["cache_control"] = {"type": cache_control_type.strip()}
+            blocks.append(block)
+
+        return blocks
 
     @staticmethod
     def _format_messages(

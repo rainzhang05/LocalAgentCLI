@@ -65,6 +65,49 @@ def _make_runtime(config, storage):
 
 
 class TestSessionExecutionRuntime:
+    def test_multi_agent_runtime_hydrates_persisted_metadata(self, config, storage):
+        config._config.setdefault("features", {})["multi_agent_path_routing"] = True
+        services = RuntimeServices.create(config, storage, Console(record=True))
+        services.session_manager.current.metadata["active_agents"] = {
+            "/root/researcher": {
+                "path": "/root/researcher",
+                "name": "researcher",
+                "status": "running",
+                "nickname": "researcher",
+                "role": "analysis",
+                "last_error": "",
+                "task_count": 4,
+                "updated_at": "2026-03-29T12:00:00",
+            }
+        }
+
+        runtime = SessionExecutionRuntime(
+            services=services,
+            emit=lambda _message: None,
+            confirm_backend_install=lambda _backend, _label, _deps: False,
+        )
+
+        snapshot = runtime.active_agents_snapshot()
+        assert "/root/researcher" in snapshot
+        # Rehydrated entries are metadata-only and should not pretend to be live.
+        assert snapshot["/root/researcher"]["status"] == "shutdown"
+
+    def test_multi_agent_runtime_inspect_and_clear_helpers(self, config, storage):
+        config._config.setdefault("features", {})["multi_agent_path_routing"] = True
+        runtime, _emitted = _make_runtime(config, storage)
+        router = runtime._services.build_tool_router(runtime.workspace_root())
+
+        spawn = router.execute("spawn_agent", message="hello", task_name="worker")
+        assert spawn.status == "success"
+
+        resolved_path, summary = runtime.inspect_active_agent("worker")
+        assert resolved_path == "/root/worker"
+        assert summary["name"] == "worker"
+
+        removed = runtime.clear_active_agents()
+        assert removed == 1
+        assert runtime.active_agents_snapshot() == {}
+
     def test_multi_agent_tools_registered_when_feature_enabled(self, config, storage):
         config._config.setdefault("features", {})["multi_agent_path_routing"] = True
         runtime, _emitted = _make_runtime(config, storage)

@@ -333,6 +333,24 @@ The Command Router strips the leading `/`, splits on whitespace to extract the c
 - **Persistence**: `Approve all` is equivalent to `/agent approve`; it persists autonomous approval for the current shell and future sessions.
 - **Stop behavior**: Cancelling the prompt stops the pending task instead of leaving the shell in an ambiguous state.
 
+### Multi-Agent Commands
+
+#### `/agents list`
+- **Syntax**: `/agents list`
+- **Behavior**: Lists active path-addressable sub-agent snapshots with path, status, task count, last update time, and role.
+- **Feature gate**: Requires `features.multi_agent_path_routing = true`.
+
+#### `/agents inspect <path>`
+- **Syntax**: `/agents inspect <path>`
+- **Behavior**: Shows detailed metadata for one path-addressed sub-agent snapshot (resolved path, status, nickname, role, task count, last error, update time).
+- **Path rules**: Relative paths resolve from `/root`; absolute paths must begin with `/root`.
+- **Feature gate**: Requires `features.multi_agent_path_routing = true`.
+
+#### `/agents clear`
+- **Syntax**: `/agents clear`
+- **Behavior**: Closes and removes all active sub-agent snapshots from runtime and session metadata.
+- **Feature gate**: Requires `features.multi_agent_path_routing = true`.
+
 ---
 
 ### Log Commands

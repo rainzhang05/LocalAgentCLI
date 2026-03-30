@@ -83,6 +83,7 @@ def test_sqlite_store_records_applied_migrations(storage, config):
         "0001_create_sessions",
         "0002_add_replay_columns",
         "0003_create_session_memories",
+        "0004_create_session_active_agents",
     ]
 
 
@@ -126,9 +127,52 @@ def test_sqlite_store_upgrades_legacy_schema_meta_database(storage):
         "0001_create_sessions",
         "0002_add_replay_columns",
         "0003_create_session_memories",
+        "0004_create_session_active_agents",
     ]
     assert "replay_last_record_count" in column_names
     assert "replay_last_replayed_at" in column_names
+
+
+def test_sqlite_store_round_trips_active_agent_snapshots(storage, config):
+    config.set("features.sqlite_session_store", True)
+    manager = SessionManager(storage.sessions_dir, config)
+    manager.new_session()
+    manager.current.metadata["active_agents"] = {
+        "/root/researcher": {
+            "path": "/root/researcher",
+            "name": "researcher",
+            "status": "running",
+            "nickname": "researcher",
+            "role": "analysis",
+            "last_error": "",
+            "task_count": 2,
+            "updated_at": datetime.now().isoformat(),
+        }
+    }
+
+    manager.save_session("active-agent-session")
+
+    with sqlite3.connect(storage.root / "sessions.db") as conn:
+        row = conn.execute(
+            """
+            SELECT agent_path, status, task_count
+            FROM session_active_agents
+            WHERE session_name = ?
+            """,
+            ("active-agent-session",),
+        ).fetchone()
+    assert row is not None
+    assert str(row[0]) == "/root/researcher"
+    assert str(row[1]) == "running"
+    assert int(row[2]) == 2
+
+    manager.new_session()
+    loaded = manager.load_session("active-agent-session")
+    active_agents = loaded.metadata.get("active_agents", {})
+    assert isinstance(active_agents, dict)
+    assert "/root/researcher" in active_agents
+    assert active_agents["/root/researcher"]["status"] == "running"
+    assert active_agents["/root/researcher"]["task_count"] == 2
 
 
 def test_sqlite_store_persists_workspace_memory_rows(storage, config):

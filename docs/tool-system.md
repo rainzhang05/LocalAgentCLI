@@ -32,6 +32,12 @@ This baseline uses validated path semantics (`AgentPath`) and a shared
 reference resolver (`resolve_agent_reference(...)`) for relative/absolute
 target addressing. It is intentionally feature-gated and incrementally scoped.
 
+When SQLite session persistence is enabled, active-agent snapshots are also
+stored in a dedicated session table and restored on session load. Rehydrated
+entries are metadata-only: non-final in-flight states are normalized to
+`shutdown` until explicitly resumed (for example via `resume_agent`) so runtime
+never pretends old worker threads are still live after restart.
+
 ### Parameter schema rules
 
 Every tool’s `parameters_schema` must follow a small JSON Schema subset checked by `localagentcli/tools/schema.py` before the model sees the tool:

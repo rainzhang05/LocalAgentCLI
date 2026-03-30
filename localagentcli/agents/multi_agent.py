@@ -7,7 +7,7 @@ sub-agent lifecycle operations used by Slice 4 dynamic tool surfaces.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from queue import Empty, Queue
@@ -85,6 +85,75 @@ class MultiAgentManager:
                 for path, agent in sorted(self._agents.items(), key=lambda item: item[0])
             }
 
+    def load_snapshot(
+        self,
+        snapshot: Mapping[str, Mapping[str, object]],
+        *,
+        worker: Callable[[ManagedAgent, str], str],
+    ) -> int:
+        """Hydrate manager state from persisted metadata snapshots.
+
+        Rehydrated entries are metadata-only; no worker threads are considered live
+        after restore.
+        """
+        loaded = 0
+        with self._lock:
+            self._agents.clear()
+            for path_value, raw_meta in sorted(snapshot.items(), key=lambda item: item[0]):
+                if not isinstance(path_value, str):
+                    continue
+                if not isinstance(raw_meta, Mapping):
+                    continue
+                try:
+                    path = AgentPath.from_string(path_value)
+                except ValueError:
+                    continue
+
+                nickname = _safe_str(raw_meta.get("nickname"))
+                role = _safe_str(raw_meta.get("role"))
+                agent = ManagedAgent(
+                    path=path,
+                    worker=worker,
+                    nickname=nickname or None,
+                    role=role or None,
+                )
+                persisted_status = _safe_str(raw_meta.get("status"))
+                agent.status = _normalize_rehydrated_status(persisted_status)
+                agent.last_error = _safe_str(raw_meta.get("last_error"))
+                agent.task_count = _safe_int(raw_meta.get("task_count"))
+
+                updated_at = _safe_str(raw_meta.get("updated_at"))
+                if _is_iso_datetime(updated_at):
+                    agent.updated_at = updated_at
+                    agent.created_at = updated_at
+                else:
+                    now_iso = datetime.now().isoformat()
+                    agent.updated_at = now_iso
+                    agent.created_at = now_iso
+
+                # Rehydrated snapshots never carry live worker threads.
+                agent._thread = None
+                if agent.status == "shutdown":
+                    agent._stop_event.set()
+
+                self._agents[path.as_str()] = agent
+                self._maybe_track_generated_name(path.name())
+                loaded += 1
+        return loaded
+
+    def clear(self) -> int:
+        """Shutdown and remove all managed agents.
+
+        Returns:
+            Number of entries removed from the manager.
+        """
+        with self._lock:
+            removed = len(self._agents)
+            for agent in self._agents.values():
+                self._shutdown_agent_unlocked(agent)
+            self._agents.clear()
+            return removed
+
     def spawn_agent(
         self,
         task: str,
@@ -148,6 +217,8 @@ class MultiAgentManager:
             if agent is None:
                 raise ValueError(f"live agent path `{path.as_str()}` not found")
             if agent._stop_event.is_set() or agent.status == "shutdown":
+                raise ValueError(f"agent path `{path.as_str()}` is closed")
+            if agent._thread is None or not agent._thread.is_alive():
                 raise ValueError(f"agent path `{path.as_str()}` is closed")
             self._submit_input_unlocked(agent, cleaned)
             return agent
@@ -259,6 +330,14 @@ class MultiAgentManager:
         self._generated_name_counter += 1
         return f"agent_{self._generated_name_counter}"
 
+    def _maybe_track_generated_name(self, name: str) -> None:
+        if not name.startswith("agent_"):
+            return
+        suffix = name.removeprefix("agent_")
+        if not suffix.isdigit():
+            return
+        self._generated_name_counter = max(self._generated_name_counter, int(suffix))
+
     def _submit_input_unlocked(self, agent: ManagedAgent, text: str) -> None:
         agent.status = "pending_init"
         agent.last_input = text
@@ -334,3 +413,44 @@ class MultiAgentManager:
     @staticmethod
     def _is_final(status: str) -> bool:
         return status in _FINAL_STATUSES
+
+
+def _safe_str(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _safe_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            return 0
+        return max(0, parsed)
+    return 0
+
+
+def _is_iso_datetime(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _normalize_rehydrated_status(status: str) -> AgentStatus:
+    normalized = status.strip().lower()
+    if normalized == "completed":
+        return "completed"
+    if normalized == "failed":
+        return "failed"
+    if normalized == "not_found":
+        return "not_found"
+    return "shutdown"

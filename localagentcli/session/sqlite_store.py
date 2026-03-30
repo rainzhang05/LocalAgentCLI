@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -50,6 +51,7 @@ class SqliteSessionStore(SessionStore):
         replay_count = _to_replay_count(replay_meta)
         replay_time = _to_replay_timestamp(replay_meta)
         memory_entries = extract_session_memory_entries(session)
+        active_agents = _extract_active_agent_entries(session.metadata.get("active_agents", {}))
         if memory_entries:
             session.metadata[LONG_HORIZON_MEMORY_KEY] = memory_entries
 
@@ -99,11 +101,17 @@ class SqliteSessionStore(SessionStore):
                 workspace=str(session.workspace),
                 entries=memory_entries,
             )
+            self._persist_active_agents(
+                conn,
+                session_name=name,
+                entries=active_agents,
+            )
         return self._db_path
 
     def load_session(self, name: str) -> Session:
         row: sqlite3.Row | None = None
         workspace_memories: list[dict[str, str]] = []
+        active_agents: dict[str, dict[str, object]] = {}
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -147,8 +155,30 @@ class SqliteSessionStore(SessionStore):
 
             workspace_value = data.get("workspace", ".")
             workspace_memories = self._load_workspace_memory(conn, str(workspace_value))
+            active_agents = self._load_active_agents(conn, name)
 
         session = Session.from_dict(data)
+        if active_agents:
+            session.metadata["active_agents"] = active_agents
+        else:
+            legacy_snapshot = session.metadata.get("active_agents", {})
+            normalized_legacy = _extract_active_agent_entries(legacy_snapshot)
+            if normalized_legacy:
+                session.metadata["active_agents"] = {
+                    entry["path"]: {
+                        "path": entry["path"],
+                        "name": entry["name"],
+                        "status": entry["status"],
+                        "nickname": entry["nickname"],
+                        "role": entry["role"],
+                        "last_error": entry["last_error"],
+                        "task_count": entry["task_count"],
+                        "updated_at": entry["updated_at"],
+                    }
+                    for entry in normalized_legacy
+                }
+            else:
+                session.metadata.pop("active_agents", None)
         if workspace_memories:
             merge_long_horizon_memory(session, workspace_memories)
         return session
@@ -207,6 +237,10 @@ class SqliteSessionStore(SessionStore):
             placeholders = ",".join("?" for _ in names)
             conn.execute(
                 f"DELETE FROM session_memories WHERE session_name IN ({placeholders})",
+                names,
+            )
+            conn.execute(
+                f"DELETE FROM session_active_agents WHERE session_name IN ({placeholders})",
                 names,
             )
             deleted = conn.execute(
@@ -315,6 +349,79 @@ class SqliteSessionStore(SessionStore):
             for row in rows
         ]
 
+    def _persist_active_agents(
+        self,
+        conn: sqlite3.Connection,
+        session_name: str,
+        entries: list[dict[str, object]],
+    ) -> None:
+        conn.execute("DELETE FROM session_active_agents WHERE session_name = ?", (session_name,))
+        for entry in entries:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO session_active_agents (
+                    session_name,
+                    agent_path,
+                    agent_name,
+                    status,
+                    nickname,
+                    role,
+                    last_error,
+                    task_count,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_name,
+                    str(entry["path"]),
+                    str(entry["name"]),
+                    str(entry["status"]),
+                    str(entry["nickname"]),
+                    str(entry["role"]),
+                    str(entry["last_error"]),
+                    _as_non_negative_int(entry["task_count"]),
+                    str(entry["updated_at"]),
+                ),
+            )
+
+    def _load_active_agents(
+        self,
+        conn: sqlite3.Connection,
+        session_name: str,
+    ) -> dict[str, dict[str, object]]:
+        rows = conn.execute(
+            """
+            SELECT
+                agent_path,
+                agent_name,
+                status,
+                nickname,
+                role,
+                last_error,
+                task_count,
+                updated_at
+            FROM session_active_agents
+            WHERE session_name = ?
+            ORDER BY agent_path ASC
+            """,
+            (session_name,),
+        ).fetchall()
+        snapshot: dict[str, dict[str, object]] = {}
+        for row in rows:
+            path = str(row["agent_path"])
+            snapshot[path] = {
+                "path": path,
+                "name": str(row["agent_name"]),
+                "status": str(row["status"]),
+                "nickname": str(row["nickname"]),
+                "role": str(row["role"]),
+                "last_error": str(row["last_error"]),
+                "task_count": int(row["task_count"]),
+                "updated_at": str(row["updated_at"]),
+            }
+        return snapshot
+
 
 def _to_replay_count(value: object) -> int:
     if isinstance(value, dict):
@@ -336,3 +443,71 @@ def _to_replay_timestamp(value: object) -> str:
     if isinstance(raw, str):
         return raw
     return str(raw)
+
+
+def _extract_active_agent_entries(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, Mapping):
+        return []
+
+    now_iso = datetime.now().isoformat()
+    normalized: list[dict[str, object]] = []
+    for path, raw in sorted(value.items(), key=lambda item: str(item[0])):
+        if not isinstance(path, str):
+            continue
+        if not isinstance(raw, Mapping):
+            continue
+
+        status = str(raw.get("status", "shutdown") or "shutdown").strip().lower()
+        if status not in {
+            "pending_init",
+            "running",
+            "waiting_input",
+            "completed",
+            "failed",
+            "timed_out",
+            "shutdown",
+            "not_found",
+        }:
+            status = "shutdown"
+
+        updated_at = str(raw.get("updated_at", "") or "")
+        if not _is_iso_datetime(updated_at):
+            updated_at = now_iso
+
+        normalized.append(
+            {
+                "path": path,
+                "name": str(raw.get("name", path.rsplit("/", maxsplit=1)[-1] or "root") or ""),
+                "status": status,
+                "nickname": str(raw.get("nickname", "") or ""),
+                "role": str(raw.get("role", "") or ""),
+                "last_error": str(raw.get("last_error", "") or ""),
+                "task_count": _as_non_negative_int(raw.get("task_count", 0)),
+                "updated_at": updated_at,
+            }
+        )
+    return normalized
+
+
+def _as_non_negative_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            return 0
+        return max(parsed, 0)
+    return 0
+
+
+def _is_iso_datetime(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True

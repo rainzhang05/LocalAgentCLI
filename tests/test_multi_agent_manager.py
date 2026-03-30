@@ -145,3 +145,70 @@ def test_resume_ignores_stale_thread_shutdown_from_previous_generation():
     assert snapshot["/root/worker"]["status"] == "completed"
 
     manager.shutdown()
+
+
+def test_load_snapshot_rehydrates_non_final_entries_as_shutdown_and_allows_resume():
+    manager = MultiAgentManager(max_agents=4)
+
+    def worker(_agent, prompt: str) -> str:
+        return prompt.upper()
+
+    count = manager.load_snapshot(
+        {
+            "/root/researcher": {
+                "path": "/root/researcher",
+                "name": "researcher",
+                "status": "running",
+                "nickname": "researcher",
+                "role": "analysis",
+                "last_error": "",
+                "task_count": 3,
+                "updated_at": datetime.now().isoformat(),
+            },
+            "/root/reviewer": {
+                "path": "/root/reviewer",
+                "name": "reviewer",
+                "status": "completed",
+                "nickname": "reviewer",
+                "role": "review",
+                "last_error": "",
+                "task_count": 1,
+                "updated_at": datetime.now().isoformat(),
+            },
+        },
+        worker=worker,
+    )
+
+    assert count == 2
+    snapshot = manager.snapshot()
+    assert snapshot["/root/researcher"]["status"] == "shutdown"
+    assert snapshot["/root/reviewer"]["status"] == "completed"
+
+    with pytest.raises(ValueError, match="is closed"):
+        manager.send_input("researcher", "next", current_agent_path="/root")
+
+    manager.resume_agent("researcher", current_agent_path="/root", input_override="next")
+    statuses, timed_out = manager.wait_for_targets(
+        ["researcher"],
+        current_agent_path="/root",
+        timeout_ms=1000,
+    )
+    assert timed_out is False
+    assert statuses["/root/researcher"] == "completed"
+
+    manager.shutdown()
+
+
+def test_clear_shuts_down_and_removes_all_agents():
+    manager = MultiAgentManager(max_agents=4)
+
+    def worker(_agent, prompt: str) -> str:
+        return prompt
+
+    manager.spawn_agent("one", worker=worker, current_agent_path="/root", task_name="one")
+    manager.spawn_agent("two", worker=worker, current_agent_path="/root", task_name="two")
+
+    removed = manager.clear()
+
+    assert removed == 2
+    assert manager.snapshot() == {}

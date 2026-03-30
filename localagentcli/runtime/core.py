@@ -11,6 +11,7 @@ from typing import Literal, Mapping, cast
 
 from rich.console import Console
 
+from localagentcli.agents.agent_path import resolve_agent_reference
 from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import AgentEvent
@@ -326,6 +327,59 @@ class SessionExecutionRuntime:
     def agent_controller(self) -> AgentController | None:
         """The active agent controller, if any."""
         return self._agent_controller
+
+    def is_multi_agent_path_routing_enabled(self) -> bool:
+        """Whether multi-agent path routing is available in this runtime."""
+        return self._multi_agent_manager is not None
+
+    def active_agents_snapshot(self) -> dict[str, dict[str, object]]:
+        """Return current active-agent metadata snapshots."""
+        manager = self._multi_agent_manager
+        if manager is not None:
+            return manager.snapshot()
+
+        snapshot = self._services.session_manager.current.metadata.get("active_agents", {})
+        if isinstance(snapshot, dict):
+            return {
+                str(path): dict(meta)
+                for path, meta in sorted(snapshot.items(), key=lambda item: str(item[0]))
+                if isinstance(meta, dict)
+            }
+        return {}
+
+    def inspect_active_agent(
+        self,
+        target_path: str,
+        *,
+        current_agent_path: str | None = None,
+    ) -> tuple[str, dict[str, object]]:
+        """Resolve and return one active-agent snapshot.
+
+        Raises:
+            ValueError: If the path is invalid or missing from the current snapshot.
+        """
+        resolved = resolve_agent_reference(current_agent_path, target_path)
+        snapshot = self.active_agents_snapshot()
+        summary = snapshot.get(resolved.as_str())
+        if summary is None:
+            raise ValueError(f"live agent path `{resolved.as_str()}` not found")
+        return resolved.as_str(), summary
+
+    def clear_active_agents(self) -> int:
+        """Close and remove all active-agent snapshots from runtime and session metadata."""
+        manager = self._multi_agent_manager
+        if manager is None:
+            existing = self._services.session_manager.current.metadata.get("active_agents")
+            count = len(existing) if isinstance(existing, dict) else 0
+            if count:
+                self._services.session_manager.current.metadata.pop("active_agents", None)
+                self._services.session_manager.current.touch()
+                self._services.session_manager.schedule_named_autosave()
+            return count
+
+        removed = manager.clear()
+        self._sync_active_agents_metadata()
+        return removed
 
     def sync_workspace_instruction(self) -> None:
         """Refresh repository instructions for the active session."""
@@ -782,7 +836,14 @@ class SessionExecutionRuntime:
         enabled = bool(self._services.feature_registry.is_enabled("multi_agent_path_routing"))
         if not enabled:
             return
-        self._multi_agent_manager = MultiAgentManager()
+        manager = MultiAgentManager()
+        persisted = self._services.session_manager.current.metadata.get("active_agents", {})
+        if isinstance(persisted, dict):
+            manager.load_snapshot(
+                persisted,
+                worker=self._run_subagent_task,
+            )
+        self._multi_agent_manager = manager
         self._register_multi_agent_dynamic_tools()
         self._sync_active_agents_metadata()
 

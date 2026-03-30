@@ -16,6 +16,7 @@ from localagentcli import __version__
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import ToolCallRequested
 from localagentcli.commands import agent as agent_cmd
+from localagentcli.commands import agents as agents_cmd
 from localagentcli.commands import (
     config_cmd,
     exit_cmd,
@@ -159,6 +160,10 @@ class ShellUI:
         setup_cmd.register(self._router, self._config, self._session_manager, self._console)
         session_cmd.register(self._router, self._session_manager)
         exit_cmd.register(self._router)
+        agents_cmd.register(
+            self._router,
+            runtime_provider=lambda: self._execution_runtime,
+        )
         agent_cmd.register(
             self._router,
             lambda: self._agent_controller,

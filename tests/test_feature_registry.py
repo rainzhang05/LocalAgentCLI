@@ -98,3 +98,13 @@ def test_get_enabled_features():
     assert len(enabled) == 2
     assert "dummy_stable" in enabled
     assert "dummy_experimental" in enabled
+
+
+def test_multi_agent_path_routing_defaults_to_disabled():
+    registry = FeatureRegistry({})
+    assert registry.is_enabled(Feature.MULTI_AGENT_PATH_ROUTING) is False
+
+
+def test_multi_agent_path_routing_can_be_enabled_from_config():
+    registry = FeatureRegistry({"multi_agent_path_routing": True})
+    assert registry.is_enabled(Feature.MULTI_AGENT_PATH_ROUTING) is True

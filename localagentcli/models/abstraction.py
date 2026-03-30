@@ -18,6 +18,7 @@ from localagentcli.models.backends.base import (
     collect_generation_result,
 )
 from localagentcli.models.model_info import ModelInfo
+from localagentcli.models.prompt_profile import DEFAULT_PROMPT_PROFILE, ProviderPromptProfile
 from localagentcli.providers.base import RemoteProvider
 
 
@@ -183,6 +184,15 @@ class ModelAbstractionLayer:
     def model_info(self) -> ModelInfo:
         """Normalized metadata about model capabilities and limits."""
         return self._backend.model_info()
+
+    def prompt_profile(self) -> ProviderPromptProfile:
+        """Provider-aware prompt assembly preferences for this model backend."""
+        profile_getter = getattr(self._backend, "prompt_profile", None)
+        if callable(profile_getter):
+            profile = profile_getter()
+            if isinstance(profile, ProviderPromptProfile):
+                return profile
+        return DEFAULT_PROMPT_PROFILE
 
     def cancel(self) -> None:
         """Cancel the active generation, if supported by the backend."""

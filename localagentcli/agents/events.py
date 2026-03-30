@@ -140,4 +140,5 @@ class TaskFailed(AgentEvent):
 
     reason: str
     plan: TaskPlan
+    failure_type: str | None = None
     type: str = field(init=False, default="task_failed")

@@ -1,5 +1,6 @@
 """Agent and chat controllers."""
 
+from localagentcli.agents.agent_path import AgentPath, resolve_agent_reference
 from localagentcli.agents.chat import ChatController
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import (
@@ -19,6 +20,7 @@ from localagentcli.agents.triage import TaskTriage, TaskTriageClassifier
 __all__ = [
     "AgentController",
     "AgentEvent",
+    "AgentPath",
     "ChatController",
     "PlanGenerated",
     "PlanStep",
@@ -33,4 +35,5 @@ __all__ = [
     "TaskTriageClassifier",
     "ToolCallRequested",
     "ToolCallResult",
+    "resolve_agent_reference",
 ]

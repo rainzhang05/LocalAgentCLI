@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 
 import pytest
 
@@ -99,5 +100,51 @@ def test_agent_limit_is_enforced():
     manager.spawn_agent("first", worker=worker, current_agent_path="/root")
     with pytest.raises(ValueError, match="agent limit reached"):
         manager.spawn_agent("second", worker=worker, current_agent_path="/root")
+
+    manager.shutdown()
+
+
+def test_resume_ignores_stale_thread_shutdown_from_previous_generation():
+    class _FastCloseManager(MultiAgentManager):
+        def _shutdown_agent_unlocked(self, agent):  # type: ignore[override]
+            agent._stop_event.set()
+            agent._queue.put(None)
+            thread = agent._thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=0.01)
+            agent.status = "shutdown"
+            agent.updated_at = datetime.now().isoformat()
+
+    manager = _FastCloseManager(max_agents=2)
+
+    def worker(_agent, prompt: str) -> str:
+        if prompt == "slow":
+            time.sleep(0.2)
+        return prompt
+
+    manager.spawn_agent(
+        "slow",
+        worker=worker,
+        current_agent_path="/root",
+        task_name="worker",
+    )
+    manager.close_agent("worker", current_agent_path="/root")
+
+    manager.resume_agent(
+        "worker",
+        current_agent_path="/root",
+        input_override="fast",
+    )
+    statuses, timed_out = manager.wait_for_targets(
+        ["worker"],
+        current_agent_path="/root",
+        timeout_ms=1000,
+    )
+    assert timed_out is False
+    assert statuses["/root/worker"] == "completed"
+
+    time.sleep(0.25)
+    snapshot = manager.snapshot()
+    assert snapshot["/root/worker"]["status"] == "completed"
 
     manager.shutdown()

@@ -48,6 +48,7 @@ class ManagedAgent:
     _queue: Queue[str | None] = field(default_factory=Queue, repr=False)
     _stop_event: Event = field(default_factory=Event, repr=False)
     _thread: Thread | None = field(default=None, repr=False)
+    _generation: int = field(default=0, repr=False)
 
     def to_summary(self) -> dict[str, object]:
         """Serialize a stable summary for metadata surfaces."""
@@ -259,8 +260,17 @@ class MultiAgentManager:
         agent._queue.put(text)
 
     def _start_agent_thread(self, agent: ManagedAgent) -> None:
+        agent._generation += 1
+        generation_id = agent._generation
+
         def run_loop() -> None:
-            while not agent._stop_event.is_set():
+            while True:
+                with self._lock:
+                    if agent._generation != generation_id:
+                        return
+                    if agent._stop_event.is_set():
+                        break
+
                 try:
                     payload = agent._queue.get(timeout=0.1)
                 except Empty:
@@ -269,11 +279,15 @@ class MultiAgentManager:
                     break
 
                 with self._lock:
+                    if agent._generation != generation_id:
+                        return
                     agent.status = "running"
                     agent.updated_at = datetime.now().isoformat()
                 try:
                     output = agent.worker(agent, payload)
                     with self._lock:
+                        if agent._generation != generation_id:
+                            return
                         agent.last_output = str(output)
                         agent.last_error = ""
                         agent.task_count += 1
@@ -281,11 +295,15 @@ class MultiAgentManager:
                         agent.updated_at = datetime.now().isoformat()
                 except Exception as exc:  # pragma: no cover - defensive
                     with self._lock:
+                        if agent._generation != generation_id:
+                            return
                         agent.last_error = str(exc)
                         agent.status = "failed"
                         agent.updated_at = datetime.now().isoformat()
 
             with self._lock:
+                if agent._generation != generation_id:
+                    return
                 if agent.status != "failed":
                     agent.status = "shutdown"
                 agent.updated_at = datetime.now().isoformat()

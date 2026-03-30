@@ -147,7 +147,7 @@ class MultiAgentManager:
             agent = self._agents.get(path.as_str())
             if agent is None:
                 raise ValueError(f"live agent path `{path.as_str()}` not found")
-            if agent.status == "shutdown":
+            if agent._stop_event.is_set() or agent.status == "shutdown":
                 raise ValueError(f"agent path `{path.as_str()}` is closed")
             self._submit_input_unlocked(agent, cleaned)
             return agent
@@ -224,7 +224,13 @@ class MultiAgentManager:
             if agent is None:
                 raise ValueError(f"live agent path `{path.as_str()}` not found")
 
-            if agent.status == "shutdown":
+            should_restart = (
+                agent.status == "shutdown"
+                or agent._stop_event.is_set()
+                or agent._thread is None
+                or not agent._thread.is_alive()
+            )
+            if should_restart:
                 agent._stop_event = Event()
                 agent._queue = Queue()
                 agent.status = "waiting_input"

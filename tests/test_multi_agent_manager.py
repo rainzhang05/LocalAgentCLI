@@ -105,17 +105,7 @@ def test_agent_limit_is_enforced():
 
 
 def test_resume_ignores_stale_thread_shutdown_from_previous_generation():
-    class _FastCloseManager(MultiAgentManager):
-        def _shutdown_agent_unlocked(self, agent):  # type: ignore[override]
-            agent._stop_event.set()
-            agent._queue.put(None)
-            thread = agent._thread
-            if thread is not None and thread.is_alive():
-                thread.join(timeout=0.01)
-            agent.status = "shutdown"
-            agent.updated_at = datetime.now().isoformat()
-
-    manager = _FastCloseManager(max_agents=2)
+    manager = MultiAgentManager(max_agents=2)
 
     def worker(_agent, prompt: str) -> str:
         if prompt == "slow":
@@ -129,6 +119,13 @@ def test_resume_ignores_stale_thread_shutdown_from_previous_generation():
         task_name="worker",
     )
     manager.close_agent("worker", current_agent_path="/root")
+
+    # Simulate the close/race window where stale worker state can briefly read
+    # as completed even though the agent is closed (stop event already set).
+    agent = manager._agents["/root/worker"]
+    assert agent._stop_event.is_set() is True
+    agent.status = "completed"
+    agent.updated_at = datetime.now().isoformat()
 
     manager.resume_agent(
         "worker",

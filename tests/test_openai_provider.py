@@ -247,6 +247,12 @@ class TestOpenAICapabilities:
         assert info.capabilities["reasoning"] is True
         assert info.supported_reasoning_levels == ["low", "medium", "high"]
 
+    def test_prompt_profile_is_generic(self):
+        profile = _make_provider().prompt_profile()
+
+        assert profile.provider_kind == "generic"
+        assert profile.structured_system_blocks is False
+
 
 # ---------------------------------------------------------------------------
 # _format_messages() tests

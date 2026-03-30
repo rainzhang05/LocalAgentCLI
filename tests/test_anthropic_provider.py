@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
 
 from localagentcli.models.backends.base import ModelMessage
+from localagentcli.models.prompt_profile import ProviderPromptProfile
 from localagentcli.providers.anthropic import AnthropicProvider, _AnthropicBlockState
+from localagentcli.session.instructions import (
+    SYSTEM_SEGMENTS_METADATA_KEY,
+    build_conversation_model_messages,
+)
+from localagentcli.session.state import Message, Session
 
 
 def _make_provider(**kwargs: object) -> AnthropicProvider:
@@ -284,6 +291,12 @@ class TestAnthropicCapabilities:
             "streaming": True,
         }
 
+    def test_prompt_profile_defaults_to_structured_blocks(self):
+        profile = _make_provider().prompt_profile()
+
+        assert profile.provider_kind == "anthropic"
+        assert profile.structured_system_blocks is True
+
 
 # ---------------------------------------------------------------------------
 # _format_messages() tests
@@ -397,6 +410,45 @@ class TestAnthropicBuildRequestBody:
         )
 
         assert body["system"][0]["cache_control"] == {"type": "user"}
+
+    def test_segmented_system_metadata_is_respected(self, tmp_path: Path):
+        provider = _make_provider(options={"prompt_cache": False})
+        session = Session(
+            id="session-1",
+            name=None,
+            mode="chat",
+            model="claude-sonnet-4-20250514",
+            provider="anthropic",
+            workspace=str(tmp_path),
+        )
+        session.metadata["workspace_instruction"] = "Repo rules."
+        session.pinned_instructions.append("Pinned guidance.")
+        session.history.append(
+            Message(
+                role="system",
+                content="History instruction.",
+                timestamp=session.created_at,
+            )
+        )
+
+        messages = build_conversation_model_messages(
+            session,
+            prompt_profile=ProviderPromptProfile(
+                provider_kind="anthropic",
+                structured_system_blocks=True,
+                stable_system_cache_control_type="ephemeral",
+            ),
+        )
+
+        segments = messages[0].metadata[SYSTEM_SEGMENTS_METADATA_KEY]
+        assert isinstance(segments, list)
+
+        body = provider._build_request_body(messages)
+
+        assert isinstance(body["system"], list)
+        assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert body["system"][1]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in body["system"][2]
 
 
 # ---------------------------------------------------------------------------

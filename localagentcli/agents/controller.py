@@ -351,6 +351,7 @@ class AgentController:
             self._update_task_state(
                 pending_tool=None,
                 wait_reason="",
+                last_error_type="",
                 summary="Approval granted.",
                 active=True,
             )
@@ -360,6 +361,7 @@ class AgentController:
                 pending_tool=None,
                 wait_reason="",
                 last_error="Approval denied.",
+                last_error_type="tool_denied",
                 summary="Approval denied. Recovering task flow.",
                 active=True,
             )
@@ -375,6 +377,7 @@ class AgentController:
         self._update_task_state(
             pending_tool=None,
             wait_reason="",
+            last_error_type="",
             summary="Approval granted.",
             active=True,
         )
@@ -390,6 +393,7 @@ class AgentController:
             pending_tool=None,
             wait_reason="",
             last_error="Approval denied.",
+            last_error_type="tool_denied",
             summary="Approval denied. Recovering task flow.",
             active=True,
         )
@@ -550,6 +554,7 @@ class AgentController:
                 wait_reason="",
                 retry_count=0,
                 last_error="",
+                last_error_type="",
                 summary=f"Executing step {event.step.index}.",
                 active=True,
             )
@@ -562,15 +567,31 @@ class AgentController:
                     pending_tool=None,
                     wait_reason="",
                     last_error="",
+                    last_error_type="",
                     summary=event.result.summary,
                     active=True,
                 )
             else:
+                lower = f"{event.result.summary}\n{event.result.error or ''}".lower()
+                if event.result.status == "timeout":
+                    last_error_type = "tool_timeout"
+                elif event.result.status == "denied":
+                    last_error_type = "tool_denied"
+                elif event.result.status == "error" and (
+                    event.result.summary.startswith("Blocked tool")
+                    or "violated a safety rule" in lower
+                ):
+                    last_error_type = "tool_blocked"
+                elif event.result.status == "error":
+                    last_error_type = "tool_error"
+                else:
+                    last_error_type = "unknown"
                 self._update_task_state(
                     phase="recovering",
                     pending_tool=None,
                     wait_reason="recovering after failed tool call",
                     last_error=event.result.summary,
+                    last_error_type=last_error_type,
                     summary=event.result.summary,
                     active=True,
                 )
@@ -694,6 +715,7 @@ class AgentController:
                 pending_tool=None,
                 wait_reason="",
                 last_error=event.reason,
+                last_error_type=event.failure_type or "unknown",
                 summary=event.reason,
                 active=False,
             )
@@ -911,6 +933,7 @@ class AgentController:
         wait_reason: object = _UNCHANGED,
         retry_count: object = _UNCHANGED,
         last_error: object = _UNCHANGED,
+        last_error_type: object = _UNCHANGED,
         summary: object = _UNCHANGED,
         active: object = _UNCHANGED,
     ) -> None:
@@ -926,6 +949,7 @@ class AgentController:
             "wait_reason": current.get("wait_reason", ""),
             "retry_count": self._coerce_int(current.get("retry_count", 0), 0),
             "last_error": current.get("last_error", ""),
+            "last_error_type": current.get("last_error_type", ""),
             "summary": current.get("summary", ""),
             "active": bool(current.get("active", False)),
             "started_at": current.get("started_at", ""),
@@ -948,6 +972,8 @@ class AgentController:
             state["retry_count"] = self._coerce_int(retry_count, 0)
         if last_error is not _UNCHANGED:
             state["last_error"] = last_error
+        if last_error_type is not _UNCHANGED:
+            state["last_error_type"] = last_error_type
         if summary is not _UNCHANGED:
             state["summary"] = summary
         if active is not _UNCHANGED:

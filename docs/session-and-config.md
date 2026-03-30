@@ -81,6 +81,7 @@ inactivity = 600                # Seconds of agent inactivity before pause
 # Example:
 # dummy_experimental = true
 sqlite_session_store = false         # When true, sessions persist in ~/.localagent/sessions.db (with JSON auto-migration on load)
+multi_agent_path_routing = false     # When true, enables feature-gated path-based multi-agent dynamic tools (spawn/send/wait/close/resume)
 
 [sessions]
 autosave_named = false              # When true, debounce-save named sessions during interactive chat/agent work
@@ -125,6 +126,7 @@ startup_banner = true              # Show a startup context banner with mode/tar
 | `timeouts.inactivity` | int | `600` | Agent inactivity timeout (seconds) |
 | `features.*` | bool | (varies) | Individual feature toggles mapping to the internal feature registry. Default depends on feature stage. |
 | `features.sqlite_session_store` | bool | `false` | Enables the SQLite-backed session store (`~/.localagent/sessions.db`). When enabled, named sessions are read from SQLite first, and missing legacy JSON sessions are auto-migrated on first load. |
+| `features.multi_agent_path_routing` | bool | `false` | Enables feature-gated path-based multi-agent dynamic tools (`spawn_agent`, `send_input`, `wait_agent`, `close_agent`, `resume_agent`) and persists a lightweight active-agent snapshot in session metadata. |
 | `shell.persistent_details_lane` | bool | `false` | When `true`, streaming surfaces re-render the rolling Details lane at flush boundaries so secondary context remains visible during long-running turns |
 | `shell.thinking_indicator_enabled` | bool | `true` | Enables transient thinking animation while runtime submissions are being drained |
 | `shell.thinking_indicator_style` | string | `"dots"` | Thinking indicator frame set (`dots`, `line`, or `pulse`) |

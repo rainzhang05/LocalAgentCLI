@@ -22,7 +22,9 @@ _REPLAN_PROMPT = (
     "You are updating an existing task plan for an autonomous engineering agent. "
     "Return strict JSON with the shape "
     '{"steps":[{"description":"..."}]}. '
-    "Keep completed work out of the new steps and focus only on remaining work."
+    "Keep completed work out of the new steps and focus only on remaining work. "
+    "When failure context is provided, adapt the remaining plan to avoid repeating "
+    "the same failure mode."
 )
 
 
@@ -174,7 +176,7 @@ class TaskPlanner:
                     content=(
                         f"Task: {task}\n\n"
                         f"Current plan:\n{self._format_plan(plan)}\n\n"
-                        f"Observation:\n{observation}"
+                        f"Failure context:\n{observation}"
                     ),
                 ),
             ],
@@ -221,7 +223,7 @@ class TaskPlanner:
                     content=(
                         f"Task: {task}\n\n"
                         f"Current plan:\n{self._format_plan(plan)}\n\n"
-                        f"Observation:\n{observation}"
+                        f"Failure context:\n{observation}"
                     ),
                 ),
             ],

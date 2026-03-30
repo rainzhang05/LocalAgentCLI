@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -64,6 +65,59 @@ def _make_runtime(config, storage):
 
 
 class TestSessionExecutionRuntime:
+    def test_multi_agent_tools_registered_when_feature_enabled(self, config, storage):
+        config._config.setdefault("features", {})["multi_agent_path_routing"] = True
+        runtime, _emitted = _make_runtime(config, storage)
+
+        router = runtime._services.build_tool_router(runtime.workspace_root())
+
+        assert router.get_tool("spawn_agent") is not None
+        assert router.get_tool("send_input") is not None
+        assert router.get_tool("wait_agent") is not None
+        assert router.get_tool("close_agent") is not None
+        assert router.get_tool("resume_agent") is not None
+
+    def test_multi_agent_dynamic_tool_flow_round_trip(self, config, storage):
+        config._config.setdefault("features", {})["multi_agent_path_routing"] = True
+        runtime, _emitted = _make_runtime(config, storage)
+        router = runtime._services.build_tool_router(runtime.workspace_root())
+
+        spawn = router.execute("spawn_agent", message="hello", task_name="worker")
+        assert spawn.status == "success"
+        spawn_payload = json.loads(spawn.output)
+        assert spawn_payload["agent_path"] == "/root/worker"
+
+        wait = router.execute("wait_agent", target_paths=["worker"], timeout_ms=1000)
+        assert wait.status == "success"
+        wait_payload = json.loads(wait.output)
+        assert wait_payload["timed_out"] is False
+        assert wait_payload["status"]["/root/worker"] == "completed"
+
+        close = router.execute("close_agent", target_path="worker")
+        assert close.status == "success"
+        close_payload = json.loads(close.output)
+        assert close_payload["agent_path"] == "/root/worker"
+        assert close_payload["status"] == "shutdown"
+
+        resume = router.execute("resume_agent", target_path="worker", input_override="again")
+        assert resume.status == "success"
+        resume_payload = json.loads(resume.output)
+        assert resume_payload["agent_path"] == "/root/worker"
+
+        wait_after_resume = router.execute(
+            "wait_agent",
+            target_paths=["worker"],
+            timeout_ms=1000,
+        )
+        assert wait_after_resume.status == "success"
+        wait_after_payload = json.loads(wait_after_resume.output)
+        assert wait_after_payload["timed_out"] is False
+        assert wait_after_payload["status"]["/root/worker"] == "completed"
+
+        active_agents = runtime._services.session_manager.current.metadata.get("active_agents")
+        assert isinstance(active_agents, dict)
+        assert "/root/worker" in active_agents
+
     def test_build_generation_options_includes_request_timeout(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)
         opts = runtime.build_generation_options()

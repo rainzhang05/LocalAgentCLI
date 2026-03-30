@@ -21,6 +21,7 @@ from localagentcli.mcp import McpManager
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import (
     ModelBackend,
+    ModelMessage,
     StreamChunk,
     backend_label,
     backend_requirement_names,
@@ -843,6 +844,25 @@ class SessionExecutionRuntime:
                 is_read_only=True,
             ),
             DynamicToolSpec(
+                name="wait",
+                description="Alias for wait_agent.",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "target_paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "timeout_ms": {"type": "integer"},
+                        "current_agent_path": {"type": "string"},
+                    },
+                    "required": ["target_paths"],
+                },
+                executor=lambda **kwargs: self._tool_wait_agent(**kwargs),
+                requires_approval=False,
+                is_read_only=True,
+            ),
+            DynamicToolSpec(
                 name="close_agent",
                 description="Close a sub-agent and return its previous status.",
                 parameters_schema={
@@ -1030,13 +1050,32 @@ class SessionExecutionRuntime:
         """Baseline worker behavior for feature-gated multi-agent tasks.
 
         This Slice 4 baseline intentionally keeps sub-agent execution lightweight
-        and deterministic; deeper delegated model/runtime orchestration is a
-        follow-on increment.
+        while still using the active model when available.
         """
         prompt_text = prompt.strip()
         if not prompt_text:
             raise ValueError("input_text must not be empty")
-        return f"[{agent.path.name()}] {prompt_text}"
+
+        model = self.resolve_active_model()
+        if model is None:
+            return f"[{agent.path.name()}] {prompt_text}"
+
+        system_message = (
+            "You are a delegated sub-agent. "
+            "Respond with concise execution results for your assigned task only."
+        )
+        messages = [
+            ModelMessage(role="system", content=system_message),
+            ModelMessage(
+                role="user",
+                content=f"Agent path: {agent.path.as_str()}\nTask: {prompt_text}",
+            ),
+        ]
+        result = model.generate(messages, **self.build_generation_options())
+        response = result.text.strip() or result.reasoning.strip()
+        if response:
+            return response
+        return f"[{agent.path.name()}] completed"
 
     def _sync_active_agents_metadata(self) -> None:
         """Persist the latest active-agent snapshot into session metadata."""

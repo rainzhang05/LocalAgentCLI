@@ -20,6 +20,7 @@ from localagentcli.models.backends.base import (
     StreamChunk,
 )
 from localagentcli.models.model_info import ModelInfo
+from localagentcli.models.prompt_profile import ProviderPromptProfile
 
 _ResponseT = TypeVar("_ResponseT", bound=httpx.Response)
 _CONNECTION_POLICIES = {"reuse", "close_after_turn"}
@@ -202,6 +203,10 @@ class RemoteProvider(ModelBackend):
             selection_state="active_remote_model",
             capabilities={},
         )
+
+    def prompt_profile(self) -> ProviderPromptProfile:
+        """Provider-aware prompt assembly preferences for this backend."""
+        return ProviderPromptProfile(provider_kind="generic")
 
     def load(self, model_path: Path, **kwargs: object) -> None:
         """No-op for remote providers."""

@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from localagentcli.models.prompt_profile import ProviderPromptProfile
 from localagentcli.session.instructions import (
+    SYSTEM_SEGMENTS_METADATA_KEY,
     build_conversation_model_messages,
     build_system_instructions,
     discover_workspace_instruction,
@@ -142,3 +144,33 @@ def test_build_conversation_model_messages_merges_system_layers(tmp_path: Path):
     assert parts[3] == "History system."
     assert messages[1].role == "user"
     assert messages[1].content == "Hi"
+
+
+def test_build_conversation_model_messages_emits_segment_metadata_for_structured_profiles(
+    tmp_path: Path,
+):
+    session = _make_session(tmp_path)
+    session.metadata["workspace_instruction"] = "Repo line."
+    session.pinned_instructions.append("Pinned line.")
+    now = session.created_at
+    session.history.append(Message(role="system", content="History system.", timestamp=now))
+    session.history.append(Message(role="user", content="Hi", timestamp=now))
+
+    messages = build_conversation_model_messages(
+        session,
+        prompt_profile=ProviderPromptProfile(
+            provider_kind="anthropic",
+            structured_system_blocks=True,
+            stable_system_cache_control_type="ephemeral",
+        ),
+    )
+
+    segments = messages[0].metadata.get(SYSTEM_SEGMENTS_METADATA_KEY)
+    assert isinstance(segments, list)
+    assert segments[0] == {"text": "Repo line.", "cache_control_type": "ephemeral"}
+    assert segments[1] == {"text": "Pinned line.", "cache_control_type": "ephemeral"}
+    assert all(
+        segment.get("cache_control_type") != "ephemeral"
+        for segment in segments[2:]
+        if isinstance(segment, dict)
+    )

@@ -77,6 +77,7 @@ def test_format_includes_fields_in_stable_order(tmp_path: Path):
                 "step_index": 2,
                 "step_description": "Edit file",
                 "pending_tool": "file_write",
+                "last_error_type": "tool_timeout",
                 "approval_mode": "balanced",
                 "rollback_count": 1,
                 "summary": "Working on edits.",
@@ -91,6 +92,7 @@ def test_format_includes_fields_in_stable_order(tmp_path: Path):
     assert lines[1] == "phase: waiting_approval"
     assert "step_index: 2" in text
     assert "pending_tool: file_write" in text
+    assert "last_error_type: tool_timeout" in text
     assert "summary: Working on edits." in text
 
 
@@ -143,6 +145,7 @@ def test_build_turn_context_snapshot_includes_stable_sections(tmp_path: Path):
                 "active": True,
                 "phase": "executing",
                 "retry_count": 1,
+                "last_error_type": "tool_timeout",
                 "summary": "Running task.",
                 "updated_at": "volatile",
             },
@@ -160,6 +163,7 @@ def test_build_turn_context_snapshot_includes_stable_sections(tmp_path: Path):
     assert snapshot["instructions"]["fingerprint"]
     assert snapshot["environment"]["fingerprint"]
     assert snapshot["task_state"]["phase"] == "executing"
+    assert snapshot["task_state"]["last_error_type"] == "tool_timeout"
     assert "updated_at" not in snapshot["task_state"]
     assert snapshot["memory"]["long_horizon_count"] == 1
     assert snapshot["config_overrides"]["generation.reasoning_effort"] == "high"

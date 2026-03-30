@@ -78,10 +78,15 @@ For model calls, **`providers.<name>.options.timeout`** (seconds) overrides the 
 
 Prompt caching is now available for remote provider payloads where supported.
 
-- **Anthropic**: set `providers.<name>.options.prompt_cache = true` to wrap the
-    system prompt in a cache-controlled text block. Optional
-    `providers.<name>.options.prompt_cache_type` overrides the cache-control type
-    (`ephemeral` by default).
+- **Anthropic**:
+    - set `providers.<name>.options.prompt_cache = true` to enable cache-control
+        metadata for stable system prompt layers
+    - optional `providers.<name>.options.prompt_cache_type` overrides the
+        cache-control type (`ephemeral` by default)
+    - when provider-aware prompt assembly is active, system context is segmented so
+        stable layers (repository instructions, skills overlays, pinned instructions,
+        long-horizon memory) can carry cache-control while dynamic layers
+        (environment context and turn-level system history) remain non-cached
 - **OpenAI-compatible**: optional pass-through fields are supported for
     compatible backends:
     - `providers.<name>.options.prompt_cache`
@@ -209,6 +214,9 @@ class RemoteProvider(ModelBackend):
 
     def set_active_model(self, model_name: str | None) -> None:
         """Bind the provider instance to a specific remote model id."""
+
+    def prompt_profile(self) -> ProviderPromptProfile:
+        """Provider-aware prompt assembly hints for system-layer formatting."""
 
     def close(self) -> None:
         """Close the underlying HTTP client."""

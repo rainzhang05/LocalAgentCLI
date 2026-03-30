@@ -25,6 +25,16 @@ from localagentcli.agents.events import (
 )
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
 from localagentcli.agents.profiles import build_generation_profile
+from localagentcli.agents.recovery import (
+    FailureClass,
+    FailureContext,
+    classify_model_failure,
+    classify_tool_failure,
+    failure_class_hint,
+    failure_class_label,
+    should_replan_after_failure,
+    update_failure_counters,
+)
 from localagentcli.agents.truncation import truncate_for_model_output
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
@@ -57,6 +67,7 @@ class _AsyncStepDone:
     errors: int
     failure_kind: str = ""
     last_model_error: str = ""
+    failure_context: FailureContext | None = None
 
 
 _STEP_PROMPT = """You are LocalAgentCLI operating in agent mode.
@@ -97,7 +108,8 @@ class AgentLoop:
         self._unified_turn_loop = unified_turn_loop
         self._stop_requested = False
         self._approval_wait: asyncio.Future[bool] | None = None
-        self._async_tool_batch: tuple[list[ModelMessage], bool] | None = None
+        self._async_tool_batch: tuple[list[ModelMessage], FailureContext | None] | None = None
+        self._sync_tool_failure_context: FailureContext | None = None
 
     def stop(self) -> None:
         """Request that the loop stop at the next safe point."""
@@ -175,6 +187,7 @@ class AgentLoop:
                 errors,
                 failure_kind,
                 last_model_error,
+                failure_context,
             ) = yield from self._run_step(
                 task,
                 plan,
@@ -190,10 +203,45 @@ class AgentLoop:
                 break
 
             if step_summary is None:
-                if failure_kind == "model_error_threshold":
+                if (
+                    failure_kind in {"tool_retry_budget_exhausted", "model_retry_budget_exhausted"}
+                    and failure_context is not None
+                    and should_replan_after_failure(failure_context.failure_class)
+                ):
+                    replan_reason = self._build_replan_reason(step, failure_context)
+                    yield PhaseChanged(
+                        phase="replanning",
+                        summary=(
+                            "Replanning after "
+                            f"{failure_class_label(failure_context.failure_class)} "
+                            f"failures in step {step.index}."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    revised = self._planner.revise_plan(
+                        task,
+                        plan,
+                        replan_reason,
+                        generation_options=planning_options,
+                    )
+                    self._preserve_completed_steps(plan, revised)
+                    plan = revised
+                    plan.status = "executing"
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Replanned after {failure_class_label(failure_context.failure_class)} "
+                            f"failure in step {step.index}."
+                        ),
+                    )
+                    yield PhaseChanged(phase="executing", summary="Continuing with revised plan.")
+                    continue
+
+                if failure_kind in {"model_error_threshold", "model_retry_budget_exhausted"}:
                     detail = (
                         f"Model errors prevented step {step.index} from completing "
-                        f"after {self._max_consecutive_errors} retries."
+                        f"after {errors} attempt(s)."
                     )
                     if last_model_error:
                         detail = f"{detail} Last model error: {last_model_error}"
@@ -218,18 +266,29 @@ class AgentLoop:
                     )
                     if last_model_error:
                         reason = f"{reason} Last model error: {last_model_error}"
-                    yield TaskFailed(reason=reason, plan=plan)
+                    yield TaskFailed(
+                        reason=reason,
+                        failure_type=failure_context.failure_class.value
+                        if failure_context is not None
+                        else FailureClass.MODEL_TRANSIENT.value,
+                        plan=plan,
+                    )
                     return
 
-                if failure_kind == "tool_error_threshold" and self._unified_turn_loop:
+                if (
+                    failure_kind in {"tool_error_threshold", "tool_retry_budget_exhausted"}
+                    and self._unified_turn_loop
+                ):
+                    failure_label = (
+                        failure_class_label(failure_context.failure_class)
+                        if failure_context is not None
+                        else "tool"
+                    )
                     plan.update_step(step.index, "failed", "Repeated tool failures.")
                     plan.status = "failed"
                     yield PhaseChanged(
                         phase="failed",
-                        summary=(
-                            f"Step {step.index} reached the repeated tool-failure "
-                            f"threshold ({self._max_consecutive_errors})."
-                        ),
+                        summary=(f"Step {step.index} reached the {failure_label} retry threshold."),
                         step_index=step.index,
                         step_description=step.description,
                     )
@@ -243,8 +302,11 @@ class AgentLoop:
                     yield TaskFailed(
                         reason=(
                             f"Failed while executing step {step.index}: {step.description} "
-                            "(tool failure threshold reached)."
+                            f"({failure_label} failure threshold reached)."
                         ),
+                        failure_type=failure_context.failure_class.value
+                        if failure_context is not None
+                        else None,
                         plan=plan,
                     )
                     return
@@ -275,11 +337,17 @@ class AgentLoop:
                             f"Failed while executing step {step.index}: {step.description} "
                             f"(unified turn-loop budget exhausted)."
                         ),
+                        failure_type=FailureClass.UNKNOWN.value,
                         plan=plan,
                     )
                     return
 
                 if errors >= self._max_consecutive_errors:
+                    replan_reason = (
+                        self._build_replan_reason(step, failure_context)
+                        if failure_context is not None
+                        else f"Step {step.index} encountered repeated tool failures."
+                    )
                     yield PhaseChanged(
                         phase="replanning",
                         summary=f"Replanning after repeated failures in step {step.index}.",
@@ -289,7 +357,7 @@ class AgentLoop:
                     revised = self._planner.revise_plan(
                         task,
                         plan,
-                        f"Step {step.index} encountered repeated tool failures.",
+                        replan_reason,
                         generation_options=planning_options,
                     )
                     self._preserve_completed_steps(plan, revised)
@@ -316,6 +384,9 @@ class AgentLoop:
                 )
                 yield TaskFailed(
                     reason=f"Failed while executing step {step.index}: {step.description}",
+                    failure_type=failure_context.failure_class.value
+                    if failure_context is not None
+                    else None,
                     plan=plan,
                 )
                 return
@@ -388,6 +459,7 @@ class AgentLoop:
             errors = 0
             failure_kind = ""
             last_model_error = ""
+            failure_context: FailureContext | None = None
             async for piece in self._arun_step_async(
                 task, plan, step, transcript, options, session
             ):
@@ -397,6 +469,7 @@ class AgentLoop:
                     errors = piece.errors
                     failure_kind = piece.failure_kind
                     last_model_error = piece.last_model_error
+                    failure_context = piece.failure_context
                     break
                 yield piece
             transcript.extend(new_messages)
@@ -406,10 +479,45 @@ class AgentLoop:
                 break
 
             if step_summary is None:
-                if failure_kind == "model_error_threshold":
+                if (
+                    failure_kind in {"tool_retry_budget_exhausted", "model_retry_budget_exhausted"}
+                    and failure_context is not None
+                    and should_replan_after_failure(failure_context.failure_class)
+                ):
+                    replan_reason = self._build_replan_reason(step, failure_context)
+                    yield PhaseChanged(
+                        phase="replanning",
+                        summary=(
+                            "Replanning after "
+                            f"{failure_class_label(failure_context.failure_class)} "
+                            f"failures in step {step.index}."
+                        ),
+                        step_index=step.index,
+                        step_description=step.description,
+                    )
+                    revised = await self._planner.arevise_plan(
+                        task,
+                        plan,
+                        replan_reason,
+                        generation_options=planning_options,
+                    )
+                    self._preserve_completed_steps(plan, revised)
+                    plan = revised
+                    plan.status = "executing"
+                    yield PlanUpdated(
+                        plan=plan,
+                        changes=(
+                            f"Replanned after {failure_class_label(failure_context.failure_class)} "
+                            f"failure in step {step.index}."
+                        ),
+                    )
+                    yield PhaseChanged(phase="executing", summary="Continuing with revised plan.")
+                    continue
+
+                if failure_kind in {"model_error_threshold", "model_retry_budget_exhausted"}:
                     detail = (
                         f"Model errors prevented step {step.index} from completing "
-                        f"after {self._max_consecutive_errors} retries."
+                        f"after {errors} attempt(s)."
                     )
                     if last_model_error:
                         detail = f"{detail} Last model error: {last_model_error}"
@@ -434,18 +542,29 @@ class AgentLoop:
                     )
                     if last_model_error:
                         reason = f"{reason} Last model error: {last_model_error}"
-                    yield TaskFailed(reason=reason, plan=plan)
+                    yield TaskFailed(
+                        reason=reason,
+                        failure_type=failure_context.failure_class.value
+                        if failure_context is not None
+                        else FailureClass.MODEL_TRANSIENT.value,
+                        plan=plan,
+                    )
                     return
 
-                if failure_kind == "tool_error_threshold" and self._unified_turn_loop:
+                if (
+                    failure_kind in {"tool_error_threshold", "tool_retry_budget_exhausted"}
+                    and self._unified_turn_loop
+                ):
+                    failure_label = (
+                        failure_class_label(failure_context.failure_class)
+                        if failure_context is not None
+                        else "tool"
+                    )
                     plan.update_step(step.index, "failed", "Repeated tool failures.")
                     plan.status = "failed"
                     yield PhaseChanged(
                         phase="failed",
-                        summary=(
-                            f"Step {step.index} reached the repeated tool-failure "
-                            f"threshold ({self._max_consecutive_errors})."
-                        ),
+                        summary=(f"Step {step.index} reached the {failure_label} retry threshold."),
                         step_index=step.index,
                         step_description=step.description,
                     )
@@ -459,8 +578,11 @@ class AgentLoop:
                     yield TaskFailed(
                         reason=(
                             f"Failed while executing step {step.index}: {step.description} "
-                            "(tool failure threshold reached)."
+                            f"({failure_label} failure threshold reached)."
                         ),
+                        failure_type=failure_context.failure_class.value
+                        if failure_context is not None
+                        else None,
                         plan=plan,
                     )
                     return
@@ -491,11 +613,17 @@ class AgentLoop:
                             f"Failed while executing step {step.index}: {step.description} "
                             f"(unified turn-loop budget exhausted)."
                         ),
+                        failure_type=FailureClass.UNKNOWN.value,
                         plan=plan,
                     )
                     return
 
                 if errors >= self._max_consecutive_errors:
+                    replan_reason = (
+                        self._build_replan_reason(step, failure_context)
+                        if failure_context is not None
+                        else f"Step {step.index} encountered repeated tool failures."
+                    )
                     yield PhaseChanged(
                         phase="replanning",
                         summary=f"Replanning after repeated failures in step {step.index}.",
@@ -505,7 +633,7 @@ class AgentLoop:
                     revised = await self._planner.arevise_plan(
                         task,
                         plan,
-                        f"Step {step.index} encountered repeated tool failures.",
+                        replan_reason,
                         generation_options=planning_options,
                     )
                     self._preserve_completed_steps(plan, revised)
@@ -532,6 +660,9 @@ class AgentLoop:
                 )
                 yield TaskFailed(
                     reason=f"Failed while executing step {step.index}: {step.description}",
+                    failure_type=failure_context.failure_class.value
+                    if failure_context is not None
+                    else None,
                     plan=plan,
                 )
                 return
@@ -564,18 +695,21 @@ class AgentLoop:
     ) -> AsyncIterator[AgentEvent | _AsyncStepDone]:
         """Mirror _run_step: model rounds with tool events, then emit _AsyncStepDone."""
         conversation: list[ModelMessage] = []
-        consecutive_errors = 0
+        failure_counters: dict[FailureClass, int] = {}
+        last_attempt_count = 0
         failure_kind = ""
         last_model_error = ""
+        failure_context: FailureContext | None = None
 
         for _ in range(self._max_step_rounds):
             if self._stop_requested:
                 yield _AsyncStepDone(
                     None,
                     conversation,
-                    consecutive_errors,
+                    last_attempt_count,
                     failure_kind,
                     last_model_error,
+                    failure_context,
                 )
                 return
 
@@ -590,19 +724,13 @@ class AgentLoop:
             self._record_usage_budget(session, result.usage)
 
             if result.finish_reason == "error":
-                consecutive_errors += 1
                 error_detail = self._model_error_detail(result)
                 if error_detail:
                     last_model_error = error_detail
-                yield PhaseChanged(
-                    phase="retrying",
-                    summary=(
-                        f"Retrying step {step.index} after model error "
-                        f"({consecutive_errors}/{self._max_consecutive_errors})."
-                    ),
-                    step_index=step.index,
-                    step_description=step.description,
-                )
+                failure_context = classify_model_failure(last_model_error)
+                budget_state = update_failure_counters(failure_counters, failure_context)
+                retry_budget = min(budget_state.retry_budget, self._max_consecutive_errors)
+                last_attempt_count = budget_state.attempt
                 if result.usage.get("error"):
                     conversation.append(
                         ModelMessage(
@@ -611,9 +739,19 @@ class AgentLoop:
                             metadata={"error": result.usage["error"]},
                         )
                     )
-                if consecutive_errors >= self._max_consecutive_errors:
-                    failure_kind = "model_error_threshold"
+                if budget_state.attempt >= retry_budget:
+                    failure_kind = "model_retry_budget_exhausted"
                     break
+                yield PhaseChanged(
+                    phase="retrying",
+                    summary=(
+                        "Retrying step "
+                        f"{step.index} after {failure_class_label(failure_context.failure_class)} "
+                        f"({budget_state.attempt}/{retry_budget})."
+                    ),
+                    step_index=step.index,
+                    step_description=step.description,
+                )
                 continue
 
             if result.reasoning.strip():
@@ -626,26 +764,35 @@ class AgentLoop:
                 self._async_tool_batch = None
                 async for event in self._ahandle_tool_calls_async(result):
                     yield event
-                batch: tuple[list[ModelMessage], bool] = self._async_tool_batch or ([], False)
-                tool_messages, had_error = batch
+                batch: tuple[list[ModelMessage], FailureContext | None] = (
+                    self._async_tool_batch or ([], None)
+                )
+                tool_messages, tool_failure_context = batch
                 self._async_tool_batch = None
                 conversation.extend(tool_messages)
-                if had_error:
-                    consecutive_errors += 1
+                if tool_failure_context is not None:
+                    failure_context = tool_failure_context
+                    budget_state = update_failure_counters(failure_counters, failure_context)
+                    retry_budget = min(budget_state.retry_budget, self._max_consecutive_errors)
+                    last_attempt_count = budget_state.attempt
+                    if budget_state.attempt >= retry_budget:
+                        failure_kind = "tool_retry_budget_exhausted"
+                        break
                     yield PhaseChanged(
                         phase="retrying",
                         summary=(
-                            f"Retrying step {step.index} after tool failure "
-                            f"({consecutive_errors}/{self._max_consecutive_errors})."
+                            "Retrying step "
+                            f"{step.index} after "
+                            f"{failure_class_label(failure_context.failure_class)} "
+                            f"({budget_state.attempt}/{retry_budget})."
                         ),
                         step_index=step.index,
                         step_description=step.description,
                     )
-                    if consecutive_errors >= self._max_consecutive_errors:
-                        failure_kind = "tool_error_threshold"
-                        break
                 else:
-                    consecutive_errors = 0
+                    failure_counters.clear()
+                    last_attempt_count = 0
+                    failure_context = None
                 continue
 
             text = (result.text or "").strip()
@@ -654,9 +801,10 @@ class AgentLoop:
                 yield _AsyncStepDone(
                     text,
                     conversation,
-                    consecutive_errors,
+                    last_attempt_count,
                     failure_kind,
                     last_model_error,
+                    failure_context,
                 )
                 return
 
@@ -664,9 +812,10 @@ class AgentLoop:
                 yield _AsyncStepDone(
                     self._summarize_observations(conversation),
                     conversation,
-                    consecutive_errors,
+                    last_attempt_count,
                     failure_kind,
                     last_model_error,
+                    failure_context,
                 )
                 return
 
@@ -675,9 +824,10 @@ class AgentLoop:
         yield _AsyncStepDone(
             None,
             conversation,
-            consecutive_errors,
+            last_attempt_count,
             failure_kind,
             last_model_error,
+            failure_context,
         )
 
     async def _ahandle_tool_calls_async(
@@ -685,7 +835,7 @@ class AgentLoop:
         result: GenerationResult,
     ) -> AsyncIterator[AgentEvent]:
         messages: list[ModelMessage] = []
-        had_error = False
+        failure_context: FailureContext | None = None
         try:
             if self._parallel_read_only_batch_eligible(result):
                 prepared: list[tuple[str, str, dict, Tool]] = []
@@ -735,7 +885,8 @@ class AgentLoop:
                             metadata={"tool_call_id": call_id, "tool_name": resolved_name},
                         )
                     )
-                    had_error = had_error or tool_result.status != "success"
+                    if tool_result.status != "success" and failure_context is None:
+                        failure_context = classify_tool_failure(tool_result)
                     if tool_result.status in {"denied", "error", "timeout"}:
                         yield PhaseChanged(
                             phase="recovering",
@@ -768,7 +919,8 @@ class AgentLoop:
                                 },
                             )
                         )
-                        had_error = True
+                        if failure_context is None:
+                            failure_context = classify_tool_failure(tool_result)
                         continue
                     if parse_error is not None:
                         tool_result = ToolResult.error_result(
@@ -790,7 +942,8 @@ class AgentLoop:
                                 },
                             )
                         )
-                        had_error = True
+                        if failure_context is None:
+                            failure_context = classify_tool_failure(tool_result)
                         continue
 
                     resolved_tool_name = tool.name
@@ -820,7 +973,8 @@ class AgentLoop:
                                 },
                             )
                         )
-                        had_error = True
+                        if failure_context is None:
+                            failure_context = classify_tool_failure(tool_result)
                         continue
 
                     request = ToolCallRequested(
@@ -868,7 +1022,8 @@ class AgentLoop:
                             },
                         )
                     )
-                    had_error = had_error or tool_result.status != "success"
+                    if tool_result.status != "success" and failure_context is None:
+                        failure_context = classify_tool_failure(tool_result)
                     if tool_result.status in {"denied", "error", "timeout"}:
                         yield PhaseChanged(
                             phase="recovering",
@@ -878,7 +1033,7 @@ class AgentLoop:
                             ),
                         )
         finally:
-            self._async_tool_batch = (messages, had_error)
+            self._async_tool_batch = (messages, failure_context)
 
     def _run_step(
         self,
@@ -888,15 +1043,28 @@ class AgentLoop:
         transcript: list[ModelMessage],
         options: dict[str, object],
         session: Session | None,
-    ) -> Generator[AgentEvent, bool, tuple[str | None, list[ModelMessage], int, str, str]]:
+    ) -> Generator[
+        AgentEvent,
+        bool,
+        tuple[str | None, list[ModelMessage], int, str, str, FailureContext | None],
+    ]:
         conversation: list[ModelMessage] = []
-        consecutive_errors = 0
+        failure_counters: dict[FailureClass, int] = {}
+        last_attempt_count = 0
         failure_kind = ""
         last_model_error = ""
+        failure_context: FailureContext | None = None
 
         for _ in range(self._max_step_rounds):
             if self._stop_requested:
-                return None, conversation, consecutive_errors, failure_kind, last_model_error
+                return (
+                    None,
+                    conversation,
+                    last_attempt_count,
+                    failure_kind,
+                    last_model_error,
+                    failure_context,
+                )
 
             model_info = self._resolve_model_info()
 
@@ -909,19 +1077,13 @@ class AgentLoop:
             self._record_usage_budget(session, result.usage)
 
             if result.finish_reason == "error":
-                consecutive_errors += 1
                 error_detail = self._model_error_detail(result)
                 if error_detail:
                     last_model_error = error_detail
-                yield PhaseChanged(
-                    phase="retrying",
-                    summary=(
-                        f"Retrying step {step.index} after model error "
-                        f"({consecutive_errors}/{self._max_consecutive_errors})."
-                    ),
-                    step_index=step.index,
-                    step_description=step.description,
-                )
+                failure_context = classify_model_failure(last_model_error)
+                budget_state = update_failure_counters(failure_counters, failure_context)
+                retry_budget = min(budget_state.retry_budget, self._max_consecutive_errors)
+                last_attempt_count = budget_state.attempt
                 if result.usage.get("error"):
                     conversation.append(
                         ModelMessage(
@@ -930,9 +1092,19 @@ class AgentLoop:
                             metadata={"error": result.usage["error"]},
                         )
                     )
-                if consecutive_errors >= self._max_consecutive_errors:
-                    failure_kind = "model_error_threshold"
+                if budget_state.attempt >= retry_budget:
+                    failure_kind = "model_retry_budget_exhausted"
                     break
+                yield PhaseChanged(
+                    phase="retrying",
+                    summary=(
+                        "Retrying step "
+                        f"{step.index} after {failure_class_label(failure_context.failure_class)} "
+                        f"({budget_state.attempt}/{retry_budget})."
+                    ),
+                    step_index=step.index,
+                    step_description=step.description,
+                )
                 continue
 
             if result.reasoning.strip():
@@ -942,48 +1114,78 @@ class AgentLoop:
             if result.tool_calls:
                 assistant_message.metadata["tool_calls"] = result.tool_calls
                 conversation.append(assistant_message)
+                self._sync_tool_failure_context = None
                 tool_messages, had_error = yield from self._handle_tool_calls(result)
+                tool_failure_context = self._sync_tool_failure_context
                 conversation.extend(tool_messages)
-                if had_error:
-                    consecutive_errors += 1
+                if tool_failure_context is not None or had_error:
+                    if tool_failure_context is None:
+                        tool_failure_context = FailureContext(
+                            FailureClass.UNKNOWN,
+                            "Unknown tool failure.",
+                        )
+                    failure_context = tool_failure_context
+                    budget_state = update_failure_counters(failure_counters, failure_context)
+                    retry_budget = min(budget_state.retry_budget, self._max_consecutive_errors)
+                    last_attempt_count = budget_state.attempt
+                    if budget_state.attempt >= retry_budget:
+                        failure_kind = "tool_retry_budget_exhausted"
+                        break
                     yield PhaseChanged(
                         phase="retrying",
                         summary=(
-                            f"Retrying step {step.index} after tool failure "
-                            f"({consecutive_errors}/{self._max_consecutive_errors})."
+                            "Retrying step "
+                            f"{step.index} after "
+                            f"{failure_class_label(failure_context.failure_class)} "
+                            f"({budget_state.attempt}/{retry_budget})."
                         ),
                         step_index=step.index,
                         step_description=step.description,
                     )
-                    if consecutive_errors >= self._max_consecutive_errors:
-                        failure_kind = "tool_error_threshold"
-                        break
                 else:
-                    consecutive_errors = 0
+                    failure_counters.clear()
+                    last_attempt_count = 0
+                    failure_context = None
                 continue
 
             text = (result.text or "").strip()
             if text:
                 conversation.append(assistant_message)
-                return text, conversation, consecutive_errors, failure_kind, last_model_error
+                return (
+                    text,
+                    conversation,
+                    last_attempt_count,
+                    failure_kind,
+                    last_model_error,
+                    failure_context,
+                )
 
             if conversation:
                 return (
                     self._summarize_observations(conversation),
                     conversation,
-                    consecutive_errors,
+                    last_attempt_count,
                     failure_kind,
                     last_model_error,
+                    failure_context,
                 )
 
         if not failure_kind:
             failure_kind = "round_budget_exhausted"
-        return None, conversation, consecutive_errors, failure_kind, last_model_error
+        return (
+            None,
+            conversation,
+            last_attempt_count,
+            failure_kind,
+            last_model_error,
+            failure_context,
+        )
 
     def _handle_tool_calls(
         self,
         result: GenerationResult,
     ) -> Generator[AgentEvent, bool, tuple[list[ModelMessage], bool]]:
+        self._sync_tool_failure_context = None
         if self._parallel_read_only_batch_eligible(result):
             return (yield from self._handle_tool_calls_parallel_read_only(result))
         return (yield from self._handle_tool_calls_sequential(result))
@@ -1017,6 +1219,7 @@ class AgentLoop:
     ) -> Generator[AgentEvent, bool, tuple[list[ModelMessage], bool]]:
         messages: list[ModelMessage] = []
         had_error = False
+        failure_context: FailureContext | None = None
         prepared: list[tuple[str, str, dict, Tool]] = []
 
         for raw_call in result.tool_calls:
@@ -1064,6 +1267,8 @@ class AgentLoop:
                 )
             )
             had_error = had_error or tool_result.status != "success"
+            if tool_result.status != "success" and failure_context is None:
+                failure_context = classify_tool_failure(tool_result)
             if tool_result.status in {"denied", "error", "timeout"}:
                 yield PhaseChanged(
                     phase="recovering",
@@ -1072,6 +1277,7 @@ class AgentLoop:
                     ),
                 )
 
+        self._sync_tool_failure_context = failure_context
         return messages, had_error
 
     def _handle_tool_calls_sequential(
@@ -1080,6 +1286,7 @@ class AgentLoop:
     ) -> Generator[AgentEvent, bool, tuple[list[ModelMessage], bool]]:
         messages: list[ModelMessage] = []
         had_error = False
+        failure_context: FailureContext | None = None
 
         for raw_call in result.tool_calls:
             call_id, tool_name, arguments, parse_error = self._normalize_tool_call(raw_call)
@@ -1125,7 +1332,8 @@ class AgentLoop:
                             },
                         )
                     )
-                    had_error = True
+                    if failure_context is None:
+                        failure_context = classify_tool_failure(tool_result)
                     continue
 
                 request = ToolCallRequested(
@@ -1170,6 +1378,8 @@ class AgentLoop:
                 )
             )
             had_error = had_error or tool_result.status != "success"
+            if tool_result.status != "success" and failure_context is None:
+                failure_context = classify_tool_failure(tool_result)
             if tool_result.status in {"denied", "error", "timeout"}:
                 recovery_target = tool_name or "unknown"
                 yield PhaseChanged(
@@ -1179,6 +1389,7 @@ class AgentLoop:
                     ),
                 )
 
+        self._sync_tool_failure_context = failure_context
         return messages, had_error
 
     def _build_messages(
@@ -1296,6 +1507,16 @@ class AgentLoop:
             return "Step completed."
         latest = tool_messages[-1].content
         return f"Step completed after tool execution. Latest observation: {latest[:240]}"
+
+    def _build_replan_reason(self, step: PlanStep, failure_context: FailureContext) -> str:
+        detail = failure_context.detail.strip()
+        if len(detail) > 240:
+            detail = f"{detail[:237]}..."
+        return (
+            f"Step {step.index} encountered {failure_class_label(failure_context.failure_class)} "
+            f"failure. Detail: {detail or 'N/A'}. "
+            f"Recovery guidance: {failure_class_hint(failure_context.failure_class)}"
+        )
 
     @staticmethod
     def _model_error_detail(result: GenerationResult) -> str:

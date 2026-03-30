@@ -95,3 +95,13 @@ class TestTaskPlanner:
             message.role == "system" and message.content == "workspace-instructions-and-env"
             for message in sent_messages[1:]
         )
+
+    def test_revise_plan_prompt_uses_failure_context_label(self):
+        model = FakePlannerModel(['{"steps":[{"description":"Fallback approach"}]}'])
+        planner = TaskPlanner(model)
+        plan = TaskPlan(task="demo", steps=[PlanStep(index=1, description="Try first")])
+
+        planner.revise_plan("demo", plan, "tool denied due to policy")
+
+        sent_messages = model.calls[0][0]
+        assert "Failure context:" in sent_messages[-1].content

@@ -74,6 +74,7 @@ class TestSessionExecutionRuntime:
         assert router.get_tool("spawn_agent") is not None
         assert router.get_tool("send_input") is not None
         assert router.get_tool("wait_agent") is not None
+        assert router.get_tool("wait") is not None
         assert router.get_tool("close_agent") is not None
         assert router.get_tool("resume_agent") is not None
 
@@ -117,6 +118,28 @@ class TestSessionExecutionRuntime:
         active_agents = runtime._services.session_manager.current.metadata.get("active_agents")
         assert isinstance(active_agents, dict)
         assert "/root/worker" in active_agents
+
+    def test_subagent_worker_uses_active_model_when_available(self, config, storage):
+        config._config.setdefault("features", {})["multi_agent_path_routing"] = True
+        runtime, _emitted = _make_runtime(config, storage)
+        router = runtime._services.build_tool_router(runtime.workspace_root())
+
+        model = MagicMock()
+        model.generate.return_value = SimpleNamespace(text="model result", reasoning="")
+        runtime.resolve_active_model = MagicMock(return_value=model)
+
+        spawn = router.execute("spawn_agent", message="run delegated task", task_name="worker")
+        assert spawn.status == "success"
+
+        wait = router.execute("wait", target_paths=["worker"], timeout_ms=1000)
+        assert wait.status == "success"
+        payload = json.loads(wait.output)
+        assert payload["timed_out"] is False
+        assert payload["status"]["/root/worker"] == "completed"
+
+        snapshot = runtime._services.session_manager.current.metadata.get("active_agents")
+        assert isinstance(snapshot, dict)
+        assert snapshot["/root/worker"]["status"] == "completed"
 
     def test_build_generation_options_includes_request_timeout(self, config, storage):
         runtime, _emitted = _make_runtime(config, storage)

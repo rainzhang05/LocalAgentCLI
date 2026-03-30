@@ -69,7 +69,12 @@ class ChatController:
         self.compact_if_needed()
         self._notify_autosave()
 
-        messages = build_conversation_model_messages(self._session)
+        profile_getter = getattr(self._model, "prompt_profile", None)
+        prompt_profile = profile_getter() if callable(profile_getter) else None
+        messages = build_conversation_model_messages(
+            self._session,
+            prompt_profile=prompt_profile,
+        )
         options = dict(self._generation_config)
         if generation_options:
             options.update(generation_options)
@@ -88,7 +93,12 @@ class ChatController:
         self.compact_if_needed()
         self._notify_autosave()
 
-        messages = build_conversation_model_messages(self._session)
+        profile_getter = getattr(self._model, "prompt_profile", None)
+        prompt_profile = profile_getter() if callable(profile_getter) else None
+        messages = build_conversation_model_messages(
+            self._session,
+            prompt_profile=prompt_profile,
+        )
         options = dict(self._generation_config)
         if generation_options:
             options.update(generation_options)

@@ -12,10 +12,12 @@ from localagentcli.agents.events import (
     PlanUpdated,
     StepStarted,
     TaskComplete,
+    TaskFailed,
     TaskRouted,
     ToolCallRequested,
     ToolCallResult,
 )
+from localagentcli.agents.planner import TaskPlan
 from localagentcli.models.backends.base import GenerationResult, StreamChunk
 from localagentcli.models.model_info import ModelInfo
 from localagentcli.session.instructions import build_conversation_model_messages
@@ -154,6 +156,7 @@ class TestAgentController:
                         }
                     ],
                 ),
+                GenerationResult(text='{"steps":[{"description":"Skip file write and explain"}]}'),
                 GenerationResult(text="Skipped the write after approval was denied."),
             ]
         )
@@ -346,3 +349,21 @@ class TestAgentController:
         list(controller.handle_task("Inspect the notes file and report findings"))
 
         assert controller.approval_mode == "autonomous"
+
+    def test_task_failed_event_persists_failure_type_in_task_state(self, tmp_path: Path):
+        model = FakeAgentModel([])
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+        )
+
+        failed_event = TaskFailed(
+            reason="Model credentials invalid.",
+            plan=TaskPlan(task="demo", steps=[]),
+            failure_type="model_terminal",
+        )
+        controller._record_event(failed_event)
+
+        assert controller.task_state["phase"] == "failed"
+        assert controller.task_state["last_error_type"] == "model_terminal"

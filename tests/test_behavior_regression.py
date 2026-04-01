@@ -1,7 +1,8 @@
-"""Behavior-level runtime regression tests (Phase 17 slice 2).
+"""Behavior-level runtime regression tests (Phase 17 slice 2 + follow-ons).
 
 These complement unit tests and E2E exec tests by asserting stable invariants across
-approval policy, session persistence, and fork lineage without live providers.
+approval policy, session persistence, fork lineage, and headless `exec --json` output
+without live providers.
 """
 
 from __future__ import annotations
@@ -209,6 +210,67 @@ async def test_headless_exec_auto_policy_allows_file_write(
 
     assert rc == 0
     assert (workspace / "out.txt").read_text(encoding="utf-8") == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_headless_exec_json_mode_emits_parseable_runtime_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JSON exec prints one JSON object per line on stdout; each matches RuntimeEvent.to_dict()."""
+    home = tmp_path / "home_json"
+    home.mkdir()
+    workspace = tmp_path / "ws_json"
+    workspace.mkdir()
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _write_e2e_config(home, workspace)
+
+    backend = _WriteToolFirstBackend()
+
+    def _fake_resolve(self: SessionExecutionRuntime) -> ModelAbstractionLayer:
+        return ModelAbstractionLayer(backend)
+
+    json_lines: list[str] = []
+
+    class _CaptureConsole:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._stderr = bool(kwargs.get("stderr"))
+
+        def print(self, *args: object, **kwargs: object) -> None:
+            if not args:
+                return
+            text = str(args[0])
+            if not self._stderr:
+                json_lines.append(text)
+
+    storage, config, _first = _bootstrap_application()
+    with (
+        patch("localagentcli.__main__.Console", _CaptureConsole),
+        patch.object(SessionExecutionRuntime, "resolve_active_model", _fake_resolve),
+        patch.object(ModelAbstractionLayer, "astream_generate", _e2e_fast_astream),
+    ):
+        rc = await _run_exec_async(
+            "Create out.txt with content blocked.",
+            config,
+            storage,
+            mode="agent",
+            json_mode=True,
+            approval_policy="auto",
+            session_name=None,
+            fork_name=None,
+            save_session=None,
+        )
+
+    assert rc == 0
+    assert json_lines, "expected JSON lines on stdout console in json_mode"
+    parsed: list[dict] = []
+    for line in json_lines:
+        obj = json.loads(line)
+        assert isinstance(obj, dict)
+        parsed.append(obj)
+        assert "type" in obj and "submission_id" in obj and "timestamp" in obj
+    assert any(e.get("type") == "turn_completed" for e in parsed)
 
 
 @pytest.mark.asyncio

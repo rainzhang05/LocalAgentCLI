@@ -16,7 +16,39 @@ on:
       - "v*"
 
 jobs:
+  release_verify:
+    name: Release gate (lint, types, tests)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff check
+        run: python -m ruff check .
+
+      - name: Ruff format
+        run: python -m ruff format --check .
+
+      - name: Mypy
+        run: python -m mypy localagentcli/
+
+      - name: Tests with coverage
+        run: python -m pytest --cov=localagentcli --cov-fail-under=80
+
   build:
+    needs: release_verify
     runs-on: ubuntu-latest
     permissions:
       contents: read

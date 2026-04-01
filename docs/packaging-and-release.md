@@ -237,6 +237,20 @@ The shell owns the confirmation and retry loop so backend modules remain focused
 | End-to-end (E2E) tests | Headless `exec` plus session save/reload across processes (deterministic model stubs) | `pytest` + `pytest-asyncio` + subprocess (`tests/e2e/`) |
 | Agent workflow tests | Full agent loop (task → plan → tools → result) | `pytest` with mock models |
 | Safety tests | Approval enforcement, boundary checks, rollback | `pytest` |
+| Performance baselines (opt-in) | Deterministic hot paths (e.g. message assembly), local timing only | `pytest` with `RUN_PERF=1` (`tests/perf/`) |
+
+### Opt-in performance baselines
+
+A small **opt-in** suite under `tests/perf/` exercises hot paths without network or I/O variance. Tests are skipped unless `RUN_PERF=1` is set, so default CI and the publish **release gate** stay unchanged.
+
+From the repository root:
+
+```bash
+cd LocalAgentCLI
+RUN_PERF=1 python -m pytest tests/perf/ -v -m perf
+```
+
+Results are for **local regression awareness** only: there is a loose sanity ceiling on total wall time to catch pathological regressions, not micro-benchmark thresholds.
 
 ### Critical Test Flows
 
@@ -292,6 +306,9 @@ The repository keeps broad unit and component coverage in the top-level `tests/`
 tests/
 ├── cli/
 │   └── test_packaging_cli.py
+├── e2e/
+├── perf/
+│   └── test_perf_baseline.py
 ├── integration/
 │   └── test_packaging_flows.py
 ├── test_*.py

@@ -343,9 +343,10 @@ All 9 criteria must be verified by automated tests and manual testing before a v
 2. Run tests with coverage: `python -m pytest --cov=localagentcli --cov-fail-under=80`
 3. Run lint and formatting checks: `ruff check .` and `ruff format --check .`
 4. Run static typing: `mypy localagentcli/`
-5. Build artifacts: `python -m build`
-6. Validate metadata: `python -m twine check dist/*`
-7. Smoke test the built wheel locally:
+5. When bumping `[project].version` in `pyproject.toml`, add a matching `## <version>` section to `CHANGELOG.md` (the test suite asserts this alignment via `tests/test_packaging_metadata.py`).
+6. Build artifacts: `python -m build`
+7. Validate metadata: `python -m twine check dist/*`
+8. Smoke test the built wheel locally:
 
 ```bash
 pipx install --force dist/localagentcli-0.2.0-py3-none-any.whl

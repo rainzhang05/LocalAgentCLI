@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 from collections import deque
 from collections.abc import AsyncIterator, Iterator
@@ -32,6 +33,11 @@ from localagentcli.runtime.protocol import (
 )
 
 _SUBMISSION_CAPACITY = 512
+
+
+async def _anext_agent_event(agent_iter: AsyncIterator[AgentEvent]) -> AgentEvent:
+    """Resume the agent iterator after ToolCallRequested (enters tool-approval wait)."""
+    return await anext(agent_iter)
 
 
 @dataclass
@@ -330,9 +336,14 @@ class SessionRuntime:
     ) -> AsyncIterator[RuntimeEvent]:
         controller = self._execution_runtime.agent_controller
         it = events.__aiter__()
+        next_event_override: AgentEvent | None = None
         while True:
             try:
-                event = await anext(it)
+                if next_event_override is not None:
+                    event = next_event_override
+                    next_event_override = None
+                else:
+                    event = await anext(it)
             except StopAsyncIteration:
                 break
             yield RuntimeEvent(
@@ -343,11 +354,45 @@ class SessionRuntime:
             )
             if isinstance(event, ToolCallRequested) and event.requires_approval:
                 if approval_policy == "auto":
-                    self.submit(ApprovalDecisionOp("approve", autonomous=True))
-                    return
+                    self._pending_approval = _PendingApproval(
+                        submission_id=submission_id,
+                        tool_name=event.tool_name,
+                        agent_iter=it,
+                        approval_policy=approval_policy,
+                    )
+                    resume_task: asyncio.Task[AgentEvent] = asyncio.create_task(
+                        _anext_agent_event(it)
+                    )
+                    await asyncio.sleep(0)
+                    if controller is not None:
+                        controller.apply_tool_approval(True, autonomous_all=True)
+                    try:
+                        next_event = await resume_task
+                    except StopAsyncIteration:
+                        break
+                    self._pending_approval = None
+                    next_event_override = next_event
+                    continue
                 if approval_policy == "deny":
-                    self.submit(ApprovalDecisionOp("deny"))
-                    return
+                    self._pending_approval = _PendingApproval(
+                        submission_id=submission_id,
+                        tool_name=event.tool_name,
+                        agent_iter=it,
+                        approval_policy=approval_policy,
+                    )
+                    resume_deny: asyncio.Task[AgentEvent] = asyncio.create_task(
+                        _anext_agent_event(it)
+                    )
+                    await asyncio.sleep(0)
+                    if controller is not None:
+                        controller.apply_tool_approval(False)
+                    try:
+                        next_event = await resume_deny
+                    except StopAsyncIteration:
+                        break
+                    self._pending_approval = None
+                    next_event_override = next_event
+                    continue
                 if controller is not None:
                     self._pending_approval = _PendingApproval(
                         submission_id=submission_id,

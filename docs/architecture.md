@@ -10,7 +10,7 @@ LocalAgentCLI is a production-grade, local-first AI CLI providing a unified inte
 
 ```
 ┌─────────────────────────────────┐
-│          CLI Surfaces           │  ← Interactive shell, one-shot exec
+│          CLI Surfaces           │  ← Interactive shell, one-shot exec (human or `--json` NDJSON)
 ├─────────────────────────────────┤
 │            Shell UI             │  ← Prompt loop, activity rendering, approvals
 ├─────────────────────────────────┤
@@ -57,6 +57,7 @@ Each layer communicates only with its immediate neighbors. No layer may bypass t
 - Builds shared generation options, context limits, tool registries, and safety wiring
 - Drives interactive and headless turns on an **async** path: `SessionRuntime.aiter_events()`, `SessionExecutionRuntime.arun_chat_turn` / `adispatch_agent_turn`, with remote HTTP via `httpx.AsyncClient` and local backends bridged through the model layer without blocking the event loop
 - Exposes reusable chat-turn and agent-dispatch entrypoints for both the interactive shell and non-interactive surfaces
+- Headless `localagentcli exec` can run in human mode (streamed text on stdout, status on stderr) or `--json` mode: one JSON object per line on stdout, each a serialized `RuntimeEvent` (`type`, `submission_id`, `timestamp`, and optional `message` / `data`), matching `localagentcli/runtime/protocol.py`
 - Keeps controller reuse and model/provider caching out of the prompt loop; provider instances are keyed by config fingerprint and active model so target changes invalidate stale clients
 
 ### Submission / Event Protocol
@@ -135,14 +136,16 @@ Each backend must:
 
 ## Suggested Python Package Structure
 
+The tree below highlights major modules; the repository is authoritative. Omitted files include tests, secondary helpers, and additional tools.
+
 ```
 localagentcli/
 ├── __init__.py
-├── __main__.py              # Entry point: interactive shell + headless exec surface
+├── __main__.py              # Entry: interactive shell + headless exec (`exec`, optional `--json`)
 ├── runtime/
 │   ├── __init__.py
 │   ├── core.py              # Shared runtime services and execution helpers
-│   ├── protocol.py          # Submission and event protocol
+│   ├── protocol.py          # Submission and event protocol (`RuntimeEvent`, …)
 │   ├── session_runtime.py   # Session-bound submission/event runtime
 │   └── event_log.py         # Append-only runtime event logs
 ├── shell/
@@ -153,17 +156,25 @@ localagentcli/
 ├── commands/
 │   ├── __init__.py
 │   ├── router.py            # CommandRouter — registry, dispatch, parsing
-│   ├── help.py              # /help command
-│   ├── setup.py             # /setup command
-│   ├── status.py            # /status command
-│   ├── config.py            # /config command
-│   ├── mode.py              # /mode command
-│   ├── models.py            # /models command group
-│   ├── providers.py         # /providers command group
-│   ├── workspace.py         # /workspace command
-│   ├── session.py           # /session command group
-│   ├── agent.py             # /agent command group
-│   └── logs.py              # /logs command group
+│   ├── help.py
+│   ├── setup_cmd.py         # /setup
+│   ├── status.py            # /status
+│   ├── config_cmd.py        # /config
+│   ├── mode.py
+│   ├── models.py
+│   ├── providers.py
+│   ├── session.py
+│   ├── agent.py
+│   ├── agents.py            # /agents (multi-agent)
+│   ├── set_cmd.py           # /set
+│   ├── hf_token.py
+│   ├── mcp.py
+│   ├── plugin.py
+│   └── skills.py
+├── mcp/                     # MCP client transport and tool wiring
+├── plugins/                 # Local plugin install/list/remove
+├── skills/                  # Skills discovery and install
+├── features/                # Feature registry / staged flags
 ├── models/
 │   ├── __init__.py
 │   ├── registry.py          # ModelRegistry — tracks installed models
@@ -194,12 +205,17 @@ localagentcli/
 │   ├── __init__.py
 │   ├── registry.py          # ToolRegistry — tool registration and lookup
 │   ├── base.py              # Tool ABC and ToolResult schema
+│   ├── router.py
+│   ├── schema.py
+│   ├── adaptation.py
 │   ├── file_read.py
 │   ├── file_search.py
 │   ├── directory_list.py
 │   ├── file_write.py
 │   ├── patch_apply.py
 │   ├── shell_execute.py
+│   ├── exec_process.py
+│   ├── python_repl.py
 │   ├── test_execute.py
 │   ├── git_status.py
 │   ├── git_diff.py
@@ -222,7 +238,15 @@ localagentcli/
     ├── __init__.py
     ├── manager.py            # SessionManager — save/load/list sessions
     ├── state.py              # Session — session state dataclass
-    └── compactor.py          # ContextCompactor — summarization logic
+    ├── store.py              # SessionStore abstraction (JSON default)
+    ├── sqlite_store.py       # Optional SQLite-backed persistence
+    ├── migrations.py
+    ├── compactor.py          # ContextCompactor — summarization logic
+    ├── instructions.py
+    ├── replay.py
+    ├── memory.py
+    ├── task_context.py
+    └── …                     # tokens, usage, environment_context, context_diff, …
 ```
 
 ---

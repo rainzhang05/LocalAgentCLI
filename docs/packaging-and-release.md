@@ -362,6 +362,7 @@ The repository uses:
 - `.github/workflows/lint.yml` for Ruff validation
 - `.github/workflows/typecheck.yml` for mypy
 - `.github/workflows/publish.yml` for build, artifact validation, `pipx` smoke testing, and trusted publishing to TestPyPI or PyPI. The **Publish** workflow runs a **release gate** job first (Ruff check, Ruff format check, mypy on `localagentcli/`, and pytest with the same coverage floor as local development): the build and publish jobs only run after that gate passes.
+- `.github/workflows/perf.yml` (**Perf**, `workflow_dispatch` only) so maintainers can run opt-in `tests/perf/` on GitHub Actions (`RUN_PERF=1`, `-m perf`) for baseline visibility without slowing default PR pipelines.
 
 ### Future changelog automation (optional)
 

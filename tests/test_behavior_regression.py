@@ -274,6 +274,68 @@ async def test_headless_exec_json_mode_emits_parseable_runtime_events(
 
 
 @pytest.mark.asyncio
+async def test_headless_exec_json_mode_deny_policy_emits_parseable_runtime_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deny policy + JSON exec: NDJSON events remain valid; mutating tool does not run."""
+    home = tmp_path / "home_json_deny"
+    home.mkdir()
+    workspace = tmp_path / "ws_json_deny"
+    workspace.mkdir()
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _write_e2e_config(home, workspace)
+
+    backend = _WriteToolFirstBackend()
+
+    def _fake_resolve(self: SessionExecutionRuntime) -> ModelAbstractionLayer:
+        return ModelAbstractionLayer(backend)
+
+    json_lines: list[str] = []
+
+    class _CaptureConsole:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._stderr = bool(kwargs.get("stderr"))
+
+        def print(self, *args: object, **kwargs: object) -> None:
+            if not args:
+                return
+            text = str(args[0])
+            if not self._stderr:
+                json_lines.append(text)
+
+    storage, config, _first = _bootstrap_application()
+    with (
+        patch("localagentcli.__main__.Console", _CaptureConsole),
+        patch.object(SessionExecutionRuntime, "resolve_active_model", _fake_resolve),
+        patch.object(ModelAbstractionLayer, "astream_generate", _e2e_fast_astream),
+    ):
+        rc = await _run_exec_async(
+            "Create out.txt with content blocked.",
+            config,
+            storage,
+            mode="agent",
+            json_mode=True,
+            approval_policy="deny",
+            session_name=None,
+            fork_name=None,
+            save_session=None,
+        )
+
+    assert rc == 0
+    assert not (workspace / "out.txt").exists()
+    assert json_lines, "expected JSON lines on stdout console in json_mode"
+    parsed: list[dict] = []
+    for line in json_lines:
+        obj = json.loads(line)
+        assert isinstance(obj, dict)
+        parsed.append(obj)
+        assert "type" in obj and "submission_id" in obj and "timestamp" in obj
+    assert any(e.get("type") == "turn_completed" for e in parsed)
+
+
+@pytest.mark.asyncio
 async def test_headless_exec_fork_save_persists_fork_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

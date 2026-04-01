@@ -336,6 +336,74 @@ async def test_headless_exec_json_mode_deny_policy_emits_parseable_runtime_event
 
 
 @pytest.mark.asyncio
+async def test_headless_exec_json_mode_save_session_persists_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JSON exec with --save-session persists user+assistant history."""
+    home = tmp_path / "home_json_save"
+    home.mkdir()
+    workspace = tmp_path / "ws_json_save"
+    workspace.mkdir()
+    (workspace / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _write_e2e_config(home, workspace)
+
+    backend = Phase17E2EBackend()
+
+    def _fake_resolve(self: SessionExecutionRuntime) -> ModelAbstractionLayer:
+        return ModelAbstractionLayer(backend)
+
+    json_lines: list[str] = []
+
+    class _CaptureConsole:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._stderr = bool(kwargs.get("stderr"))
+
+        def print(self, *args: object, **kwargs: object) -> None:
+            if not args:
+                return
+            text = str(args[0])
+            if not self._stderr:
+                json_lines.append(text)
+
+    session_name = "br_json_save"
+    storage, config, _first = _bootstrap_application()
+    with (
+        patch("localagentcli.__main__.Console", _CaptureConsole),
+        patch.object(SessionExecutionRuntime, "resolve_active_model", _fake_resolve),
+        patch.object(ModelAbstractionLayer, "astream_generate", _e2e_fast_astream),
+    ):
+        rc = await _run_exec_async(
+            "Inspect notes.txt briefly.",
+            config,
+            storage,
+            mode="agent",
+            json_mode=True,
+            approval_policy="auto",
+            session_name=None,
+            fork_name=None,
+            save_session=session_name,
+        )
+
+    assert rc == 0
+    session_path = storage.sessions_dir / f"{session_name}.json"
+    assert session_path.exists()
+    payload = json.loads(session_path.read_text(encoding="utf-8"))
+    hist = payload.get("history") or []
+    roles = [m.get("role") for m in hist]
+    assert "user" in roles
+    assert "assistant" in roles
+
+    assert json_lines, "expected JSON lines on stdout console in json_mode"
+    for line in json_lines:
+        obj = json.loads(line)
+        assert isinstance(obj, dict)
+        assert "type" in obj and "submission_id" in obj and "timestamp" in obj
+
+
+@pytest.mark.asyncio
 async def test_headless_exec_fork_save_persists_fork_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -234,6 +234,7 @@ The shell owns the confirmation and retry loop so backend modules remain focused
 | Unit tests | Individual classes and functions | `pytest` |
 | Integration tests | Component interactions (e.g., command router + session manager) | `pytest` |
 | CLI tests | End-to-end CLI behavior (input → output) | `pytest` + subprocess |
+| End-to-end (E2E) tests | Headless `exec` plus session save/reload across processes (deterministic model stubs) | `pytest` + `pytest-asyncio` + subprocess (`tests/e2e/`) |
 | Agent workflow tests | Full agent loop (task → plan → tools → result) | `pytest` with mock models |
 | Safety tests | Approval enforcement, boundary checks, rollback | `pytest` |
 

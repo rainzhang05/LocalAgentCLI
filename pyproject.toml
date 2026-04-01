@@ -85,6 +85,9 @@ localagent = "localagentcli.__main__:main"
 testpaths = ["tests"]
 addopts = "--strict-markers -v"
 asyncio_mode = "auto"
+markers = [
+    "perf: opt-in performance baselines (set RUN_PERF=1 to run)",
+]
 
 [tool.coverage.run]
 source = ["localagentcli"]

@@ -343,7 +343,7 @@ The repository uses:
 - `.github/workflows/test.yml` for the cross-platform test matrix on macOS, Linux, and Windows plus package build and `pipx` smoke validation
 - `.github/workflows/lint.yml` for Ruff validation
 - `.github/workflows/typecheck.yml` for mypy
-- `.github/workflows/publish.yml` for build, artifact validation, `pipx` smoke testing, and trusted publishing to TestPyPI or PyPI
+- `.github/workflows/publish.yml` for build, artifact validation, `pipx` smoke testing, and trusted publishing to TestPyPI or PyPI. The **Publish** workflow runs a **release gate** job first (Ruff check, Ruff format check, mypy on `localagentcli/`, and pytest with the same coverage floor as local development): the build and publish jobs only run after that gate passes.
 
 ### PyPI Publishing Prerequisites
 

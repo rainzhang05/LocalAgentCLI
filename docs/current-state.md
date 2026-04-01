@@ -1,6 +1,8 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-31 — **Phase 17 slices 6–7 follow-on (shipped):** `tests/test_behavior_regression.py::test_headless_exec_json_mode_emits_parseable_runtime_events` locks the headless `exec --json` contract (NDJSON `RuntimeEvent` lines with `type` / `submission_id` / `timestamp`, including a `turn_completed` event). `docs/architecture.md` reflects headless JSON output, `mcp`/`plugins`/`skills`/`features` modules, and updated command/session/tool package layout.
+> **Last updated**: 2026-03-31 — **Phase 17 slices 8–9 (shipped):** `docs/packaging-and-release.md` adds an optional **Future changelog automation** subsection (fragments/Towncrier-style deferred; current bar remains manual `CHANGELOG.md` + pytest version check). `test_headless_exec_json_mode_deny_policy_emits_parseable_runtime_events` extends JSON `exec` coverage with `approval_policy=deny` (parseable NDJSON, no mutating write).
+>
+> **Last updated (previous)**: 2026-03-31 — **Phase 17 slices 6–7 follow-on (shipped):** `tests/test_behavior_regression.py::test_headless_exec_json_mode_emits_parseable_runtime_events` locks the headless `exec --json` contract (NDJSON `RuntimeEvent` lines with `type` / `submission_id` / `timestamp`, including a `turn_completed` event). `docs/architecture.md` reflects headless JSON output, `mcp`/`plugins`/`skills`/`features` modules, and updated command/session/tool package layout.
 >
 > **Last updated (previous)**: 2026-03-31 — **Phase 17 follow-on (shipped):** `tests/test_packaging_metadata.py` asserts `CHANGELOG.md` contains a `## <version>` heading matching `[project].version` in `pyproject.toml`, so releases cannot drift version metadata without updating the changelog (same check runs in default pytest and the **Publish** `release_verify` gate).
 >
@@ -220,7 +222,7 @@ After implementing a component:
 | `[x]` | `docs/session-and-config.md` | 2026-03-26 — safety config examples now include backend selection (`container-docker` included), typed policy override fields, and container backend settings |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
-| `[x]` | `docs/packaging-and-release.md` | 2026-03-31 — release checklist (including changelog/version alignment with `pyproject.toml`), publish `release_verify` gate, trusted-publishing prerequisites, `pipx` smoke path, non-interactive first-run expectations, local wheel refresh, and opt-in `RUN_PERF=1` perf baseline instructions |
+| `[x]` | `docs/packaging-and-release.md` | 2026-03-31 — release checklist (changelog/version alignment with `pyproject.toml`), optional **Future changelog automation** note (fragments/Towncrier-style deferred), publish `release_verify` gate, trusted-publishing prerequisites, `pipx` smoke path, non-interactive first-run expectations, local wheel refresh, opt-in `RUN_PERF=1` perf baselines |
 | `[x]` | `docs/roadmap.md` | Complete |
 | `[x]` | `docs/current-state.md` | 2026-03-31 — Phase 17 slices 4–5 perf/docs alignment; CI table reflects `release_verify` on publish |
 | `[x]` | `README.md` | 2026-03-18 — install, usage, backend, development, and release validation instructions refreshed |

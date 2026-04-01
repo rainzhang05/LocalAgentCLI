@@ -1,6 +1,8 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-31 — **Phase 17 slices 8–9 (shipped):** `docs/packaging-and-release.md` adds an optional **Future changelog automation** subsection (fragments/Towncrier-style deferred; current bar remains manual `CHANGELOG.md` + pytest version check). `test_headless_exec_json_mode_deny_policy_emits_parseable_runtime_events` extends JSON `exec` coverage with `approval_policy=deny` (parseable NDJSON, no mutating write).
+> **Last updated**: 2026-04-01 — **Phase 17 slices 10–11 (shipped):** `test_headless_exec_json_mode_save_session_persists_history` asserts headless `exec --json` with `--save-session` writes a loadable session file whose `history` includes both `user` and `assistant` roles. `.github/workflows/perf.yml` is a manual **Perf** workflow (`workflow_dispatch`) that runs `RUN_PERF=1 python -m pytest tests/perf/ -v -m perf` on Ubuntu with Python 3.11 (aligned with `release_verify`); `docs/packaging-and-release.md` notes maintainers can trigger it for opt-in CI perf visibility.
+>
+> **Last updated (previous)**: 2026-03-31 — **Phase 17 slices 8–9 (shipped):** `docs/packaging-and-release.md` adds an optional **Future changelog automation** subsection (fragments/Towncrier-style deferred; current bar remains manual `CHANGELOG.md` + pytest version check). `test_headless_exec_json_mode_deny_policy_emits_parseable_runtime_events` extends JSON `exec` coverage with `approval_policy=deny` (parseable NDJSON, no mutating write).
 >
 > **Last updated (previous)**: 2026-03-31 — **Phase 17 slices 6–7 follow-on (shipped):** `tests/test_behavior_regression.py::test_headless_exec_json_mode_emits_parseable_runtime_events` locks the headless `exec --json` contract (NDJSON `RuntimeEvent` lines with `type` / `submission_id` / `timestamp`, including a `turn_completed` event). `docs/architecture.md` reflects headless JSON output, `mcp`/`plugins`/`skills`/`features` modules, and updated command/session/tool package layout.
 >
@@ -204,6 +206,7 @@ After implementing a component:
 | `[x]` | `.github/workflows/lint.yml` | 2026-03-17 — ruff check + format |
 | `[x]` | `.github/workflows/typecheck.yml` | 2026-03-17 — mypy |
 | `[x]` | `.github/workflows/publish.yml` | 2026-04-01 — `release_verify` job (ruff, ruff format `--check`, mypy, pytest with coverage floor) runs before build/smoke/publish; then build, artifact validation, `pipx` smoke via resolved `PIPX_BIN_DIR`, and trusted publishing for TestPyPI/PyPI |
+| `[x]` | `.github/workflows/perf.yml` | 2026-04-01 — manual `workflow_dispatch` only; `RUN_PERF=1` pytest on `tests/perf/` with `-m perf` (Python 3.11, ubuntu-latest) for maintainer-triggered baselines |
 
 ---
 
@@ -222,9 +225,9 @@ After implementing a component:
 | `[x]` | `docs/session-and-config.md` | 2026-03-26 — safety config examples now include backend selection (`container-docker` included), typed policy override fields, and container backend settings |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
-| `[x]` | `docs/packaging-and-release.md` | 2026-03-31 — release checklist (changelog/version alignment with `pyproject.toml`), optional **Future changelog automation** note (fragments/Towncrier-style deferred), publish `release_verify` gate, trusted-publishing prerequisites, `pipx` smoke path, non-interactive first-run expectations, local wheel refresh, opt-in `RUN_PERF=1` perf baselines |
+| `[x]` | `docs/packaging-and-release.md` | 2026-04-01 — release checklist (changelog/version alignment with `pyproject.toml`), optional **Future changelog automation** note (fragments/Towncrier-style deferred), publish `release_verify` gate, manual **Perf** workflow for opt-in `tests/perf/` on Actions, trusted-publishing prerequisites, `pipx` smoke path, non-interactive first-run expectations, local wheel refresh, opt-in `RUN_PERF=1` perf baselines |
 | `[x]` | `docs/roadmap.md` | Complete |
-| `[x]` | `docs/current-state.md` | 2026-03-31 — Phase 17 slices 4–5 perf/docs alignment; CI table reflects `release_verify` on publish |
+| `[x]` | `docs/current-state.md` | 2026-04-01 — Phase 17 slices 10–11: JSON exec save-session regression + manual Perf workflow; CI table includes `perf.yml` |
 | `[x]` | `README.md` | 2026-03-18 — install, usage, backend, development, and release validation instructions refreshed |
 | `[x]` | `CHANGELOG.md` | 2026-03-31 — release notes; `test_changelog_documents_pyproject_version` keeps headings aligned with `pyproject.toml` |
 | `[x]` | `CLAUDE.md` | Complete — includes testing/CI requirements |

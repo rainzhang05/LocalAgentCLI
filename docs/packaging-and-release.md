@@ -363,6 +363,12 @@ The repository uses:
 - `.github/workflows/typecheck.yml` for mypy
 - `.github/workflows/publish.yml` for build, artifact validation, `pipx` smoke testing, and trusted publishing to TestPyPI or PyPI. The **Publish** workflow runs a **release gate** job first (Ruff check, Ruff format check, mypy on `localagentcli/`, and pytest with the same coverage floor as local development): the build and publish jobs only run after that gate passes.
 
+### Future changelog automation (optional)
+
+Today’s release bar is a hand-edited root `CHANGELOG.md` with a `## <version>` heading that matches `[project].version` in `pyproject.toml` (enforced by `tests/test_packaging_metadata.py::test_changelog_documents_pyproject_version`).
+
+A future iteration may adopt richer automation—for example per-pull-request changelog fragments, Towncrier-style assembly, or generated release notes from merged PR labels. None of that is required for publishing; maintainers should not block releases on tooling that is not yet in the repository.
+
 ### PyPI Publishing Prerequisites
 
 Before the first real release, complete these repository-side setup steps:

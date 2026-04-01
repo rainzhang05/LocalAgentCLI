@@ -1,6 +1,8 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-31 — **Phase 17 slices 4–5 (shipped):** opt-in local performance baselines live under `tests/perf/` (`RUN_PERF=1`, `@pytest.mark.perf`); they time `build_conversation_model_messages` on a synthetic session with a loose wall-time ceiling for pathological regressions only. `docs/packaging-and-release.md` documents how to run them; product docs here and in that file align with the **Publish** workflow’s `release_verify` gate (ruff, format check, mypy, pytest with coverage floor before build/publish).
+> **Last updated**: 2026-03-31 — **Phase 17 follow-on (shipped):** `tests/test_packaging_metadata.py` asserts `CHANGELOG.md` contains a `## <version>` heading matching `[project].version` in `pyproject.toml`, so releases cannot drift version metadata without updating the changelog (same check runs in default pytest and the **Publish** `release_verify` gate).
+>
+> **Last updated (previous)**: 2026-03-31 — **Phase 17 slices 4–5 (shipped):** opt-in local performance baselines live under `tests/perf/` (`RUN_PERF=1`, `@pytest.mark.perf`); they time `build_conversation_model_messages` on a synthetic session with a loose wall-time ceiling for pathological regressions only. `docs/packaging-and-release.md` documents how to run them; product docs here and in that file align with the **Publish** workflow’s `release_verify` gate (ruff, format check, mypy, pytest with coverage floor before build/publish).
 >
 > **Last updated (previous)**: 2026-04-01 — **Regression and headless approval (shipped):** `tests/test_behavior_regression.py` covers headless `exec` with `--approval-policy auto` and `deny` for mutating `file_write` tools, fork + `--save-session` fork metadata in saved session JSON, and async agent transient retry (`AgentController` + fast `astream_generate` patch). `session_runtime` resumes the agent iterator before applying auto/deny approval so tool-approval waits always receive `supply_tool_approval`. `tests/e2e/test_phase17_session_lifecycle.py` continues to exercise read-only `file_read`, save, and subprocess reload; chat-mode `exec` uses a text-only stub. Tests use `await _run_exec_async(...)` with a fast-path patch for local `astream_generate` where applicable.
 >
@@ -216,10 +218,10 @@ After implementing a component:
 | `[x]` | `docs/session-and-config.md` | 2026-03-26 — safety config examples now include backend selection (`container-docker` included), typed policy override fields, and container backend settings |
 | `[x]` | `docs/cli-and-ux.md` | 2026-03-20 — primary vs secondary output rendering, dimmed `Details` panel, prompt-time status toolbar, agent route/phase/undo status surfaces, shared prompt helpers, renderer-backed command-result presentation, and truncated approval preview behavior documented |
 | `[x]` | `docs/storage-and-logging.md` | Complete |
-| `[x]` | `docs/packaging-and-release.md` | 2026-03-31 — release checklist, publish `release_verify` gate, trusted-publishing prerequisites, `pipx` smoke path, non-interactive first-run expectations, local wheel refresh, and opt-in `RUN_PERF=1` perf baseline instructions |
+| `[x]` | `docs/packaging-and-release.md` | 2026-03-31 — release checklist (including changelog/version alignment with `pyproject.toml`), publish `release_verify` gate, trusted-publishing prerequisites, `pipx` smoke path, non-interactive first-run expectations, local wheel refresh, and opt-in `RUN_PERF=1` perf baseline instructions |
 | `[x]` | `docs/roadmap.md` | Complete |
 | `[x]` | `docs/current-state.md` | 2026-03-31 — Phase 17 slices 4–5 perf/docs alignment; CI table reflects `release_verify` on publish |
 | `[x]` | `README.md` | 2026-03-18 — install, usage, backend, development, and release validation instructions refreshed |
-| `[x]` | `CHANGELOG.md` | 2026-03-18 — release notes expanded for hardening and packaging work |
+| `[x]` | `CHANGELOG.md` | 2026-03-31 — release notes; `test_changelog_documents_pyproject_version` keeps headings aligned with `pyproject.toml` |
 | `[x]` | `CLAUDE.md` | Complete — includes testing/CI requirements |
 | `[x]` | `AGENTS.md` | Complete — includes testing/CI requirements |

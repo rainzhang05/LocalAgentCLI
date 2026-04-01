@@ -1,6 +1,8 @@
 # LocalAgentCLI — Current State
 
-> **Last updated**: 2026-03-31 — **Phase 17 follow-on (shipped):** `tests/test_packaging_metadata.py` asserts `CHANGELOG.md` contains a `## <version>` heading matching `[project].version` in `pyproject.toml`, so releases cannot drift version metadata without updating the changelog (same check runs in default pytest and the **Publish** `release_verify` gate).
+> **Last updated**: 2026-03-31 — **Phase 17 slices 6–7 follow-on (shipped):** `tests/test_behavior_regression.py::test_headless_exec_json_mode_emits_parseable_runtime_events` locks the headless `exec --json` contract (NDJSON `RuntimeEvent` lines with `type` / `submission_id` / `timestamp`, including a `turn_completed` event). `docs/architecture.md` reflects headless JSON output, `mcp`/`plugins`/`skills`/`features` modules, and updated command/session/tool package layout.
+>
+> **Last updated (previous)**: 2026-03-31 — **Phase 17 follow-on (shipped):** `tests/test_packaging_metadata.py` asserts `CHANGELOG.md` contains a `## <version>` heading matching `[project].version` in `pyproject.toml`, so releases cannot drift version metadata without updating the changelog (same check runs in default pytest and the **Publish** `release_verify` gate).
 >
 > **Last updated (previous)**: 2026-03-31 — **Phase 17 slices 4–5 (shipped):** opt-in local performance baselines live under `tests/perf/` (`RUN_PERF=1`, `@pytest.mark.perf`); they time `build_conversation_model_messages` on a synthetic session with a loose wall-time ceiling for pathological regressions only. `docs/packaging-and-release.md` documents how to run them; product docs here and in that file align with the **Publish** workflow’s `release_verify` gate (ruff, format check, mypy, pytest with coverage floor before build/publish).
 >
@@ -207,7 +209,7 @@ After implementing a component:
 
 | Status | Component | Notes |
 |---|---|---|
-| `[x]` | `docs/architecture.md` | Complete |
+| `[x]` | `docs/architecture.md` | 2026-03-31 — headless `exec --json` event shape; package tree aligned with `commands/*`, `session/*` (store/SQLite), `mcp/`, `plugins/`, `skills/`, `features/` |
 | `[x]` | `docs/commands.md` | 2026-03-29 — adds multi-agent operator command surfaces (`/agents list`, `/agents inspect`, `/agents clear`) in addition to `/set default`, interactive `/config`, always-available `/hf-token`, shared command metadata, renderer-backed command presentation, readiness-aware target selection, and provider discovery messaging |
 | `[x]` | `docs/model-system.md` | 2026-03-29 — model abstraction docs now include provider prompt-profile hints for provider-aware system-layer formatting while preserving unified streaming/capability semantics |
 | `[x]` | `docs/remote-providers.md` | 2026-03-29 — prompt-caching docs now describe provider-aware segmented Anthropic system layers (stable cached vs dynamic uncached) in addition to readiness posture/tradeoff guidance for `/mode agent`, runtime dispatch checks, `/providers list`, and `/providers test` |

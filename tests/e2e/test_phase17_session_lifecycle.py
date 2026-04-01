@@ -281,3 +281,111 @@ async def test_e2e_exec_chat_turn_stub_roundtrip(
         )
 
     assert rc == 0
+
+
+class Phase17MockRemoteProvider(RemoteProvider):
+    """Deterministic remote-provider stub for headless exec E2E coverage."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="phase17-mock-remote",
+            base_url="http://mock-provider.local/v1",
+            api_key="test-key",
+            default_model="mock-remote-model",
+        )
+
+    def generate(self, messages: list[ModelMessage], **kwargs: object) -> object:
+        return collect_generation_result(self.stream_generate(messages, **kwargs))
+
+    def stream_generate(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> Iterator[StreamChunk]:
+        yield StreamChunk(text="Mock provider reply.", kind="final_text")
+        yield StreamChunk(kind="done", is_done=True)
+
+    def supports_tools(self) -> bool:
+        return True
+
+    def supports_reasoning(self) -> bool:
+        return False
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    def capabilities(self) -> dict:
+        return {"tool_use": True, "reasoning": False, "streaming": True}
+
+    def test_connection(self):
+        from localagentcli.providers.base import ConnectionTestResult
+
+        return ConnectionTestResult(success=True, message="ok")
+
+    def list_models(self) -> list[ModelInfo]:
+        return [ModelInfo(id="mock-remote-model", name="Mock Remote Model")]
+
+    async def agenerate(self, messages: list[ModelMessage], **kwargs: object) -> object:
+        return collect_generation_result([StreamChunk(text="Mock provider reply.")])
+
+    async def astream_generate(
+        self, messages: list[ModelMessage], **kwargs: object
+    ) -> AsyncIterator[StreamChunk]:
+        yield StreamChunk(text="Mock provider reply.", kind="final_text")
+        yield StreamChunk(kind="done", is_done=True)
+
+    async def atest_connection(self):
+        return self.test_connection()
+
+    async def alist_models(self) -> list[ModelInfo]:
+        return self.list_models()
+
+
+@pytest.mark.asyncio
+async def test_e2e_exec_chat_mock_remote_provider_save_and_subprocess_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Headless exec via RemoteProvider stub saves session and reloads in a fresh process."""
+    home = tmp_path / "home_remote"
+    home.mkdir()
+    workspace = tmp_path / "workspace_remote"
+    workspace.mkdir()
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _write_e2e_config(home, workspace)
+
+    provider = Phase17MockRemoteProvider()
+
+    def _fake_resolve(self: SessionExecutionRuntime) -> ModelAbstractionLayer:
+        return ModelAbstractionLayer(provider)
+
+    session_name = "phase17_mock_remote_saved"
+    storage, config, _first = _bootstrap_application()
+    with (
+        patch.object(SessionExecutionRuntime, "resolve_active_model", _fake_resolve),
+        patch.object(ModelAbstractionLayer, "astream_generate", _e2e_fast_astream),
+    ):
+        rc = await _run_exec_async(
+            "Say hello from remote stub.",
+            config,
+            storage,
+            mode="chat",
+            json_mode=True,
+            approval_policy="deny",
+            session_name=None,
+            fork_name=None,
+            save_session=session_name,
+        )
+
+    assert rc == 0
+    session_path = home / ".localagent" / "sessions" / f"{session_name}.json"
+    assert session_path.exists()
+    payload = json.loads(session_path.read_text(encoding="utf-8"))
+    hist = payload.get("history") or []
+    assert any(m.get("role") == "assistant" for m in hist)
+    assert any("Mock provider reply." in (m.get("content") or "") for m in hist)
+
+    _write_config(home, mode="chat")
+    second = _run_cli(home, f"/session load {session_name}\n/status\n/exit\n")
+    assert second.returncode == 0
+    assert f"Session '{session_name}' loaded." in second.stdout
+    assert "Mode:" in second.stdout

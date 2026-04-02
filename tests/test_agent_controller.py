@@ -7,6 +7,8 @@ from pathlib import Path
 
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import (
+    GuardianReviewCompleted,
+    GuardianReviewStarted,
     PhaseChanged,
     PlanGenerated,
     PlanUpdated,
@@ -367,3 +369,38 @@ class TestAgentController:
 
         assert controller.task_state["phase"] == "failed"
         assert controller.task_state["last_error_type"] == "model_terminal"
+
+    def test_guardian_review_events_persist_reviewer_metadata(self, tmp_path: Path):
+        model = FakeAgentModel([])
+        controller = AgentController(
+            model=model,
+            session=_make_session(tmp_path),
+            tool_registry=create_default_tool_registry(tmp_path),
+            approvals_reviewer="guardian_subagent",
+        )
+
+        controller._record_event(
+            GuardianReviewStarted(
+                tool_name="file_write",
+                action_summary="file_write path=out.txt",
+            )
+        )
+        assert controller.task_state["phase"] == "waiting_approval"
+        assert controller.task_state["pending_tool"] == "file_write"
+
+        controller._record_event(
+            GuardianReviewCompleted(
+                tool_name="file_write",
+                approved=False,
+                risk_level="high",
+                risk_score=95,
+                rationale="Potential destructive write.",
+                evidence=[{"fact": "mutating file write", "source": "request"}],
+                failure="",
+            )
+        )
+
+        assert controller.task_state["approvals_reviewer"] == "guardian_subagent"
+        assert controller.task_state["guardian_last_decision"] == "denied"
+        assert controller.task_state["guardian_last_risk_score"] == 95
+        assert controller.task_state["last_error_type"] == "guardian_denied"

@@ -39,6 +39,7 @@ active_provider = ""            # CLI-wide default provider for remote targets
 
 [safety]
 approval_mode = "balanced"      # "balanced" | "autonomous"
+approvals_reviewer = "user"     # "user" | "guardian_subagent"
 sandbox_mode = "workspace-write"  # "workspace-write" | "read-only" | "danger-full-access"
 os_sandbox_backend = "off"      # "off" | "auto" | "macos-seatbelt" | "linux-bwrap" | "container-docker"
 sandbox_network_access = "auto" # "auto" | "allow" | "deny"
@@ -110,6 +111,7 @@ startup_banner = true              # Show a startup context banner with mode/tar
 | `model.active_model` | string | `""` | CLI-wide default target identifier. For local targets this is `<name>@<version>`; for remote targets this is the selected remote model id. |
 | `provider.active_provider` | string | `""` | CLI-wide default remote provider name. Empty means the default target is local or unset. |
 | `safety.approval_mode` | string | `"balanced"` | Approval mode (`balanced` or `autonomous`) |
+| `safety.approvals_reviewer` | string | `"user"` | Approval reviewer routing (`user` keeps interactive approval; `guardian_subagent` routes eligible approval-required actions through guardian risk review with fail-closed denial on reviewer errors) |
 | `safety.sandbox_mode` | string | `"workspace-write"` | Runtime sandbox posture: `workspace-write`, `read-only`, or `danger-full-access` (invalid values are rejected when validated) |
 | `safety.os_sandbox_backend` | string | `"off"` | Optional command wrapper backend: `off`, `auto`, `macos-seatbelt`, `linux-bwrap`, `container-docker` |
 | `safety.sandbox_network_access` | string | `"auto"` | Runtime network policy override for typed sandbox policy (`auto`, `allow`, `deny`) |

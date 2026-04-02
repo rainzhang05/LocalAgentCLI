@@ -6,7 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from localagentcli.agents.events import (
+    GuardianReviewCompleted,
+    GuardianReviewStarted,
     PhaseChanged,
     TaskComplete,
     TaskFailed,
@@ -15,6 +19,7 @@ from localagentcli.agents.events import (
 )
 from localagentcli.agents.loop import AgentLoop
 from localagentcli.agents.planner import PlanStep, TaskPlan, TaskPlanner
+from localagentcli.guardian import GuardianReviewResult
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.models.model_info import ModelInfo
 from localagentcli.safety.approval import ApprovalManager
@@ -520,6 +525,161 @@ def test_tool_denial_triggers_replan_with_unified_loop(tmp_path: Path):
 
     assert any(isinstance(event, PhaseChanged) and event.phase == "replanning" for event in events)
     assert isinstance(events[-1], TaskComplete)
+
+
+def test_guardian_routes_file_write_without_interactive_approval_prompt(
+    tmp_path: Path,
+    monkeypatch,
+):
+    result = GenerationResult(
+        text="",
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "file_write",
+                    "arguments": '{"path":"out.txt","content":"hello"}',
+                },
+            }
+        ],
+    )
+    model = _LoopScriptedModel([GenerationResult(text="noop")])
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        approvals_reviewer="guardian_subagent",
+    )
+
+    monkeypatch.setattr(
+        "localagentcli.agents.loop.review_with_guardian",
+        lambda _model, _request: GuardianReviewResult(
+            approved=False,
+            risk_level="high",
+            risk_score=92,
+            rationale="Destructive write pattern.",
+            evidence=[{"fact": "mutating write", "source": "request"}],
+            failure="",
+        ),
+    )
+
+    events: list = []
+    iterator = loop._handle_tool_calls_sequential(result)
+    while True:
+        try:
+            event = next(iterator)
+        except StopIteration:
+            break
+        events.append(event)
+
+    requests = [event for event in events if isinstance(event, ToolCallRequested)]
+    assert requests
+    assert all(event.requires_approval is False for event in requests)
+    assert any(isinstance(event, GuardianReviewStarted) for event in events)
+    completed = [event for event in events if isinstance(event, GuardianReviewCompleted)]
+    assert completed and completed[-1].approved is False
+    denied = [
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.result.status == "denied"
+    ]
+    assert denied
+    assert denied[-1].result.summary.startswith("Guardian denied tool")
+
+
+def test_guardian_eligibility_includes_mutating_mcp_tool_names(tmp_path: Path):
+    model = _LoopScriptedModel([GenerationResult(text="noop")])
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        approvals_reviewer="guardian_subagent",
+    )
+
+    assert loop._should_route_approval_to_guardian("mcp__demo__mutate", True) is True
+    assert loop._should_route_approval_to_guardian("mcp__demo__read", False) is False
+
+
+@pytest.mark.asyncio
+async def test_async_guardian_routes_mcp_mutation_without_interactive_prompt(
+    tmp_path: Path,
+    monkeypatch,
+):
+    result = GenerationResult(
+        text="",
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "file_write",
+                    "arguments": '{"path":"out.txt","content":"hello"}',
+                },
+            }
+        ],
+    )
+    model = _LoopScriptedModel([GenerationResult(text="noop")])
+    registry = create_default_tool_registry(tmp_path)
+    approval = ApprovalManager()
+    safety = SafetyLayer(
+        approval,
+        WorkspaceBoundary(tmp_path.resolve()),
+        RollbackManager("session-1", tmp_path / ".cache"),
+    )
+    loop = AgentLoop(
+        model,
+        registry,
+        TaskPlanner(model),
+        safety,
+        approvals_reviewer="guardian_subagent",
+    )
+
+    async def _allow(_model, _request):
+        return GuardianReviewResult(
+            approved=True,
+            risk_level="medium",
+            risk_score=55,
+            rationale="Scoped workspace change.",
+            evidence=[{"fact": "single file target", "source": "request"}],
+            failure="",
+        )
+
+    monkeypatch.setattr("localagentcli.agents.loop.areview_with_guardian", _allow)
+
+    events: list = []
+    async for event in loop._ahandle_tool_calls_async(result):
+        events.append(event)
+
+    requests = [event for event in events if isinstance(event, ToolCallRequested)]
+    assert requests
+    assert all(event.requires_approval is False for event in requests)
+    assert any(isinstance(event, GuardianReviewStarted) for event in events)
+    completed = [event for event in events if isinstance(event, GuardianReviewCompleted)]
+    assert completed and completed[-1].approved is True
+    success = [
+        event
+        for event in events
+        if isinstance(event, ToolCallResult) and event.result.status == "success"
+    ]
+    assert success
+    assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello"
 
 
 def test_terminal_model_failure_sets_failure_type_without_retrying(tmp_path: Path):

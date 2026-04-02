@@ -48,6 +48,26 @@ explicitly with `--approval-policy`. The current headless options are:
 - `deny`: reject approval-requiring actions and let the agent recover or fail
 - `auto`: auto-submit approval responses without prompting
 
+### Approval reviewer routing
+
+Approval prompts can be routed through one of two reviewer paths:
+
+- `safety.approvals_reviewer = "user"` (default): use interactive user approval for
+    approval-required tool calls.
+- `safety.approvals_reviewer = "guardian_subagent"`: route eligible
+    approval-required actions through an internal guardian risk reviewer instead
+    of pausing for interactive approval.
+
+Current guardian-eligible tool categories are:
+
+- `shell_execute`
+- `file_write`
+- `patch_apply`
+- mutating MCP tools (`mcp__*` that otherwise require approval)
+
+Guardian review is **fail-closed**: if reviewer execution or parsing fails, the
+action is denied and the loop continues through normal recovery/replanning paths.
+
 Runtime sandbox posture is controlled separately through `safety.sandbox_mode`
 (config values are validated against the supported set when settings are saved):
 - `workspace-write`: the normal default posture
@@ -151,6 +171,10 @@ When autonomous mode is active, the prompt is skipped for standard actions. The 
 ```
 
 High-risk actions generally continue to require interactive approval in autonomous mode. The explicit exception is high-risk `shell_execute` calls when `safety.sandbox_mode` is set to `danger-full-access`.
+
+When guardian routing is enabled (`safety.approvals_reviewer = "guardian_subagent"`),
+eligible approval-required actions show guardian review status in the activity
+stream (review start + decision) and do not emit interactive approval prompts.
 
 ---
 

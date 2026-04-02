@@ -9,6 +9,8 @@ from pathlib import Path
 
 from localagentcli.agents.events import (
     AgentEvent,
+    GuardianReviewCompleted,
+    GuardianReviewStarted,
     PhaseChanged,
     PlanGenerated,
     StepStarted,
@@ -74,6 +76,7 @@ class AgentController:
         generation_config: dict[str, object] | None = None,
         inactivity_timeout: int | None = None,
         on_session_mutated: Callable[[], None] | None = None,
+        approvals_reviewer: str = "user",
     ):
         self._model = model
         self._session = session
@@ -89,7 +92,14 @@ class AgentController:
             ),
         )
         self._planner = TaskPlanner(model)
-        self._loop = AgentLoop(model, tool_registry, self._planner, self._safety)
+        self._approvals_reviewer = approvals_reviewer
+        self._loop = AgentLoop(
+            model,
+            tool_registry,
+            self._planner,
+            self._safety,
+            approvals_reviewer=approvals_reviewer,
+        )
         self._triage = TaskTriageClassifier(model)
         self._compactor = ContextCompactor(model, context_limit)
         self._generation_config = generation_config or {}
@@ -576,7 +586,10 @@ class AgentController:
                 if event.result.status == "timeout":
                     last_error_type = "tool_timeout"
                 elif event.result.status == "denied":
-                    last_error_type = "tool_denied"
+                    if event.result.summary.startswith("Guardian denied tool"):
+                        last_error_type = "guardian_denied"
+                    else:
+                        last_error_type = "tool_denied"
                 elif event.result.status == "error" and (
                     event.result.summary.startswith("Blocked tool")
                     or "violated a safety rule" in lower
@@ -631,6 +644,36 @@ class AgentController:
                     summary=f"Running tool: {event.tool_name}.",
                     active=True,
                 )
+            return
+
+        if isinstance(event, GuardianReviewStarted):
+            self._pending_tool = None
+            self._update_task_state(
+                phase="waiting_approval",
+                pending_tool=event.tool_name,
+                wait_reason=f"guardian review for {event.tool_name}",
+                summary=f"Guardian reviewing: {event.action_summary or event.tool_name}.",
+                active=True,
+            )
+            return
+
+        if isinstance(event, GuardianReviewCompleted):
+            decision = "approved" if event.approved else "denied"
+            self._update_task_state(
+                phase="executing" if event.approved else "recovering",
+                pending_tool=None,
+                wait_reason="",
+                last_error="" if event.approved else event.rationale,
+                last_error_type="" if event.approved else "guardian_denied",
+                summary=(f"Guardian {decision} {event.tool_name} (risk {event.risk_score}/100)."),
+                guardian_last_tool=event.tool_name,
+                guardian_last_decision=decision,
+                guardian_last_risk_level=event.risk_level,
+                guardian_last_risk_score=event.risk_score,
+                guardian_last_rationale=event.rationale,
+                guardian_last_failure=event.failure,
+                active=True,
+            )
             return
 
         if isinstance(event, TaskComplete):
@@ -934,6 +977,12 @@ class AgentController:
         retry_count: object = _UNCHANGED,
         last_error: object = _UNCHANGED,
         last_error_type: object = _UNCHANGED,
+        guardian_last_tool: object = _UNCHANGED,
+        guardian_last_decision: object = _UNCHANGED,
+        guardian_last_risk_level: object = _UNCHANGED,
+        guardian_last_risk_score: object = _UNCHANGED,
+        guardian_last_rationale: object = _UNCHANGED,
+        guardian_last_failure: object = _UNCHANGED,
         summary: object = _UNCHANGED,
         active: object = _UNCHANGED,
     ) -> None:
@@ -950,6 +999,15 @@ class AgentController:
             "retry_count": self._coerce_int(current.get("retry_count", 0), 0),
             "last_error": current.get("last_error", ""),
             "last_error_type": current.get("last_error_type", ""),
+            "guardian_last_tool": current.get("guardian_last_tool", ""),
+            "guardian_last_decision": current.get("guardian_last_decision", ""),
+            "guardian_last_risk_level": current.get("guardian_last_risk_level", ""),
+            "guardian_last_risk_score": self._coerce_int(
+                current.get("guardian_last_risk_score", 0),
+                0,
+            ),
+            "guardian_last_rationale": current.get("guardian_last_rationale", ""),
+            "guardian_last_failure": current.get("guardian_last_failure", ""),
             "summary": current.get("summary", ""),
             "active": bool(current.get("active", False)),
             "started_at": current.get("started_at", ""),
@@ -974,6 +1032,18 @@ class AgentController:
             state["last_error"] = last_error
         if last_error_type is not _UNCHANGED:
             state["last_error_type"] = last_error_type
+        if guardian_last_tool is not _UNCHANGED:
+            state["guardian_last_tool"] = guardian_last_tool
+        if guardian_last_decision is not _UNCHANGED:
+            state["guardian_last_decision"] = guardian_last_decision
+        if guardian_last_risk_level is not _UNCHANGED:
+            state["guardian_last_risk_level"] = guardian_last_risk_level
+        if guardian_last_risk_score is not _UNCHANGED:
+            state["guardian_last_risk_score"] = self._coerce_int(guardian_last_risk_score, 0)
+        if guardian_last_rationale is not _UNCHANGED:
+            state["guardian_last_rationale"] = guardian_last_rationale
+        if guardian_last_failure is not _UNCHANGED:
+            state["guardian_last_failure"] = guardian_last_failure
         if summary is not _UNCHANGED:
             state["summary"] = summary
         if active is not _UNCHANGED:
@@ -988,6 +1058,7 @@ class AgentController:
             state["ended_at"] = now_iso
 
         state["approval_mode"] = self._approval.mode
+        state["approvals_reviewer"] = self._approvals_reviewer
         state["rollback_count"] = self.rollback_count
         latest_usage = latest_usage_counts(self._session.metadata)
         state["usage_prompt_tokens"] = latest_usage.get("prompt_tokens", 0)

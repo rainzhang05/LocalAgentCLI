@@ -21,6 +21,7 @@ class StatusSnapshot:
     session_name: str
     approval_mode: str
     message_count: int
+    approvals_reviewer: str = "user"
     agent_route: str = ""
     agent_phase: str = ""
     agent_step: str = ""
@@ -28,6 +29,9 @@ class StatusSnapshot:
     agent_wait_reason: str = ""
     agent_retry_count: int = 0
     agent_last_error: str = ""
+    guardian_last_decision: str = ""
+    guardian_last_risk_score: int = 0
+    guardian_last_risk_level: str = ""
     agent_active: bool = False
     agent_started_at: str = ""
     agent_updated_at: str = ""
@@ -42,6 +46,7 @@ def build_status_snapshot(
     session_name: str,
     approval_mode: str,
     message_count: int,
+    approvals_reviewer: str = "user",
     agent_route: str = "",
     agent_phase: str = "",
     agent_step: str = "",
@@ -49,6 +54,9 @@ def build_status_snapshot(
     agent_wait_reason: str = "",
     agent_retry_count: int = 0,
     agent_last_error: str = "",
+    guardian_last_decision: str = "",
+    guardian_last_risk_score: int = 0,
+    guardian_last_risk_level: str = "",
     agent_active: bool = False,
     agent_started_at: str = "",
     agent_updated_at: str = "",
@@ -61,6 +69,7 @@ def build_status_snapshot(
         workspace=workspace,
         session_name=session_name,
         approval_mode=approval_mode,
+        approvals_reviewer=approvals_reviewer,
         message_count=message_count,
         agent_route=agent_route,
         agent_phase=agent_phase,
@@ -69,6 +78,9 @@ def build_status_snapshot(
         agent_wait_reason=agent_wait_reason,
         agent_retry_count=agent_retry_count,
         agent_last_error=agent_last_error,
+        guardian_last_decision=guardian_last_decision,
+        guardian_last_risk_score=guardian_last_risk_score,
+        guardian_last_risk_level=guardian_last_risk_level,
         agent_active=agent_active,
         agent_started_at=agent_started_at,
         agent_updated_at=agent_updated_at,
@@ -105,6 +117,7 @@ def format_status_report(snapshot: StatusSnapshot) -> str:
         f"  Workspace:     {snapshot.workspace}",
         f"  Session:       {snapshot.session_name}",
         f"  Approval:      {snapshot.approval_mode}",
+        f"  Reviewer:      {snapshot.approvals_reviewer}",
         f"  Messages:      {snapshot.message_count}",
     ]
     if snapshot.mode == "agent":
@@ -130,6 +143,15 @@ def format_status_report(snapshot: StatusSnapshot) -> str:
             lines.append(f"  Retries:       {snapshot.agent_retry_count}")
         if snapshot.agent_last_error:
             lines.append(f"  Last error:    {snapshot.agent_last_error}")
+        if snapshot.guardian_last_decision:
+            details = snapshot.guardian_last_decision
+            if snapshot.guardian_last_risk_level or snapshot.guardian_last_risk_score:
+                details = (
+                    f"{details} "
+                    f"({snapshot.guardian_last_risk_level or 'unknown'} "
+                    f"{snapshot.guardian_last_risk_score}/100)"
+                )
+            lines.append(f"  Guardian:      {details}")
         lines.append(f"  Undo ready:    {snapshot.rollback_count} change(s)")
     else:
         if snapshot.agent_route:
@@ -200,6 +222,7 @@ class StatusHandler(CommandHandler):
             workspace=workspace,
             session_name=session.name or "(unsaved)",
             approval_mode=approval_mode,
+            approvals_reviewer=str(task_state.get("approvals_reviewer", "user") or "user"),
             message_count=len(session.history),
             agent_route=str(task_state.get("route", "") or ""),
             agent_phase=str(task_state.get("phase", "") or ""),
@@ -208,6 +231,9 @@ class StatusHandler(CommandHandler):
             agent_wait_reason=str(task_state.get("wait_reason", "") or ""),
             agent_retry_count=int(task_state.get("retry_count", 0) or 0),
             agent_last_error=str(task_state.get("last_error", "") or ""),
+            guardian_last_decision=str(task_state.get("guardian_last_decision", "") or ""),
+            guardian_last_risk_score=int(task_state.get("guardian_last_risk_score", 0) or 0),
+            guardian_last_risk_level=str(task_state.get("guardian_last_risk_level", "") or ""),
             agent_active=bool(task_state.get("active", False)),
             agent_started_at=str(task_state.get("started_at", "") or ""),
             agent_updated_at=str(task_state.get("updated_at", "") or ""),

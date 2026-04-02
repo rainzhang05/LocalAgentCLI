@@ -21,6 +21,7 @@ DEFAULT_CONFIG: dict = {
     },
     "safety": {
         "approval_mode": "balanced",
+        "approvals_reviewer": "user",
         "sandbox_mode": "workspace-write",
         "os_sandbox_backend": "off",
         "sandbox_network_access": "auto",
@@ -73,6 +74,10 @@ CONFIG_SCHEMA: dict[str, tuple[type, Any]] = {
     "model.active_model": (str, None),
     "provider.active_provider": (str, None),
     "safety.approval_mode": (str, lambda v: v in ("balanced", "autonomous")),
+    "safety.approvals_reviewer": (
+        str,
+        lambda v: v in ("user", "guardian_subagent"),
+    ),
     "safety.sandbox_mode": (str, None),
     "safety.os_sandbox_backend": (
         str,

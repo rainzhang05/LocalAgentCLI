@@ -18,6 +18,7 @@ import pytest
 from localagentcli.__main__ import _bootstrap_application, _run_exec_async
 from localagentcli.agents.controller import AgentController
 from localagentcli.agents.events import PhaseChanged, TaskComplete
+from localagentcli.guardian import GuardianReviewResult
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import (
     ModelBackend,
@@ -333,6 +334,77 @@ async def test_headless_exec_json_mode_deny_policy_emits_parseable_runtime_event
         parsed.append(obj)
         assert "type" in obj and "submission_id" in obj and "timestamp" in obj
     assert any(e.get("type") == "turn_completed" for e in parsed)
+
+
+@pytest.mark.asyncio
+async def test_headless_exec_json_mode_guardian_reviewer_avoids_interactive_approval_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guardian reviewer routes eligible approvals without emitting approval_requested events."""
+    home = tmp_path / "home_json_guardian"
+    home.mkdir()
+    workspace = tmp_path / "ws_json_guardian"
+    workspace.mkdir()
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _write_e2e_config(home, workspace)
+
+    backend = _WriteToolFirstBackend()
+
+    def _fake_resolve(self: SessionExecutionRuntime) -> ModelAbstractionLayer:
+        return ModelAbstractionLayer(backend)
+
+    async def _deny_guardian(_model, _request):
+        return GuardianReviewResult(
+            approved=False,
+            risk_level="high",
+            risk_score=93,
+            rationale="Destructive action denied.",
+            evidence=[{"fact": "mutating write", "source": "request"}],
+            failure="",
+        )
+
+    json_lines: list[str] = []
+
+    class _CaptureConsole:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._stderr = bool(kwargs.get("stderr"))
+
+        def print(self, *args: object, **kwargs: object) -> None:
+            if not args:
+                return
+            text = str(args[0])
+            if not self._stderr:
+                json_lines.append(text)
+
+    storage, config, _first = _bootstrap_application()
+    config.set("safety.approvals_reviewer", "guardian_subagent")
+    with (
+        patch("localagentcli.__main__.Console", _CaptureConsole),
+        patch.object(SessionExecutionRuntime, "resolve_active_model", _fake_resolve),
+        patch.object(ModelAbstractionLayer, "astream_generate", _e2e_fast_astream),
+        patch("localagentcli.agents.loop.areview_with_guardian", _deny_guardian),
+    ):
+        rc = await _run_exec_async(
+            "Create out.txt with content blocked.",
+            config,
+            storage,
+            mode="agent",
+            json_mode=True,
+            approval_policy="shell",
+            session_name=None,
+            fork_name=None,
+            save_session=None,
+        )
+
+    assert rc == 0
+    assert not (workspace / "out.txt").exists()
+    parsed = [json.loads(line) for line in json_lines]
+    assert parsed
+    assert all(event.get("type") != "approval_requested" for event in parsed)
+    assert any(event.get("type") == "agent_event" for event in parsed)
+    assert any(event.get("type") == "turn_completed" for event in parsed)
 
 
 @pytest.mark.asyncio

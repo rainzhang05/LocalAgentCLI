@@ -14,6 +14,8 @@ from rich.text import Text
 
 from localagentcli.agents.events import (
     AgentEvent,
+    GuardianReviewCompleted,
+    GuardianReviewStarted,
     PhaseChanged,
     PlanGenerated,
     PlanUpdated,
@@ -380,6 +382,25 @@ class StreamRenderer:
                 self.render_warning(event.result.summary)
             else:
                 self.render_error(event.result.summary)
+            return
+        if isinstance(event, GuardianReviewStarted):
+            self.render_status(f"Guardian reviewing: {event.action_summary or event.tool_name}.")
+            return
+        if isinstance(event, GuardianReviewCompleted):
+            if event.approved:
+                self.render_status(
+                    "Guardian approved "
+                    f"{event.tool_name} ({event.risk_level} {event.risk_score}/100)."
+                )
+            else:
+                self.render_warning(
+                    "Guardian denied "
+                    f"{event.tool_name} ({event.risk_level} {event.risk_score}/100)."
+                )
+            if event.rationale:
+                self.render_secondary(f"Guardian rationale: {event.rationale}")
+            if event.failure:
+                self.render_secondary(f"Guardian failure: {event.failure}")
             return
         if isinstance(event, ReasoningOutput):
             self.render_secondary(event.text)

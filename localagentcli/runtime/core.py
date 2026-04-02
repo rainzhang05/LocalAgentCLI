@@ -597,6 +597,8 @@ class SessionExecutionRuntime:
             session.model,
             self._services.session_manager.get_effective_config("safety.approval_mode")
             or "balanced",
+            self._services.session_manager.get_effective_config("safety.approvals_reviewer")
+            or "user",
             id(model.backend),
         )
         if self._agent_controller is not None and self._agent_controller_key == key:
@@ -645,6 +647,10 @@ class SessionExecutionRuntime:
             )
             or 600,
             on_session_mutated=self._services.session_manager.schedule_named_autosave,
+            approvals_reviewer=self._services.session_manager.get_effective_config(
+                "safety.approvals_reviewer"
+            )
+            or "user",
         )
         return self._agent_controller
 

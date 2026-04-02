@@ -45,6 +45,7 @@ class TestDefaultConfig:
 
     def test_default_sandbox_policy_override_fields(self):
         safety = DEFAULT_CONFIG["safety"]
+        assert safety["approvals_reviewer"] == "user"
         assert safety["sandbox_network_access"] == "auto"
         assert safety["sandbox_writable_roots"] == ""
         assert safety["os_sandbox_container_image"] == "python:3.12-slim"
@@ -223,6 +224,15 @@ class TestValidateConfigValue:
 
     def test_os_sandbox_backend_invalid_value(self):
         ok, _msg = validate_config_value("safety.os_sandbox_backend", "seatbelt")
+        assert not ok
+
+    def test_approvals_reviewer_valid_values(self):
+        for value in ("user", "guardian_subagent"):
+            ok, msg = validate_config_value("safety.approvals_reviewer", value)
+            assert ok, msg
+
+    def test_approvals_reviewer_invalid_value(self):
+        ok, _msg = validate_config_value("safety.approvals_reviewer", "guardian")
         assert not ok
 
     def test_sandbox_network_access_valid_values(self):

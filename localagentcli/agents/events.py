@@ -81,6 +81,31 @@ class ToolCallRequested(AgentEvent):
 
 
 @dataclass
+class GuardianReviewStarted(AgentEvent):
+    """A guardian reviewer started evaluating an approval-eligible action."""
+
+    tool_name: str
+    action_summary: str = ""
+    reviewer: str = "guardian_subagent"
+    type: str = field(init=False, default="guardian_review_started")
+
+
+@dataclass
+class GuardianReviewCompleted(AgentEvent):
+    """A guardian reviewer finished and produced an approval decision."""
+
+    tool_name: str
+    approved: bool
+    risk_level: str = "high"
+    risk_score: int = 100
+    rationale: str = ""
+    evidence: list[dict[str, str]] = field(default_factory=list)
+    reviewer: str = "guardian_subagent"
+    failure: str = ""
+    type: str = field(init=False, default="guardian_review_completed")
+
+
+@dataclass
 class ToolCallResult(AgentEvent):
     """A tool call finished."""
 

@@ -101,7 +101,7 @@ The loop continues until the task is complete, fails, or the user intervenes.
 3. **Iterative reasoning**: After each step, the agent reasons about the result and decides the next action. This reasoning is visible to the user through the same dimmed `Details` lane used by chat-mode secondary output.
 4. **Subtask decomposition**: Complex tasks are broken into smaller subtasks. Each subtask has its own mini-plan.
 5. **Repository defaults honored**: When `AGENTS.md` is present at the active repository root, its contents are included automatically alongside user-pinned instructions for planning and execution.
-6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, `last_error_type`, approval mode, rollback availability, latest usage counters (`usage_prompt_tokens`, `usage_completion_tokens`, `usage_total_tokens`), and timing fields (`active`, `started_at`, `ended_at`, `updated_at`) are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
+6. **Task-state visibility**: Agent route, phase, current step, pending approval, wait reason, retry count, last error, `last_error_type`, approval mode, reviewer mode (`approvals_reviewer`), latest guardian decision metadata, rollback availability, latest usage counters (`usage_prompt_tokens`, `usage_completion_tokens`, `usage_total_tokens`), and timing fields (`active`, `started_at`, `ended_at`, `updated_at`) are persisted in `session.metadata["agent_task_state"]` and reused by the prompt toolbar and `/status`.
 7. **Model-aware generation profiles**: Triage, planning, and step execution each use phase-specific generation profiles derived from shared config and `ModelInfo.default_max_tokens`; this avoids hardcoded loop token limits and keeps controller and loop behavior aligned.
 8. **Structured step briefings**: Step execution prompts use a fixed structure (execution rules, output contract, task objective, plan status, current step focus) before layered system/session context, reducing ambiguity during long tool-using turns.
 9. **Model-adapted tool exposure**: Per-round tool definitions are filtered by active `ModelInfo` (tool-use capability gates, required capability tags, minimum token-budget thresholds) before the model receives tool schemas.
@@ -117,7 +117,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 |---|---|
 | `planning` | The controller is triaging or building the initial task plan |
 | `executing` | The agent is actively running or streaming the next step |
-| `waiting_approval` | A tool call is paused for explicit approval |
+| `waiting_approval` | A tool call is waiting for either explicit user approval or guardian review |
 | `retrying` | The loop is retrying the current step after a model or tool failure |
 | `replanning` | The planner is revising the remaining plan after a denial or repeated failure |
 | `recovering` | The loop is handling a blocked, denied, cancelled, or failed tool result before continuing |
@@ -178,7 +178,7 @@ Planned agent work carries one visible phase at a time. The current phase is ren
 - It constructs the tool call(s) needed for the step
 - Tool definitions sent to the model are adapted for the active model capabilities/token budget before each round
 - Tool calls are routed through the Safety Layer for approval
-- If approval is required, the visible phase becomes `waiting_approval` until the user approves, denies, or cancels the prompt
+- If approval is required, the visible phase becomes `waiting_approval` until the user approves/denies **or** guardian review finishes (when reviewer routing is enabled)
 - The tool executes and returns a `ToolResult`
 - Multiple tools may be batched in a single step if they are independent
 - When every call in a multi-call batch is read-only and auto-approved, those calls may run in parallel; `ToolCallRequested` events are still emitted in order before any `ToolCallResult`, and tool messages keep the same `tool_call_id` ordering the model supplied
@@ -377,6 +377,18 @@ class ToolCallResult(AgentEvent):
     result: ToolResult
     rollback_entries: int
 
+class GuardianReviewStarted(AgentEvent):
+    tool_name: str
+    action_summary: str
+
+class GuardianReviewCompleted(AgentEvent):
+    tool_name: str
+    approved: bool
+    risk_level: str
+    risk_score: int
+    rationale: str
+    failure: str
+
 class ReasoningOutput(AgentEvent):
     text: str
 
@@ -405,6 +417,7 @@ Rendering rules:
 - `TaskRouted`, `PhaseChanged`, `PlanGenerated`, `PlanUpdated`, `StepStarted`, and `ToolCallResult` use the shared status/activity grammar in the shell renderer
 - `ReasoningOutput` is treated as secondary detail and flows into the dimmed `Details` lane instead of a dedicated reasoning panel
 - `ToolCallRequested` renders a concise inline summary in the primary lane, while risk reasons, rollback availability, and supporting warnings are shown through the quieter `Details` lane before approval is requested
+- `GuardianReviewStarted` and `GuardianReviewCompleted` render as explicit lifecycle updates (including rationale/failure detail in the `Details` lane when available)
 - Successful file-modifying `ToolCallResult` events can surface `Undo available: N change(s). Use /agent undo.` without interrupting the main flow
 - `TaskComplete` renders a quiet success line followed by the final summary body
 - `TaskStopped` and `TaskTimedOut` render warning-style non-failure outcomes

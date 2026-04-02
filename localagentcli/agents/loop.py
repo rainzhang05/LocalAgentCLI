@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 from localagentcli.agents.events import (
     AgentEvent,
+    GuardianReviewCompleted,
+    GuardianReviewStarted,
     PhaseChanged,
     PlanGenerated,
     PlanUpdated,
@@ -36,6 +38,12 @@ from localagentcli.agents.recovery import (
     update_failure_counters,
 )
 from localagentcli.agents.truncation import truncate_for_model_output
+from localagentcli.guardian import (
+    GuardianReviewRequest,
+    GuardianReviewResult,
+    areview_with_guardian,
+    review_with_guardian,
+)
 from localagentcli.models.abstraction import ModelAbstractionLayer
 from localagentcli.models.backends.base import GenerationResult, ModelMessage
 from localagentcli.models.model_info import ModelInfo
@@ -70,6 +78,17 @@ class _AsyncStepDone:
     failure_context: FailureContext | None = None
 
 
+@dataclass
+class _GuardianContext:
+    """Execution context provided to guardian review requests."""
+
+    task: str
+    step_index: int
+    step_description: str
+    transcript: list[ModelMessage]
+    conversation: list[ModelMessage]
+
+
 _STEP_PROMPT = """You are LocalAgentCLI operating in agent mode.
 
 Execution rules:
@@ -98,6 +117,7 @@ class AgentLoop:
         max_consecutive_errors: int = 5,
         max_step_rounds: int = 24,
         unified_turn_loop: bool = True,
+        approvals_reviewer: str = "user",
     ):
         self._model = model
         self._tools = tools
@@ -106,10 +126,12 @@ class AgentLoop:
         self._max_consecutive_errors = max_consecutive_errors
         self._max_step_rounds = max(1, max_step_rounds)
         self._unified_turn_loop = unified_turn_loop
+        self._approvals_reviewer = approvals_reviewer
         self._stop_requested = False
         self._approval_wait: asyncio.Future[bool] | None = None
         self._async_tool_batch: tuple[list[ModelMessage], FailureContext | None] | None = None
         self._sync_tool_failure_context: FailureContext | None = None
+        self._guardian_context: _GuardianContext | None = None
 
     def stop(self) -> None:
         """Request that the loop stop at the next safe point."""
@@ -762,8 +784,18 @@ class AgentLoop:
                 assistant_message.metadata["tool_calls"] = result.tool_calls
                 conversation.append(assistant_message)
                 self._async_tool_batch = None
-                async for event in self._ahandle_tool_calls_async(result):
-                    yield event
+                self._guardian_context = _GuardianContext(
+                    task=task,
+                    step_index=step.index,
+                    step_description=step.description,
+                    transcript=list(transcript),
+                    conversation=list(conversation),
+                )
+                try:
+                    async for event in self._ahandle_tool_calls_async(result):
+                        yield event
+                finally:
+                    self._guardian_context = None
                 batch: tuple[list[ModelMessage], FailureContext | None] = (
                     self._async_tool_batch or ([], None)
                 )
@@ -949,6 +981,10 @@ class AgentLoop:
                     resolved_tool_name = tool.name
                     decision = self._safety.check_and_approve(tool, arguments)
                     requires_approval = decision.requires_approval
+                    route_to_guardian = self._should_route_approval_to_guardian(
+                        resolved_tool_name,
+                        requires_approval,
+                    )
                     if decision.blocked:
                         tool_result = ToolResult.error_result(
                             f"Blocked tool '{resolved_tool_name}'",
@@ -980,13 +1016,45 @@ class AgentLoop:
                     request = ToolCallRequested(
                         tool_name=resolved_tool_name,
                         arguments=arguments,
-                        requires_approval=requires_approval,
+                        requires_approval=requires_approval and not route_to_guardian,
                         risk_level=decision.risk_level.value,
                         warnings=decision.warnings,
                         risk_reason=decision.risk_reason,
                         rollback_summary=decision.rollback_summary,
                     )
-                    if requires_approval:
+                    guardian_review: GuardianReviewResult | None = None
+                    if route_to_guardian:
+                        yield PhaseChanged(
+                            phase="waiting_approval",
+                            summary=f"Guardian reviewing action: {resolved_tool_name}.",
+                        )
+                        yield request
+                        guardian_request = self._build_guardian_request(
+                            tool_name=resolved_tool_name,
+                            arguments=arguments,
+                            risk_level=decision.risk_level.value,
+                            risk_reason=decision.risk_reason,
+                            warnings=decision.warnings,
+                        )
+                        yield GuardianReviewStarted(
+                            tool_name=resolved_tool_name,
+                            action_summary=guardian_request.action_summary(),
+                        )
+                        guardian_review = await areview_with_guardian(
+                            self._model,
+                            guardian_request,
+                        )
+                        yield GuardianReviewCompleted(
+                            tool_name=resolved_tool_name,
+                            approved=guardian_review.approved,
+                            risk_level=guardian_review.risk_level,
+                            risk_score=guardian_review.risk_score,
+                            rationale=guardian_review.rationale,
+                            evidence=guardian_review.evidence,
+                            failure=guardian_review.failure,
+                        )
+                        approved = guardian_review.approved
+                    elif requires_approval:
                         yield PhaseChanged(
                             phase="waiting_approval",
                             summary=f"Waiting for approval: {resolved_tool_name}.",
@@ -1002,10 +1070,24 @@ class AgentLoop:
                             self._execute_tool_safely, tool, arguments
                         )
                     else:
-                        tool_result = ToolResult.denied(
-                            f"User denied tool '{tool_name}'",
-                            output=json.dumps(arguments, indent=2, sort_keys=True),
-                        )
+                        if guardian_review is not None:
+                            denial_payload = {
+                                "tool_name": resolved_tool_name,
+                                "risk_level": guardian_review.risk_level,
+                                "risk_score": guardian_review.risk_score,
+                                "rationale": guardian_review.rationale,
+                                "evidence": guardian_review.evidence,
+                                "failure": guardian_review.failure,
+                            }
+                            tool_result = ToolResult.denied(
+                                f"Guardian denied tool '{resolved_tool_name}'",
+                                output=json.dumps(denial_payload, ensure_ascii=False),
+                            )
+                        else:
+                            tool_result = ToolResult.denied(
+                                f"User denied tool '{tool_name}'",
+                                output=json.dumps(arguments, indent=2, sort_keys=True),
+                            )
 
                     yield ToolCallResult(
                         tool_name=resolved_tool_name,
@@ -1115,7 +1197,17 @@ class AgentLoop:
                 assistant_message.metadata["tool_calls"] = result.tool_calls
                 conversation.append(assistant_message)
                 self._sync_tool_failure_context = None
-                tool_messages, had_error = yield from self._handle_tool_calls(result)
+                self._guardian_context = _GuardianContext(
+                    task=task,
+                    step_index=step.index,
+                    step_description=step.description,
+                    transcript=list(transcript),
+                    conversation=list(conversation),
+                )
+                try:
+                    tool_messages, had_error = yield from self._handle_tool_calls(result)
+                finally:
+                    self._guardian_context = None
                 tool_failure_context = self._sync_tool_failure_context
                 conversation.extend(tool_messages)
                 if tool_failure_context is not None or had_error:
@@ -1308,6 +1400,10 @@ class AgentLoop:
                 resolved_tool_name = tool.name
                 decision = self._safety.check_and_approve(tool, arguments)
                 requires_approval = decision.requires_approval
+                route_to_guardian = self._should_route_approval_to_guardian(
+                    resolved_tool_name,
+                    requires_approval,
+                )
                 if decision.blocked:
                     tool_result = ToolResult.error_result(
                         f"Blocked tool '{resolved_tool_name}'",
@@ -1339,13 +1435,42 @@ class AgentLoop:
                 request = ToolCallRequested(
                     tool_name=resolved_tool_name,
                     arguments=arguments,
-                    requires_approval=requires_approval,
+                    requires_approval=requires_approval and not route_to_guardian,
                     risk_level=decision.risk_level.value,
                     warnings=decision.warnings,
                     risk_reason=decision.risk_reason,
                     rollback_summary=decision.rollback_summary,
                 )
-                if requires_approval:
+                guardian_review: GuardianReviewResult | None = None
+                if route_to_guardian:
+                    yield PhaseChanged(
+                        phase="waiting_approval",
+                        summary=f"Guardian reviewing action: {resolved_tool_name}.",
+                    )
+                    yield request
+                    guardian_request = self._build_guardian_request(
+                        tool_name=resolved_tool_name,
+                        arguments=arguments,
+                        risk_level=decision.risk_level.value,
+                        risk_reason=decision.risk_reason,
+                        warnings=decision.warnings,
+                    )
+                    yield GuardianReviewStarted(
+                        tool_name=resolved_tool_name,
+                        action_summary=guardian_request.action_summary(),
+                    )
+                    guardian_review = review_with_guardian(self._model, guardian_request)
+                    yield GuardianReviewCompleted(
+                        tool_name=resolved_tool_name,
+                        approved=guardian_review.approved,
+                        risk_level=guardian_review.risk_level,
+                        risk_score=guardian_review.risk_score,
+                        rationale=guardian_review.rationale,
+                        evidence=guardian_review.evidence,
+                        failure=guardian_review.failure,
+                    )
+                    approved = guardian_review.approved
+                elif requires_approval:
                     yield PhaseChanged(
                         phase="waiting_approval",
                         summary=f"Waiting for approval: {resolved_tool_name}.",
@@ -1359,10 +1484,24 @@ class AgentLoop:
                     tool_result = tool.execute(**arguments)
                     self._safety.post_action(tool, arguments, tool_result)
                 else:
-                    tool_result = ToolResult.denied(
-                        f"User denied tool '{tool_name}'",
-                        output=json.dumps(arguments, indent=2, sort_keys=True),
-                    )
+                    if guardian_review is not None:
+                        denial_payload = {
+                            "tool_name": resolved_tool_name,
+                            "risk_level": guardian_review.risk_level,
+                            "risk_score": guardian_review.risk_score,
+                            "rationale": guardian_review.rationale,
+                            "evidence": guardian_review.evidence,
+                            "failure": guardian_review.failure,
+                        }
+                        tool_result = ToolResult.denied(
+                            f"Guardian denied tool '{resolved_tool_name}'",
+                            output=json.dumps(denial_payload, ensure_ascii=False),
+                        )
+                    else:
+                        tool_result = ToolResult.denied(
+                            f"User denied tool '{tool_name}'",
+                            output=json.dumps(arguments, indent=2, sort_keys=True),
+                        )
 
             rollback_entries = len(self._safety.rollback.get_history())
             yield ToolCallResult(
@@ -1391,6 +1530,51 @@ class AgentLoop:
 
         self._sync_tool_failure_context = failure_context
         return messages, had_error
+
+    def _should_route_approval_to_guardian(self, tool_name: str, requires_approval: bool) -> bool:
+        """Whether this approval should be reviewed by guardian."""
+        if not requires_approval:
+            return False
+        if self._approvals_reviewer != "guardian_subagent":
+            return False
+        if tool_name in {"shell_execute", "file_write", "patch_apply"}:
+            return True
+        if tool_name.startswith("mcp__"):
+            return True
+        return False
+
+    def _build_guardian_request(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict,
+        risk_level: str,
+        risk_reason: str | None,
+        warnings: list[str],
+    ) -> GuardianReviewRequest:
+        """Build a guardian request from the current loop context."""
+        context = self._guardian_context
+        if context is None:
+            return GuardianReviewRequest(
+                tool_name=tool_name,
+                arguments=arguments,
+                risk_level=risk_level,
+                risk_reason=risk_reason or "",
+                warnings=list(warnings),
+            )
+
+        transcript_tail = [*context.transcript, *context.conversation][-8:]
+        return GuardianReviewRequest(
+            tool_name=tool_name,
+            arguments=arguments,
+            risk_level=risk_level,
+            risk_reason=risk_reason or "",
+            warnings=list(warnings),
+            task=context.task,
+            step_index=context.step_index,
+            step_description=context.step_description,
+            transcript_tail=transcript_tail,
+        )
 
     def _build_messages(
         self,

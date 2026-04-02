@@ -210,6 +210,25 @@ class TestStatusCommand:
 
         assert "agent: multi-step task/retrying/retry 3" in toolbar
 
+    def test_status_shows_guardian_reviewer_summary(self, config, session_manager):
+        session_manager.current.metadata["agent_task_state"] = {
+            "route": "single_step_task",
+            "phase": "recovering",
+            "approvals_reviewer": "guardian_subagent",
+            "guardian_last_decision": "denied",
+            "guardian_last_risk_level": "high",
+            "guardian_last_risk_score": 92,
+        }
+        router = _make_router(config, session_manager)
+
+        result = router.dispatch("status")
+
+        assert result.success
+        assert "Reviewer:" in result.message
+        assert "guardian_subagent" in result.message
+        assert "Guardian:" in result.message
+        assert "denied" in result.message
+
 
 class TestConfigCommand:
     """Tests for /config."""
